@@ -543,9 +543,9 @@ void update_editor_ui(tau::world_t& world, tau::editor_context_t& ctx)
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
 
-    // versioned: imgui.ini remembers node sizes and an old layout pins the console to its old 32px height
+    // versioned: imgui.ini remembers the node tree and sizes, so a saved layout overrides any new default
     // bump the id to reset saved layouts when a default layout change must reach existing inis
-    ImGuiID dockspace_id = ImGui::GetID("MainDockSpace_v2");
+    ImGuiID dockspace_id = ImGui::GetID("MainDockSpace_v3");
 
     static bool first_time = true;
     if (first_time)
@@ -564,13 +564,14 @@ void update_editor_ui(tau::world_t& world, tau::editor_context_t& ctx)
 
             ImGuiID dock_toolbar =
                 ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Up, 32.0f / view_h, nullptr, &dock_main);
+            // inspector splits before the bottom bar so it runs full height, the console only spans
+            // under hierarchy and viewport
+            ImGuiID dock_inspector =
+                ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.22f, nullptr, &dock_main);
             ImGuiID dock_bottom =
                 ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.28f, nullptr, &dock_main);
-            ImGuiID dock_sidebars = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.15f, nullptr, &dock_main);
-
             ImGuiID dock_hierarchy =
-                ImGui::DockBuilderSplitNode(dock_sidebars, ImGuiDir_Up, 0.5f, nullptr, &dock_sidebars);
-            ImGuiID dock_inspector = dock_sidebars;
+                ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.18f, nullptr, &dock_main);
 
             ImGuiID dock_viewport = dock_main;
 
