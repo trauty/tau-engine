@@ -57,7 +57,7 @@ target(is_static and "tau-engine-static" or "tau-engine")
         end
     end
 
-    add_rules("tau.common")
+    add_rules("tau.common", "tau.engine_stamp")
     if not is_static then
         add_rules("tau.reexports")
     end
@@ -75,7 +75,12 @@ target(is_static and "tau-engine-static" or "tau-engine")
         add_syslinks("dl")
     end
 
-    add_files("src/tau/**.cpp")
+    -- only TAU_ENGINE_API leaves the library, as on windows, so a missing export fails on linux too
+    if not is_static and is_plat("linux") then
+        add_files("src/tau/**.cpp", {cxflags = {"-fvisibility=hidden", "-fvisibility-inlines-hidden"}})
+    else
+        add_files("src/tau/**.cpp")
+    end
     add_files("lib/vma/vk_mem_alloc.cpp", {warnings = "none"})
     add_files("lib/volk/volk.c", {warnings = "none"})
     add_files("lib/fmt/format.cc", "lib/fmt/os.cc", {warnings = "none"})
@@ -214,11 +219,8 @@ target("tau-editor")
 
     add_files("lib/volk/volk.c", {warnings = "none"})
 
-    if is_plat("windows") then
-        add_files("lib/vma/vk_mem_alloc.cpp", {warnings = "none"})
-        if is_mode("release") then
-            add_ldflags("/subsystem:windows", "/entry:mainCRTStartup", {force = true})
-        end
+    if is_plat("windows") and is_mode("release") then
+        add_ldflags("/subsystem:windows", "/entry:mainCRTStartup", {force = true})
     end
 
     add_files("src/tau-editor/**.cpp")

@@ -21,11 +21,15 @@ namespace tau::vfs
 
     void init()
     {
-        char* pref_path = SDL_GetPrefPath("tau-engine", tau::engine::get_game_name().c_str());
-        if (pref_path)
+        // a tool that keeps its own user data, like the editor, mounts user:// before init
+        if (!mounts.contains("user://"))
         {
-            mount("user://", pref_path);
-            SDL_free(pref_path);
+            char* pref_path = SDL_GetPrefPath("tau-engine", tau::engine::get_game_name().c_str());
+            if (pref_path)
+            {
+                mount("user://", pref_path);
+                SDL_free(pref_path);
+            }
         }
 
         const char* base_path = SDL_GetBasePath();

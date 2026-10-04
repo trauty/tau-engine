@@ -3,44 +3,29 @@ set_version("0.0.1")
 
 add_rules("plugin.compile_commands.autoupdate", {outputdir = "."})
 
-local function find_tau_engine()
-    local env = os.getenv("TAU_ENGINE_DIR")
-    if env and env ~= "" and os.isdir(env) then
-        return env
-    end
+-- set when the editor or the engine's `tau configure` configures this project
+-- for an engine shipped with the project: get_config("tau_engine_dir") or path.join(os.scriptdir(), "tau-engine")
+option("tau_engine_dir")
+    set_showmenu(true)
+    set_description("The tau engine this project builds against")
+option_end()
 
-    for _, cand in ipairs({
-        path.join(os.scriptdir(), "tau-engine"),
-        path.join(os.scriptdir(), "..", "tau-engine"),
-    }) do
-        if os.isdir(cand) then
-            return path.absolute(cand)
-        end
-    end
+local engine = get_config("tau_engine_dir")
 
-    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
-    if home then
-        local installed = os.dirs(path.join(home, ".tau", "engines", "*"))
-        if #installed > 0 then
-            table.sort(installed)
-            return installed[#installed]
-        end
-    end
+if engine then
+    includes(path.join(engine, "xmake", "tau.lua"))
 
-    print("")
-    print("  Could not find tau-engine")
-    print("")
-    print("  Point at it with TAU_ENGINE_DIR, vendor it at ./tau-engine, place it")
-    print("  beside this project as ../tau-engine, or install it under ~/.tau/engines/ on Linux")
-    print("")
-    tau_engine_was_not_found()
+    target("${NAME}")
+        add_rules("tau.game", "tau.hotreload")
+
+        add_files("src/**.cpp")
+        add_includedirs("src")
+    target_end()
+else
+    target("${NAME}")
+        set_kind("phony")
+        on_load(function()
+            raise("This project has no engine configured. Open it in a tau editor, or run the engine's `tau configure` here.")
+        end)
+    target_end()
 end
-
-includes(path.join(find_tau_engine(), "xmake", "tau.lua"))
-
-target("${NAME}")
-    add_rules("tau.game", "tau.hotreload")
-
-    add_files("src/**.cpp")
-    add_includedirs("src")
-target_end()

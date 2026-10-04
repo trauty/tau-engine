@@ -1,3 +1,6 @@
+-- the engine this rule ships in, which is the one the project included
+local TAU_ENGINE = path.absolute(path.join(os.scriptdir(), "..", ".."))
+
 rule("tau.game")
 add_deps("tau.common")
 
@@ -7,11 +10,10 @@ on_load(function(target)
     import("tau_project")
 
     local standalone = config.get("standalone")
-    local info = tau_engine.resolve(config.get("tau_engine_dir"))
+    local info = tau_engine.resolve(TAU_ENGINE)
     local proj = tau_project.load(os.projectdir())
 
     target:add("defines", "TAU_GAME_EXPORT")
-    target:add("files", info.volk_source)
 
     if standalone then
         target:add("files", info.runtime_main)
@@ -44,6 +46,15 @@ on_load(function(target)
         if target:is_plat("linux") then
             target:add("shflags", "-Wl,-Bsymbolic")
         end
+
+        -- a library has its own vulkan function pointers, a standalone binary uses the static engine's
+        target:add("files", info.volk_source)
+
+        import("tau_stamp")
+        local stamp_file = path.join(target:autogendir(), "engine_stamp.cpp")
+        os.mkdir(path.directory(stamp_file))
+        tau_stamp.write_game_source(stamp_file, info.header_root, info.version_file, tau_stamp.build_mode())
+        target:add("files", stamp_file)
     end
 
     if config.get("mode") == "release" then
@@ -72,7 +83,7 @@ before_link(function(target)
     import("tau_engine")
 
     local static = config.get("standalone") and true or false
-    local info = tau_engine.resolve(config.get("tau_engine_dir"))
+    local info = tau_engine.resolve(TAU_ENGINE)
     local libfile = tau_engine.library_file(info, target, static)
 
     if not os.isfile(libfile) then
@@ -88,7 +99,7 @@ after_build(function(target)
     import("tau_engine")
     import("tau_project")
 
-    local info = tau_engine.resolve(config.get("tau_engine_dir"))
+    local info = tau_engine.resolve(TAU_ENGINE)
     local proj = tau_project.load(os.projectdir())
     if not proj or not proj.assets_dir or not os.isdir(proj.assets_dir) then
         return

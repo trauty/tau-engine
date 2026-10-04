@@ -13,15 +13,11 @@ on_load(function(target)
     if not engine_version_checked then
         engine_version_checked = true
 
-        import("core.base.semver")
-        import("core.project.config")
         import("tau_project")
 
-        local provider = config.get("tau_engine_dir")
         local version_file
         for _, cand in ipairs({
-            provider and path.join(provider, "share", "tau", "VERSION"),
-            provider and path.join(provider, "VERSION"),
+            path.join(engine_dir, "share", "tau", "VERSION"),
             path.join(engine_dir, "VERSION")
         }) do
             if cand and os.isfile(cand) then
@@ -29,14 +25,15 @@ on_load(function(target)
             end
         end
 
+        -- the same rule the editor applies on open: a project builds only with the engine version it is made for
         local proj = tau_project.load(os.projectdir())
         if proj and proj.engine_version and version_file then
             local engine_version = io.readfile(version_file):trim()
-            if semver.compare(engine_version, proj.engine_version) < 0 then
-                raise("This project needs tau-engine >= " .. proj.engine_version ..
-                    ", but the resolved engine is " .. engine_version .. ".\n" ..
-                    "Point it at a newer engine: update the tau-engine submodule,\n" ..
-                    "vendor it beside the project, or install tau-engine " .. proj.engine_version .. "+.")
+            local engine_mm = engine_version:match("^(%d+%.%d+)") or engine_version
+            if engine_mm ~= proj.engine_version then
+                raise("This project is made for tau " .. proj.engine_version .. ", but it is configured with tau " ..
+                    engine_version .. " (" .. engine_dir .. ").\n" ..
+                    "Open it in a tau " .. proj.engine_version .. " editor, or open it in this engine's editor to update it.")
             end
         end
     end

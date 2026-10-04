@@ -3,9 +3,13 @@ set_version("0.0.1")
 
 add_rules("plugin.compile_commands.autoupdate", {outputdir = "."})
 
--- The sample lives inside the engine repository, so the engine is always two levels up. A real
--- project finds it the way tau-game does (TAU_ENGINE_DIR, ./tau-engine, ../tau-engine).
-includes(path.join(os.scriptdir(), "..", "..", "xmake", "tau.lua"))
+-- the engine that configured this project, else the repository the sample lives in
+option("tau_engine_dir")
+    set_showmenu(true)
+    set_description("The tau engine this project builds against")
+option_end()
+
+includes(path.join(get_config("tau_engine_dir") or path.join(os.scriptdir(), "..", ".."), "xmake", "tau.lua"))
 
 target("sandbox")
     add_rules("tau.game", "tau.hotreload")

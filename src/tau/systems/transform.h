@@ -5,8 +5,6 @@
 
 namespace tau::transform_system
 {
-    extern bool is_hierarchy_dirty;
-
     TAU_ENGINE_API void set_local_position(ecs::registry_t& reg, ecs::entity_t entity, vec3_t new_pos);
     TAU_ENGINE_API void set_local_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat_t new_rot);
     TAU_ENGINE_API void set_local_scale(ecs::registry_t& reg, ecs::entity_t entity, vec3_t new_scale);
@@ -19,5 +17,6 @@ namespace tau::transform_system
 
     TAU_ENGINE_API void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent);
 
+    void connect(ecs::registry_t& reg);
     void update(ecs::registry_t& reg);
 } // namespace tau::transform_system

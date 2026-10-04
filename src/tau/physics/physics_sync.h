@@ -54,8 +54,6 @@ namespace tau::physics
                 transform.local_rotation.y = rot.GetY();
                 transform.local_rotation.z = rot.GetZ();
                 transform.local_rotation.w = rot.GetW();
-
-                transform.is_dirty = true;
             }
         }
     }

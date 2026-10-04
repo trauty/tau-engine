@@ -17,6 +17,13 @@ namespace tau::game
         }
     } // namespace
 
+    const char* library_stamp(void* lib)
+    {
+        using stamp_fn = const char* (*)();
+        const stamp_fn stamp = reinterpret_cast<stamp_fn>(os::get_proc_address(lib, "tau_game_engine_stamp"));
+        return stamp ? stamp() : nullptr;
+    }
+
     void add_on_load(on_load_fn fn)
     {
         if (fn != nullptr) { hooks().push_back(fn); }

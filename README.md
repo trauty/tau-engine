@@ -56,46 +56,72 @@ xmake
 
 ### Game project
 
-A game locates the engine while xmake reads the project, in this order:
-
-1. `TAU_ENGINE_DIR`
-2. `./tau-engine` (vendored or submodule)
-3. `../tau-engine` (sibling checkout)
-4. newest install under `~/.tau/engines/`
+A project builds with the engine that configured it. Opening it in the editor
+configures it with that editor's engine. From a terminal, use the `tau` script of
+the engine you want (`scripts/tau` in a checkout, `bin/tau` in a packaged engine):
 
 **Bash:**
 ```bash
-export TAU_ENGINE_DIR=/path/to/tau-engine
-xmake f -m debug
-xmake                     # -> bin/<game>.so; game assets cook to .tau/game
+/path/to/tau-engine/scripts/tau configure   # once, records the engine in .xmake
+xmake                                       # -> bin/<game>.so; game assets cook to .tau/game
 ```
 
 **Powershell:**
 ```powershell
-$env:TAU_ENGINE_DIR = "C:\path\to\tau-engine"
-xmake f -m debug
+xmake f -m debug --tau_engine_dir=C:\path\to\tau-engine
 xmake                     # -> bin\<game>.dll
 ```
+
+The `.tauproject` names the engine version the project is made for
+(`"engine": { "version": "0.1" }`), never a path. The editor opens projects of its
+own version and offers to update older ones; builds check the same.
+
+To build with an engine that ships with the project, such as a submodule, change
+the engine line in the project's `xmake.lua` to
+`get_config("tau_engine_dir") or path.join(os.scriptdir(), "tau-engine")`.
 
 Open the project in the editor to run it. The editor loads the game library at
 runtime and hot-reloads it whenever you rebuild, so `xmake` in the game project
 is the whole edit loop.
 
-A hot reload unloads the old library, so two things matter in game code:
+The editor reloads the library in Edit mode. A build that finishes during Play
+waits until you press Stop, or, with *Replay on reload* checked, stops Play,
+reloads and starts Play again. A reload rebuilds the world from the scene, so it
+keeps exactly what saving the scene keeps:
 
-* **Components need `TAU_REFLECT`** to keep their data across a reload. A
-  component without it cannot be carried over; the editor then keeps the old
-  library loaded and says which component held it.
-* **Register callbacks in `TAU_ON_LOAD()`, not in `tau_game_init`.** Input
-  actions and render features point at your code, so the engine drops them when
-  the old library goes. `TAU_ON_LOAD()` runs after every load, the first and
-  every reload, and registers the new code's; `tau_game_init` runs once.
+* **Reflect what should survive** with `TAU_REFLECT`. Data without it is lost
+  on a reload, the same as on save and load.
+* **Register callbacks in `TAU_ON_LOAD()`.** Input actions, render features,
+  systems and signal listeners point at your code, and `TAU_ON_LOAD()` runs
+  after every load, the first and every reload. `tau_game_init` and
+  `tau_game_shutdown` run when Play starts and stops, set up game state there.
 
 ```cpp
 TAU_ON_LOAD()
 {
     tau::input::bind_button("jump", tau::input::key_e::Space);
     tau::input::on_action("jump", tau::input::input_state_t::PRESSED, [](const auto&) { /* ... */ });
+    world.register_update_system(&update_player);
+}
+```
+
+Reflected fields can be numbers, bools, strings, `vec3_t`, enums, asset
+handles, entity references, structs registered with `reflection::structure`,
+and `std::vector`s of any of these. Scenes store entity references as scene
+indices, so they survive save and load.
+
+```cpp
+struct waypoint_t { tau::vec3_t pos; f32 wait = 0.0f; };
+struct patrol_t { std::vector<waypoint_t> points; tau::ecs::entity_t target = tau::ecs::NULL_ENTITY; };
+
+TAU_REFLECT()
+{
+    tau::reflection::structure<waypoint_t>(ctx, "Waypoint")
+        .field<&waypoint_t::pos>("Position")
+        .field<&waypoint_t::wait>("Wait");
+    tau::reflection::component<patrol_t>(ctx, "Patrol")
+        .field<&patrol_t::points>("Points")
+        .field<&patrol_t::target>("Target");
 }
 ```
 
@@ -167,19 +193,20 @@ xmake                               # builds + cooks
 xmake tau-package                   # -> dist/<project>/{<game>, assets/}
 ```
 
-### Install the SDK (engine + editor + cooker)
+### Package the engine (engine + editor + cooker)
 
-The install mirrors the source layout, so a game consumes an SDK exactly the way
-it consumes a checkout.
+A packaged engine is one self-contained folder with the same layout as a checkout,
+so put it anywhere. Its `bin/tau` configures projects with it, and its editor keeps
+its state (recent projects, layout, pipeline cache) in `user/` inside the folder.
 
 **Bash:**
 ```bash
 xmake f -m release
-xmake install -o ~/.tau/engines/$(cat VERSION)
+xmake install -o /path/to/tau-$(cat VERSION)
 ```
 
 **Powershell:**
 ```powershell
 xmake f -m release
-xmake install -o "$env:USERPROFILE\.tau\engines\$(Get-Content VERSION)"
+xmake install -o "C:\path\to\tau-$(Get-Content VERSION)"
 ```

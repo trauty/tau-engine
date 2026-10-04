@@ -68,11 +68,11 @@ int main(int argc, char* argv[])
 
     tau::engine::create_scene();
     tau::world_t& cur_world = tau::engine::get_active_world();
+    cur_world.init();
 
     // game types before the scene loads, else its components are unknown and dropped
 #ifdef TAU_STATIC_LINK
     tau_game_register_types(&cur_world);
-    tau_game_init(&cur_world);
     tau::game::run_on_load(cur_world);
 #else
     if (have_project)
@@ -103,8 +103,17 @@ int main(int argc, char* argv[])
             return -1;
         }
 
+        const char* lib_stamp = tau::game::library_stamp(game_lib);
+        if (!lib_stamp || std::string_view(lib_stamp) != tau::engine::build_stamp())
+        {
+            TAU_LOG_FATAL("ENGINE",
+                          "The game library was built against a different engine build (library: {}, runtime: {}). "
+                          "Build the engine and the project again.",
+                          lib_stamp ? lib_stamp : "none", tau::engine::build_stamp());
+            return -1;
+        }
+
         game_register_types(&cur_world);
-        game_init(&cur_world);
         tau::game::run_on_load(cur_world);
     }
     else
@@ -148,16 +157,22 @@ int main(int argc, char* argv[])
     }
 
     tau::engine::get_active_world().register_update_system(
-        [](tau::ecs::registry_t& reg)
+        [](tau::world_t& world)
         {
 #ifdef TAU_STATIC_LINK
-            tau_game_update(&tau::engine::get_active_world());
+            tau_game_update(&world);
 #else
-            if (game_update) { game_update(&tau::engine::get_active_world()); }
+            if (game_update) { game_update(&world); }
 #endif
         });
 
-    cur_world.init();
+    // with the scene loaded, as when the editor starts Play
+    cur_world.begin_play();
+#ifdef TAU_STATIC_LINK
+    tau_game_init(&cur_world);
+#else
+    if (game_init) { game_init(&cur_world); }
+#endif
 
     tau::engine::run();
 
@@ -166,6 +181,7 @@ int main(int argc, char* argv[])
 #else
     if (game_shutdown) { game_shutdown(&tau::engine::get_active_world()); }
 #endif
+    tau::engine::get_active_world().end_play();
 
     tau::engine::shutdown();
 

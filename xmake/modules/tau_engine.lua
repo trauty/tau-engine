@@ -34,6 +34,7 @@ function resolve(engine_dir)
             path.join(engine_dir, "src"),
             path.join(engine_dir, "lib", "JoltPhysics"),
         }
+        info.header_root = path.join(engine_dir, "src")
         info.engine_assets = path.join(engine_dir, "assets")
         -- shaders #include "tau/rendering/shader_shared.h", the same path C++ uses
         info.shader_include = path.join(engine_dir, "src")
@@ -47,6 +48,7 @@ function resolve(engine_dir)
             path.join(engine_dir, "include"),
             path.join(engine_dir, "include", "imgui"),
         }
+        info.header_root = path.join(engine_dir, "include")
         info.engine_assets = path.join(engine_dir, "share", "tau", "engine-assets-src")
         info.shader_include = path.join(engine_dir, "include")
         info.engine_cooked = path.join(engine_dir, "share", "tau", "engine-assets", "engine")

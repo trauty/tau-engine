@@ -1,4 +1,9 @@
 #!/bin/sh
+# works with the engine it belongs to, run it from a game project:
+#   tau configure [-m mode]   record this engine in the project
+#   tau build [-m mode]       configure, then build
+#   tau open [project]        open the project in this engine's editor
+#   tau <anything else>       passed to xmake
 
 set -eu
 
@@ -10,14 +15,66 @@ while [ -h "$self" ]; do
         *)  self=$(dirname "$self")/$link ;;
     esac
 done
-bindir=$(cd "$(dirname "$self")" && pwd)
-sdk_dir=$(cd "$bindir/.." && pwd)
-
-export TAU_ENGINE_DIR="$sdk_dir"
+# bin/ in a packaged engine, scripts/ in a checkout
+engine_dir=$(cd "$(dirname "$self")/.." && pwd)
 
 if ! command -v xmake >/dev/null 2>&1; then
     echo "tau: xmake was not found on PATH, install it from https://xmake.io" >&2
     exit 1
 fi
 
-exec xmake "$@"
+# a packaged engine's editor, else the most recently built one in a checkout
+find_editor() {
+    if [ -x "$engine_dir/bin/tau-editor" ]; then
+        echo "$engine_dir/bin/tau-editor"
+        return
+    fi
+    ls -t "$engine_dir"/build/*/*/*/tau-editor 2>/dev/null | head -n 1
+}
+
+# a project must be built in its editor's mode
+default_mode() {
+    editor=$(find_editor)
+    case $editor in
+        "$engine_dir"/build/*) basename "$(dirname "$editor")" ;;
+        *) echo release ;;
+    esac
+}
+
+mode=""
+parse_mode() {
+    if [ "${1:-}" = "-m" ] && [ -n "${2:-}" ]; then
+        mode=$2
+    fi
+    [ -n "$mode" ] || mode=$(default_mode)
+}
+
+configure() {
+    xmake f -P . -y -m "$mode" --tau_engine_dir="$engine_dir"
+}
+
+case "${1:-}" in
+    configure)
+        shift
+        parse_mode "$@"
+        configure
+        ;;
+    build)
+        shift
+        parse_mode "$@"
+        configure
+        exec xmake build -P .
+        ;;
+    open)
+        shift
+        editor=$(find_editor)
+        if [ -z "$editor" ]; then
+            echo "tau: no editor found in $engine_dir, build the engine first" >&2
+            exit 1
+        fi
+        exec "$editor" "${1:-.}"
+        ;;
+    *)
+        exec xmake "$@"
+        ;;
+esac

@@ -23,6 +23,10 @@ namespace tau::engine
 
     TAU_ENGINE_API std::string get_game_name();
 
+    // a game library must be built against the same, see tau::game::library_stamp
+    TAU_ENGINE_API const char* build_stamp();
+    TAU_ENGINE_API const char* version();
+
     TAU_ENGINE_API void create_scene();
     TAU_ENGINE_API void set_scene(std::unique_ptr<tau::world_t> scene);
     TAU_ENGINE_API world_t& get_active_world();

@@ -1,9 +1,9 @@
 {
     "project_name": "${NAME}",
     "version": "0.0.1",
-    "tauproject_version": "1",
+    "tauproject_version": "2",
     "engine": {
-        "version": "0.1.0"
+        "version": "${ENGINE_VERSION}"
     },
     "game_lib_name": "${NAME}",
     "startup_scene": "scenes/main.scene",

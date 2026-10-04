@@ -29,6 +29,9 @@ namespace tau
         // asset refs: the guid recorded beside the path in `str` / `strs`
         std::string guid;
         std::vector<std::string> guids;
+
+        // STRUCT fields, LIST elements
+        std::vector<scene_property_t> children;
     };
 
     struct scene_component_t
@@ -40,6 +43,7 @@ namespace tau
 
     struct scene_entity_t
     {
+        i32_t parent = -1;
         std::vector<scene_component_t> components;
     };
 

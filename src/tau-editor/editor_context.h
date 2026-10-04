@@ -59,6 +59,10 @@ namespace tau
 
         bool project_loaded = false;
 
+        // a rebuilt game library waits for Edit, unless replay_on_reload stops Play for it and starts it again
+        bool reload_pending = false;
+        bool replay_on_reload = false;
+
         bool recompile_requested = false;
         bool recompiling = false;
         bool cancel_build_requested = false; // the console's Cancel, while recompiling

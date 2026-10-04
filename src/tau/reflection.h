@@ -62,12 +62,6 @@ namespace tau::reflection
     void remove_component(tau::ecs::registry_t& reg, tau::ecs::entity_t entity)
     { reg.remove<T>(entity); }
 
-    // creates T's pool from the module this is instantiated in, the engine for engine components
-    // an entt pool keeps the type_info pointer of its creator, so a pool the game DLL created dangles after unload
-    template <typename T>
-    void ensure_storage(tau::ecs::registry_t& reg)
-    { reg.storage<T>(); }
-
     enum class unit_e : u8_t
     {
         NONE,
@@ -97,33 +91,30 @@ namespace tau::reflection
         constexpr explicit stable_id(const char* n) : name(n) {}
     };
 
-    template <typename T>
-    class component_t
+    // the field builders shared by components and plain structs
+    template <typename T, typename Self>
+    class fields_t
     {
       public:
-        component_t(ctx_t& ctx, const char* label) : m_factory(ctx)
+        fields_t(ctx_t& ctx, const char* label) : m_factory(ctx)
         {
             m_factory.type(tau::hash_string(tau::type_name<T>()), tau::type_label<T>.c_str())
-                .template custom<editor_prop_t>(label)
-                .template func<&get_component<T>>("get"_h)
-                .template func<&add_component<T>>("add"_h)
-                .template func<&remove_component<T>>("remove"_h)
-                .template func<&ensure_storage<T>>("storage"_h);
+                .template custom<editor_prop_t>(label);
         }
 
         template <auto MemberPtr>
-        component_t& field(const char* label)
+        Self& field(const char* label)
         {
             return bind_field<MemberPtr>(tau::hash_string(tau::member_name<MemberPtr>()),
                                          tau::member_label<MemberPtr>.c_str(), editor_prop_t{label});
         }
 
         template <auto MemberPtr>
-        component_t& field(const char* label, stable_id id)
+        Self& field(const char* label, stable_id id)
         { return bind_field<MemberPtr>(tau::hash_string(id.name), id.name, editor_prop_t{label}); }
 
         template <auto MemberPtr, typename AssetT>
-        component_t& field_asset(const char* label)
+        Self& field_asset(const char* label)
         {
             return bind_field<MemberPtr>(tau::hash_string(tau::member_name<MemberPtr>()),
                                          tau::member_label<MemberPtr>.c_str(),
@@ -131,7 +122,7 @@ namespace tau::reflection
         }
 
         template <auto MemberPtr, typename AssetT>
-        component_t& field_asset_list(const char* label)
+        Self& field_asset_list(const char* label)
         {
             return bind_field<MemberPtr>(tau::hash_string(tau::member_name<MemberPtr>()),
                                          tau::member_label<MemberPtr>.c_str(),
@@ -139,44 +130,70 @@ namespace tau::reflection
         }
 
         template <auto Setter, auto Getter>
-        component_t& accessor(const char* label, stable_id id)
+        Self& accessor(const char* label, stable_id id)
         {
             m_factory.template data<Setter, Getter>(tau::hash_string(id.name), id.name)
                 .template custom<editor_prop_t>(editor_prop_t{label});
-            return *this;
+            return self();
         }
 
         template <auto Setter, auto Getter>
-        component_t& accessor(const char* label, unit_e unit, stable_id id)
+        Self& accessor(const char* label, unit_e unit, stable_id id)
         {
             m_factory.template data<Setter, Getter>(tau::hash_string(id.name), id.name)
                 .template custom<editor_prop_t>(editor_prop_t{label, unit});
-            return *this;
-        }
-
-        template <auto Fn>
-        component_t& on_changed()
-        {
-            m_factory.template func<Fn>("on_changed"_h);
-            return *this;
+            return self();
         }
 
         factory<T>& raw() { return m_factory; }
 
-      private:
+      protected:
+        Self& self() { return static_cast<Self&>(*this); }
+
         template <auto MemberPtr>
-        component_t& bind_field(u32_t id, const char* name, editor_prop_t prop)
+        Self& bind_field(u32_t id, const char* name, editor_prop_t prop)
         {
             m_factory.template data<MemberPtr>(id, name).template custom<editor_prop_t>(prop);
-            return *this;
+            return self();
         }
 
         factory<T> m_factory;
     };
 
     template <typename T>
+    class component_t : public fields_t<T, component_t<T>>
+    {
+      public:
+        component_t(ctx_t& ctx, const char* label) : fields_t<T, component_t<T>>(ctx, label)
+        {
+            this->m_factory.template func<&get_component<T>>("get"_h)
+                .template func<&add_component<T>>("add"_h)
+                .template func<&remove_component<T>>("remove"_h);
+        }
+
+        template <auto Fn>
+        component_t& on_changed()
+        {
+            this->m_factory.template func<Fn>("on_changed"_h);
+            return *this;
+        }
+    };
+
+    // a plain struct for fields and list elements, not a component
+    template <typename T>
+    class structure_t : public fields_t<T, structure_t<T>>
+    {
+      public:
+        using fields_t<T, structure_t<T>>::fields_t;
+    };
+
+    template <typename T>
     component_t<T> component(ctx_t& ctx, const char* label)
     { return component_t<T>{ctx, label}; }
+
+    template <typename T>
+    structure_t<T> structure(ctx_t& ctx, const char* label)
+    { return structure_t<T>{ctx, label}; }
 
     template <typename E>
     class enumeration_t
@@ -235,7 +252,8 @@ namespace tau::reflection
 
     TAU_ENGINE_API void run_registrations(ctx_t& ctx);
 
-    TAU_ENGINE_API void clear_registrations();
+    // drops the registrations a library's TAU_REFLECT blocks added
+    TAU_ENGINE_API u32_t remove_registrations_of(void* module_base);
 
     struct registrar_t
     {

@@ -26,6 +26,63 @@ namespace tau
             out.resize(len);
             return len == 0 || SDL_ReadIO(stream, out.data(), len) == len;
         }
+
+        constexpr u32_t MAX_VALUE_DEPTH = 64;
+
+        bool read_property(SDL_IOStream* stream, scene_property_t& prop, u32_t depth)
+        {
+            u8_t type_raw = 0;
+            if (depth > MAX_VALUE_DEPTH || !read_pod(stream, prop.prop_hash) || !read_pod(stream, type_raw))
+            {
+                return false;
+            }
+            prop.type = static_cast<scene_value_type_e>(type_raw);
+
+            switch (prop.type)
+            {
+            case scene_value_type_e::I32: return read_pod(stream, prop.i);
+            case scene_value_type_e::U32: return read_pod(stream, prop.u);
+            case scene_value_type_e::F32: return read_pod(stream, prop.f);
+            case scene_value_type_e::BOOL:
+            {
+                u8_t b = 0;
+                const bool ok = read_pod(stream, b);
+                prop.b = b != 0;
+                return ok;
+            }
+            case scene_value_type_e::VEC3:
+                return read_pod(stream, prop.vec.x) && read_pod(stream, prop.vec.y) && read_pod(stream, prop.vec.z);
+            case scene_value_type_e::STRING: return read_str(stream, prop.str);
+            case scene_value_type_e::ASSET_REF:
+                return read_pod(stream, prop.asset_type) && read_str(stream, prop.str) && read_str(stream, prop.guid);
+            case scene_value_type_e::ASSET_REF_LIST:
+            {
+                u32_t entry_count = 0;
+                bool ok = read_pod(stream, prop.asset_type) && read_pod(stream, entry_count);
+
+                for (u32_t i = 0; i < entry_count && ok; i++)
+                {
+                    ok = read_str(stream, prop.strs.emplace_back()) && read_str(stream, prop.guids.emplace_back());
+                }
+                return ok;
+            }
+            case scene_value_type_e::ENTITY: return read_pod(stream, prop.u);
+            case scene_value_type_e::STRUCT:
+            case scene_value_type_e::LIST:
+            {
+                u32_t count = 0;
+                if (!read_pod(stream, count)) { return false; }
+
+                for (u32_t i = 0; i < count; i++)
+                {
+                    if (!read_property(stream, prop.children.emplace_back(), depth + 1)) { return false; }
+                }
+                return true;
+            }
+            }
+
+            return false;
+        }
     } // namespace
 
     std::optional<scene_t> asset_loader_t<scene_t>::load(const std::string& path)
@@ -64,7 +121,7 @@ namespace tau
             scene_entity_t& entity = scene.entities.emplace_back();
 
             u32_t component_count = 0;
-            if (!read_pod(stream, component_count))
+            if (!read_pod(stream, entity.parent) || !read_pod(stream, component_count))
             {
                 ok = false;
                 break;
@@ -85,51 +142,7 @@ namespace tau
                 comp.properties.reserve(prop_count);
                 for (u32_t p = 0; p < prop_count && ok; p++)
                 {
-                    scene_property_t& prop = comp.properties.emplace_back();
-
-                    u8_t type_raw = 0;
-                    if (!read_pod(stream, prop.prop_hash) || !read_pod(stream, type_raw))
-                    {
-                        ok = false;
-                        break;
-                    }
-                    prop.type = static_cast<scene_value_type_e>(type_raw);
-
-                    switch (prop.type)
-                    {
-                    case scene_value_type_e::I32: ok = read_pod(stream, prop.i); break;
-                    case scene_value_type_e::U32: ok = read_pod(stream, prop.u); break;
-                    case scene_value_type_e::F32: ok = read_pod(stream, prop.f); break;
-                    case scene_value_type_e::BOOL:
-                    {
-                        u8_t b = 0;
-                        ok = read_pod(stream, b);
-                        prop.b = b != 0;
-                        break;
-                    }
-                    case scene_value_type_e::VEC3:
-                        ok = read_pod(stream, prop.vec.x) && read_pod(stream, prop.vec.y) &&
-                             read_pod(stream, prop.vec.z);
-                        break;
-                    case scene_value_type_e::STRING: ok = read_str(stream, prop.str); break;
-                    case scene_value_type_e::ASSET_REF:
-                        ok = read_pod(stream, prop.asset_type) && read_str(stream, prop.str) &&
-                             read_str(stream, prop.guid);
-                        break;
-                    case scene_value_type_e::ASSET_REF_LIST:
-                    {
-                        u32_t entry_count = 0;
-                        ok = read_pod(stream, prop.asset_type) && read_pod(stream, entry_count);
-
-                        for (u32_t i = 0; i < entry_count && ok; i++)
-                        {
-                            ok = read_str(stream, prop.strs.emplace_back()) &&
-                                 read_str(stream, prop.guids.emplace_back());
-                        }
-                        break;
-                    }
-                    default: ok = false; break;
-                    }
+                    ok = read_property(stream, comp.properties.emplace_back(), 0);
                 }
             }
         }

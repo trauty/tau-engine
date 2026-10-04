@@ -22,3 +22,4 @@ include/tau-engine/
 
 # Blender's backup of the previous save, written next to every .blend
 *.blend1
+/user/

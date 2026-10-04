@@ -48,14 +48,20 @@ before_link(function(target)
         function(name) return name:startswith("SDL_") and not name:endswith("_REAL") end))
 
     local fmt_objs = {}
+    local vma_objs = {}
     for _, obj in ipairs(target:objectfiles()) do
         local base = path.filename(obj)
         if base == "format.cc.obj" or base == "os.cc.obj" then
             table.insert(fmt_objs, obj)
+        elseif base == "vk_mem_alloc.cpp.obj" then
+            table.insert(vma_objs, obj)
         end
     end
     table.join2(exports, defined_symbols(fmt_objs,
         function(name) return name:find("fmt@", 1, true) ~= nil end))
+    -- the editor allocates through the engine's allocator, with the engine's copy of VMA
+    table.join2(exports, defined_symbols(vma_objs,
+        function(name) return name:startswith("vma") end))
 
     if #exports == 0 then
         raise("tau.reexports found nothing to export, check llvm-nm output format")

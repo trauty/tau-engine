@@ -13,6 +13,7 @@
 #include "tau/ecs_fwd.h"
 #include "tau/hash.h"
 #include "tau/math.h"
+#include "tau/os.h"
 
 #include <entt/entt.hpp>
 #include <entt/meta/meta.hpp>
@@ -21,17 +22,11 @@
 
 namespace tau::reflection
 {
-    void mark_transform_dirty(tau::ecs::registry_t& reg, tau::ecs::entity_t entity)
-    { reg.get<transform_t>(entity).is_dirty = true; }
-
     vec3_t get_transform_rot_euler(const tau::transform_t& transform)
     { return quat_t::to_euler(transform.local_rotation); }
 
     void set_transform_rot_euler(tau::transform_t& transform, const vec3_t& euler)
-    {
-        transform.local_rotation = quat_t::from_euler(euler);
-        transform.is_dirty = true;
-    }
+    { transform.local_rotation = quat_t::from_euler(euler); }
 
     namespace
     {
@@ -125,7 +120,12 @@ namespace tau::reflection
         for (register_func_t fn : registrations()) { fn(ctx); }
     }
 
-    void clear_registrations() { registrations().clear(); }
+    u32_t remove_registrations_of(void* module_base)
+    {
+        return static_cast<u32_t>(
+            std::erase_if(registrations(), [module_base](register_func_t fn)
+                          { return os::module_base_of(reinterpret_cast<const void*>(fn)) == module_base; }));
+    }
 
     void register_types() { register_types_into(get_engine_context()); }
 
@@ -152,8 +152,7 @@ namespace tau::reflection
             .field<&transform_t::local_position>("Position")
             .accessor<&set_transform_rot_euler, &get_transform_rot_euler>("Rotation", unit_e::RADIANS,
                                                                           stable_id{"local_euler"})
-            .field<&transform_t::local_scale>("Scale")
-            .on_changed<&mark_transform_dirty>();
+            .field<&transform_t::local_scale>("Scale");
 
         component<active_camera_tag>(ctx, "Active Camera Tag");
 

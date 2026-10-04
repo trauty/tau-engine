@@ -25,11 +25,21 @@ namespace tau::editor::panels
         }
         else if (ctx.cur_mode == editor_mode_e::PLAY)
         {
-            if (ImGui::Button("Stop"))
+            if (ImGui::Button("Stop")) { ctx.cur_mode = editor_mode_e::EDIT; }
+
+            if (ctx.reload_pending)
             {
-                ctx.selected_entity = tau::ecs::NULL_ENTITY;
-                ctx.cur_mode = editor_mode_e::EDIT;
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Reload pending");
+                if (ImGui::IsItemHovered()) { ImGui::SetTooltip("The game library was rebuilt, it reloads on Stop."); }
             }
+        }
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Replay on reload", &ctx.replay_on_reload);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("When the game library is rebuilt during Play, stop, reload and start Play again.");
         }
 
         ImGui::SameLine();

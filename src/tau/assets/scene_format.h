@@ -5,7 +5,7 @@
 namespace tau
 {
     constexpr u32_t TAU_SCENE_MAGIC = 0x4e435354; // "TSCN"
-    constexpr u32_t TAU_SCENE_VERSION = 1;
+    constexpr u32_t TAU_SCENE_VERSION = 3;
 
     enum class scene_value_type_e : u8_t
     {
@@ -17,7 +17,13 @@ namespace tau
         VEC3 = 5,
         ASSET_REF = 6,
         ASSET_REF_LIST = 7,
+        ENTITY = 8,
+        STRUCT = 9,
+        LIST = 10,
     };
+
+    // ENTITY values are scene indices
+    constexpr u32_t TAU_SCENE_NULL_ENTITY = 0xFFFFFFFF;
 
     struct scene_header_t
     {

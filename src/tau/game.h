@@ -20,9 +20,12 @@ extern "C"
 namespace tau::game
 {
     // code run each time the game library loads (first time and every hot reload) to register what points at its code
-    // such as input actions and render features, which the engine removes on unload
-    // tau_game_init runs once, so use TAU_ON_LOAD() { ... }
+    // such as input actions, render features, systems and signal listeners
+    // tau_game_init runs at every Play, so use TAU_ON_LOAD() { ... }
     using on_load_fn = void (*)(tau::world_t& world);
+
+    // the engine build a game library was compiled against, nullptr for a library from before stamps
+    TAU_ENGINE_API const char* library_stamp(void* lib);
 
     TAU_ENGINE_API void add_on_load(on_load_fn fn);
     TAU_ENGINE_API void run_on_load(tau::world_t& world);
@@ -53,14 +56,13 @@ namespace tau::game
         extern "C"                                                                                                     \
         {                                                                                                              \
             TAU_GAME_API void tau_game_register_types_internal(tau::world_t* world)                                    \
-            { tau_game_register_types(world); }                                                                        \
-            TAU_GAME_API void tau_game_init_internal(tau::world_t* world)                                              \
             {                                                                                                          \
                 volkInitialize();                                                                                      \
                 volkLoadInstance(tau::renderer::ctx.instance);                                                         \
                 volkLoadDevice(tau::renderer::ctx.device);                                                             \
-                tau_game_init(world);                                                                                  \
+                tau_game_register_types(world);                                                                        \
             }                                                                                                          \
+            TAU_GAME_API void tau_game_init_internal(tau::world_t* world) { tau_game_init(world); }                    \
             TAU_GAME_API void tau_game_update_internal(tau::world_t* world) { tau_game_update(world); }                \
             TAU_GAME_API void tau_game_shutdown_internal(tau::world_t* world) { tau_game_shutdown(world); }            \
         }

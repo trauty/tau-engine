@@ -1,10 +1,9 @@
 {
     "project_name": "sandbox",
     "version": "0.0.1",
-    "tauproject_version": "1",
+    "tauproject_version": "2",
     "engine": {
-        "version": "0.1.0",
-        "path": "../.."
+        "version": "0.1"
     },
     "game_lib_name": "sandbox",
     "startup_scene": "scenes/sandbox.scene",

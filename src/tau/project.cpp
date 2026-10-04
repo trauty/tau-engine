@@ -22,6 +22,13 @@ namespace tau
 {
     bool project_t::load(const std::filesystem::path& project_file, project_t& out)
     {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(project_file, ec))
+        {
+            TAU_LOG_ERROR("PROJECT", "Not a project file: {}", project_file.string());
+            return false;
+        }
+
         std::ifstream file(project_file);
         if (!file.is_open())
         {
@@ -47,10 +54,16 @@ namespace tau
             if (v.is_string()) { p.project_version = std::atoi(v.get<std::string>().c_str()); }
             else if (v.is_number()) { p.project_version = v.get<int>(); }
         }
-        if (p.project_version != 0 && p.project_version != TAU_PROJECT_VERSION)
+        if (p.project_version > TAU_PROJECT_VERSION)
         {
-            TAU_LOG_WARN("PROJECT", "Project '{}' is schema version {} but this engine expects {}; may need migration",
+            TAU_LOG_WARN("PROJECT", "Project '{}' is schema version {}, newer than this engine's {}",
                          project_file.string(), p.project_version, TAU_PROJECT_VERSION);
+        }
+
+        // schema 1 also had engine.path, never read
+        if (data.contains("engine") && data["engine"].is_object())
+        {
+            p.engine_version = major_minor(data["engine"].value("version", ""));
         }
 
         nlohmann::json paths = nlohmann::json::object();
@@ -71,5 +84,60 @@ namespace tau
 
         out = std::move(p);
         return true;
+    }
+
+    bool project_t::set_engine_version(const std::filesystem::path& project_file, const std::string& version)
+    {
+        nlohmann::ordered_json data;
+        {
+            std::ifstream file(project_file);
+            data = nlohmann::ordered_json::parse(file, nullptr, false);
+        }
+        if (data.is_discarded() || !data.is_object())
+        {
+            TAU_LOG_ERROR("PROJECT", "Project file is not valid: {}", project_file.string());
+            return false;
+        }
+
+        data["tauproject_version"] = std::to_string(TAU_PROJECT_VERSION);
+        data["engine"] = nlohmann::ordered_json{
+            {"version", major_minor(version)}
+        };
+
+        std::ofstream out(project_file, std::ios::trunc);
+        if (!out.is_open())
+        {
+            TAU_LOG_ERROR("PROJECT", "Could not write project file: {}", project_file.string());
+            return false;
+        }
+        out << data.dump(4) << "\n";
+        return true;
+    }
+
+    std::string major_minor(std::string_view version)
+    {
+        const std::size_t first = version.find('.');
+        if (first == std::string_view::npos) { return std::string(version); }
+
+        const std::size_t second = version.find('.', first + 1);
+        return std::string(version.substr(0, second));
+    }
+
+    int compare_major_minor(std::string_view a, std::string_view b)
+    {
+        auto parts = [](std::string_view v)
+        {
+            const std::string mm = major_minor(v);
+            const std::size_t dot = mm.find('.');
+            const int major = std::atoi(mm.substr(0, dot).c_str());
+            const int minor = dot == std::string::npos ? 0 : std::atoi(mm.substr(dot + 1).c_str());
+            return std::pair{major, minor};
+        };
+
+        const auto [a_major, a_minor] = parts(a);
+        const auto [b_major, b_minor] = parts(b);
+        if (a_major != b_major) { return a_major < b_major ? -1 : 1; }
+        if (a_minor != b_minor) { return a_minor < b_minor ? -1 : 1; }
+        return 0;
     }
 } // namespace tau

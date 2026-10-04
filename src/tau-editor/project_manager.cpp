@@ -3,7 +3,9 @@
 #include "imgui/imgui.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/panels/console.h"
+#include "tau/engine.h"
 #include "tau/log.h"
+#include "tau/project.h"
 #include "tau/window.h"
 
 #include "json/json.hpp"
@@ -16,6 +18,7 @@
 #include <fstream>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -27,14 +30,7 @@ namespace tau::editor::project_manager
         std::vector<std::string> g_recents;
         bool g_recents_loaded = false;
 
-        std::string recents_file()
-        {
-            char* pref = SDL_GetPrefPath("tau-engine", "editor");
-            if (!pref) { return ""; }
-            std::string p = std::string(pref) + "recent_projects.json";
-            SDL_free(pref);
-            return p;
-        }
+        std::string recents_file() { return user_dir() + "recent_projects.json"; }
 
         void load_recents()
         {
@@ -88,38 +84,6 @@ namespace tau::editor::project_manager
             return "";
         }
 
-        bool resolve_project_arg(const std::string& arg, std::string& out)
-        {
-            if (arg.empty()) { return false; }
-            std::error_code ec;
-            const fs::path p = arg;
-
-            if (fs::is_regular_file(p, ec) && p.extension() == ".tauproject")
-            {
-                out = fs::absolute(p, ec).string();
-                return !ec;
-            }
-            if (fs::is_directory(p, ec))
-            {
-                fs::path found;
-                int count = 0;
-                for (auto it = fs::directory_iterator(p, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
-                {
-                    if (it->path().extension() == ".tauproject")
-                    {
-                        found = it->path();
-                        ++count;
-                    }
-                }
-                if (count == 1)
-                {
-                    out = fs::absolute(found, ec).string();
-                    return !ec;
-                }
-            }
-            return false;
-        }
-
         bool valid_name(const std::string& name)
         {
             if (name.empty()) { return false; }
@@ -161,14 +125,20 @@ namespace tau::editor::project_manager
                 std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
                 in.close();
 
-                std::string::size_type pos = 0;
                 bool changed = false;
-                const std::string token = "${NAME}";
-                while ((pos = content.find(token, pos)) != std::string::npos)
+                const std::pair<std::string, std::string> tokens[] = {
+                    {"${NAME}",           name                                    },
+                    {"${ENGINE_VERSION}", tau::major_minor(tau::engine::version())},
+                };
+                for (const auto& [token, value] : tokens)
                 {
-                    content.replace(pos, token.size(), name);
-                    pos += name.size();
-                    changed = true;
+                    std::string::size_type pos = 0;
+                    while ((pos = content.find(token, pos)) != std::string::npos)
+                    {
+                        content.replace(pos, token.size(), value);
+                        pos += value.size();
+                        changed = true;
+                    }
                 }
 
                 if (changed)
@@ -212,6 +182,38 @@ namespace tau::editor::project_manager
             if (filelist && filelist[0]) { g_dialog_pick = filelist[0]; }
         }
     } // namespace
+
+    bool resolve_project_arg(const std::string& arg, std::string& out)
+    {
+        if (arg.empty()) { return false; }
+        std::error_code ec;
+        const fs::path p = arg;
+
+        if (fs::is_regular_file(p, ec) && p.extension() == ".tauproject")
+        {
+            out = fs::absolute(p, ec).lexically_normal().string();
+            return !ec;
+        }
+        if (fs::is_directory(p, ec))
+        {
+            fs::path found;
+            int count = 0;
+            for (auto it = fs::directory_iterator(p, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+            {
+                if (it->path().extension() == ".tauproject")
+                {
+                    found = it->path();
+                    ++count;
+                }
+            }
+            if (count == 1)
+            {
+                out = fs::absolute(found, ec).lexically_normal().string();
+                return !ec;
+            }
+        }
+        return false;
+    }
 
     void add_recent(const std::string& project_file)
     {
@@ -399,26 +401,35 @@ namespace tau::editor::project_manager
         return "";
     }
 
-    bool draw_waiting(const char* activity, const std::string& line, bool cancelling)
+    namespace
     {
-        bool cancel = false;
-
-        const ImGuiViewport* vp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(vp->WorkPos);
-        ImGui::SetNextWindowSize(vp->WorkSize);
-        ImGui::SetNextWindowViewport(vp->ID);
-        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-                                       ImGuiWindowFlags_NoTitleBar;
-        if (ImGui::Begin("Building", nullptr, flags))
+        bool begin_full_window(const char* name, const char* activity)
         {
+            const ImGuiViewport* vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(vp->WorkPos);
+            ImGui::SetNextWindowSize(vp->WorkSize);
+            ImGui::SetNextWindowViewport(vp->ID);
+            const ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                                           ImGuiWindowFlags_NoTitleBar;
+            if (!ImGui::Begin(name, nullptr, flags)) { return false; }
+
             ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.6f);
             ImGui::TextUnformatted("tau");
             ImGui::PopFont();
             ImGui::TextDisabled("%s", activity);
             ImGui::Separator();
             ImGui::Spacing();
+            return true;
+        }
+    } // namespace
 
+    bool draw_waiting(const char* activity, const std::string& line, bool cancelling)
+    {
+        bool cancel = false;
+
+        if (begin_full_window("Building", activity))
+        {
             ImGui::TextUnformatted(line.c_str());
             ImGui::Spacing();
 
@@ -439,5 +450,45 @@ namespace tau::editor::project_manager
         ImGui::End();
 
         return cancel;
+    }
+
+    answer_e draw_question(const char* activity, const std::string& question, const char* yes, const char* no)
+    {
+        answer_e answer = answer_e::NONE;
+
+        if (begin_full_window("Question", activity))
+        {
+            ImGui::TextWrapped("%s", question.c_str());
+            ImGui::Spacing();
+
+            if (ImGui::Button(yes)) { answer = answer_e::YES; }
+            ImGui::SameLine();
+            if (ImGui::Button(no)) { answer = answer_e::NO; }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            panels::draw_log_view();
+        }
+        ImGui::End();
+
+        return answer;
+    }
+
+    std::string user_dir()
+    {
+        namespace fs = std::filesystem;
+
+        std::string root = engine_dir();
+        if (root.empty())
+        {
+            const char* base = SDL_GetBasePath();
+            root = base ? base : ".";
+        }
+
+        const fs::path dir = fs::path(root) / "user";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        return dir.generic_string() + "/";
     }
 } // namespace tau::editor::project_manager

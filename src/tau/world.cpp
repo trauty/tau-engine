@@ -1,6 +1,5 @@
 #include "world.h"
 
-#include "tau/components/transform.h"
 #include "tau/ecs_fwd.h"
 #include "tau/physics/physics_sync.h"
 #include "tau/physics/physics_world.h"
@@ -9,25 +8,33 @@
 
 namespace tau
 {
-    void on_transform_changed(ecs::registry_t& reg, ecs::entity_t entity)
-    { tau::transform_system::is_hierarchy_dirty = true; }
-
     void world_t::init()
     {
         registry.ctx().emplace<physics_world_t*>(&physics);
 
-        registry.on_construct<transform_t>().connect<&on_transform_changed>();
-        registry.on_destroy<transform_t>().connect<&on_transform_changed>();
+        transform_system::connect(registry);
 
         physics.init(registry);
+    }
 
-        for (system_func_t& system : init_systems) { system(registry); }
+    void world_t::begin_play()
+    {
+        is_simulating = true;
+        for (system_func_t system : init_systems) { system(*this); }
+    }
+
+    void world_t::end_play()
+    {
+        for (system_func_t system : shutdown_systems) { system(*this); }
+        is_simulating = false;
     }
 
     void world_t::update()
     {
         ZoneScoped;
-        for (system_func_t& system : update_systems) { system(registry); }
+        if (!is_simulating) { return; }
+
+        for (system_func_t system : update_systems) { system(*this); }
     }
 
     void world_t::fixed_update()
@@ -37,7 +44,7 @@ namespace tau
 
         physics.create_bodies(registry);
 
-        for (system_func_t& system : fixed_update_systems) { system(registry); }
+        for (system_func_t system : fixed_update_systems) { system(*this); }
 
         physics::sync_to_physics(registry, physics);
         physics.update();
@@ -46,7 +53,7 @@ namespace tau
 
     void world_t::shutdown()
     {
-        for (system_func_t& system : shutdown_systems) { system(registry); }
+        if (is_simulating) { end_play(); }
 
         physics.destroy_bodies(registry);
         physics.shutdown();
