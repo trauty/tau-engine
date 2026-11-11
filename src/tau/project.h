@@ -35,6 +35,14 @@ namespace tau
                                                       const std::string& version);
     };
 
+    namespace project
+    {
+        // game:// on project cooked assets + guid map, engine:// optional
+        TAU_ENGINE_API void mount(const project_t& project, bool engine_assets);
+        // scene name (guid or path under game://assets/) -> vfs path
+        TAU_ENGINE_API std::string scene_path(std::string_view ref);
+    } // namespace project
+
     // "0.1.3" -> "0.1"
     TAU_ENGINE_API std::string major_minor(std::string_view version);
     // compares major.minor only, <0 when a is older

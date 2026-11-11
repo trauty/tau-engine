@@ -3,7 +3,6 @@
 #include "tau/asset.h"
 #include "tau/assets/shader_format.h"
 #include "tau/defines.h"
-#include "tau/engine.h"
 #include "tau/log.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_resources.h"
@@ -14,11 +13,11 @@
 
 namespace tau
 {
-    shader_instance_t::shader_instance_t(asset_handle_t target_shader) { init(target_shader); }
+    shader_instance_t::shader_instance_t(asset_t<shader_t> target_shader) { init(target_shader); }
 
     shader_instance_t::~shader_instance_t() { shutdown(); }
 
-    void shader_instance_t::init(asset_handle_t target_shader)
+    void shader_instance_t::init(asset_t<shader_t> target_shader)
     {
         if (!target_shader.is_valid())
         {
@@ -26,7 +25,7 @@ namespace tau
             return;
         }
 
-        shader_handle = target_shader;
+        shader = target_shader;
 
         for (u32_t i = 0; i < renderer::MAX_FRAMES_IN_FLIGHT; i++) { sets[i].clear(); }
 
@@ -35,7 +34,7 @@ namespace tau
 
     void shader_instance_t::shutdown()
     {
-        if (!is_initialized || !shader_handle.is_valid()) { return; }
+        if (!is_initialized || !shader.is_valid()) { return; }
 
         for (u32_t i = 0; i < renderer::MAX_FRAMES_IN_FLIGHT; i++)
         {
@@ -55,7 +54,6 @@ namespace tau
 
         bound_resources.clear();
         is_initialized = false;
-        tau::engine::get_asset_registry().release<shader_t>(shader_handle);
     }
 
     void shader_instance_t::sync()
@@ -64,11 +62,11 @@ namespace tau
 
         u32_t cur_frame = renderer::ctx.cur_frame;
 
-        shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(shader_handle);
+        shader_t* program = assets::get(shader);
 
         if (sets[cur_frame].empty())
         {
-            for (const auto& [set_id, layout] : shader->custom_layouts)
+            for (const auto& [set_id, layout] : program->custom_layouts)
             {
                 VkDescriptorSetAllocateInfo alloc_info = {
                     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -87,10 +85,10 @@ namespace tau
         std::vector<VkDescriptorBufferInfo> buffer_infos;
         std::vector<VkDescriptorImageInfo> image_infos;
 
-        buffer_infos.reserve(shader->descriptor_bindings.size());
-        image_infos.reserve(shader->descriptor_bindings.size());
+        buffer_infos.reserve(program->descriptor_bindings.size());
+        image_infos.reserve(program->descriptor_bindings.size());
 
-        for (const shader_descriptor_binding_t& binding : shader->descriptor_bindings)
+        for (const shader_descriptor_binding_t& binding : program->descriptor_bindings)
         {
             const bound_resource_t* it = bound_resources.find(binding.name_hash);
             if (it == nullptr) { continue; }
@@ -163,14 +161,14 @@ namespace tau
         u32_t cur_frame = renderer::ctx.cur_frame;
         if (sets[cur_frame].empty()) { return; }
 
-        shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(shader_handle);
+        shader_t* program = assets::get(shader);
 
         VkPipelineBindPoint bind_point =
-            shader->is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+            program->is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
 
         for (const auto& [set_id, set] : sets[cur_frame])
         {
-            vkCmdBindDescriptorSets(cmd, bind_point, shader->pipeline_layout, set_id, 1, &set, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, bind_point, program->pipeline_layout, set_id, 1, &set, 0, nullptr);
         }
     }
 } // namespace tau

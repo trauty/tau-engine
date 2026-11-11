@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tau/asset_loader.h"
+#include "tau/asset.h"
 #include "tau/assets/scene_format.h"
 #include "tau/math.h"
 
@@ -27,8 +27,10 @@ namespace tau
         std::vector<std::string> strs;
 
         // asset refs: the guid recorded beside the path in `str` / `strs`
-        std::string guid;
-        std::vector<std::string> guids;
+        asset_guid_t guid = 0;
+        std::vector<asset_guid_t> guids;
+
+        u64_t ref = 0;
 
         // STRUCT fields, LIST elements
         std::vector<scene_property_t> children;
@@ -43,8 +45,18 @@ namespace tau
 
     struct scene_entity_t
     {
-        i32_t parent = -1;
+        u64_t id = 0;
+        u64_t parent = 0;
         std::vector<scene_component_t> components;
+
+        // prefab instances, expanded in cooked scenes
+        u64_t prefab_instance = 0;
+        u64_t prefab_source = 0;
+        bool prefab_root = false;
+        asset_guid_t prefab_guid = 0;
+        std::string prefab_path;
+        std::vector<u64_t> prefab_removed;
+        std::string prefab_unresolved;
     };
 
     struct scene_t
@@ -52,6 +64,8 @@ namespace tau
         static constexpr std::string_view type_key = "scene";
 
         std::vector<scene_entity_t> entities;
+        // older scene: ids made up
+        bool generated_ids = false;
     };
 
     template <>

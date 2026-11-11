@@ -21,6 +21,7 @@ namespace tau
         ecs::entity_t get_parent() const { return parent; }
         ecs::entity_t get_first_child() const { return first_child; }
         ecs::entity_t get_next_sibling() const { return next_sibling; }
+        ecs::entity_t get_prev_sibling() const { return prev_sibling; }
 
       private:
         friend struct transform_system::internal_t;

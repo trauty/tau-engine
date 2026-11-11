@@ -1,8 +1,8 @@
 #pragma once
 
 #include "tau/ecs.h"
-#include "tau/physics/physics_world.h"
 
+#include <string>
 #include <vector>
 
 namespace entt { struct meta_ctx; }
@@ -10,6 +10,7 @@ namespace entt { struct meta_ctx; }
 namespace tau
 {
     namespace reflection { using ctx_t = entt::meta_ctx; }
+    namespace physics::detail { struct state_t; }
 
     struct world_t;
 
@@ -20,7 +21,7 @@ namespace tau
         std::string name;
         ecs::registry_t registry;
         reflection::ctx_t* reflection_ctx;
-        physics_world_t physics;
+        physics::detail::state_t* physics_state = nullptr;
 
         std::vector<system_func_t> init_systems;
         std::vector<system_func_t> update_systems;
@@ -29,8 +30,13 @@ namespace tau
 
         bool is_simulating = false;
 
+        world_t() = default;
+        world_t(const world_t&) = delete;
+        world_t& operator=(const world_t&) = delete;
+        ~world_t();
+
         void init();
-        // run the init and shutdown systems, systems only update in between
+        // run init/shutdown systems and TAU_ON_PLAY/TAU_ON_STOP, update systems in between
         void begin_play();
         void end_play();
         void update();

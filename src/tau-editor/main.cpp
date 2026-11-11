@@ -3,25 +3,37 @@
 #include "imgui_backend.h"
 #include "imgui_internal.h"
 #include "tau-editor/asset_cook.h"
+#include "tau-editor/asset_files.h"
 #include "tau-editor/asset_watch.h"
 #include "tau-editor/editor_context.h"
+#include "tau-editor/handles.h"
+#include "tau-editor/history.h"
+#include "tau-editor/material_edit.h"
+#include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/panels/console.h"
 #include "tau-editor/panels/hierarchy.h"
+#include "tau-editor/panels/history_panel.h"
 #include "tau-editor/panels/inspector.h"
 #include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/panels/toolbar.h"
 #include "tau-editor/panels/viewport.h"
+#include "tau-editor/picking.h"
+#include "tau-editor/prefab_edit.h"
 #include "tau-editor/project_manager.h"
+#include "tau-editor/scene_io.h"
+#include "tau-editor/settings.h"
 #include "tau-editor/systems/camera.h"
-#include "tau/asset_meta.h"
-#include "tau/asset_table.h"
+#include "tau-editor/viewport_input.h"
+#include "tau/asset.h"
 #include "tau/engine.h"
 #include "tau/game.h"
+#include "tau/game_library.h"
 #include "tau/hash.h"
 #include "tau/input.h"
 #include "tau/jobs.h"
 #include "tau/log.h"
 #include "tau/os.h"
+#include "tau/physics/physics.h"
 #include "tau/project.h"
 #include "tau/reflection.h"
 #include "tau/rendering/renderer.h"
@@ -36,6 +48,7 @@
 
 #include "json/json.hpp"
 #include <SDL3/SDL_events.h>
+#include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_stdinc.h>
 #include <chrono>
 #include <cstdlib>
@@ -46,28 +59,19 @@
 #include <string>
 #include <system_error>
 
-#if TAU_PLATFORM_WIN
-    #include <windows.h>
-#elif TAU_PLATFORM_LINUX
-    #include <dlfcn.h>
-#endif
-
 std::filesystem::path source_lib_path;
 std::filesystem::path trigger_path;
-std::string source_lib_name;
-std::string cur_temp_lib_name = "";
 
-tau::os::lib_handle_t game_lib = nullptr;
+tau::game_library_t game_lib;
+std::filesystem::path game_lib_copy;
 
 // game libraries that could not be unloaded safely, kept loaded until exit with a warning
-std::vector<tau::os::lib_handle_t> g_retired_game_libs;
+std::vector<tau::game_library_t> g_retired_game_libs;
 std::filesystem::file_time_type last_reload_time;
 
 tau::editor_mode_e g_prev_mode = tau::editor_mode_e::EDIT;
 // a rebuild stopped Play to reload, so Play starts again after it
 bool g_replay_after_reload = false;
-// entities as Play started, to find the selection again on Stop
-std::vector<tau::ecs::entity_t> g_play_order;
 
 typedef void (*editor_init_func)(tau::world_t*, tau::editor_context_t*, ImGuiContext*);
 
@@ -164,149 +168,75 @@ bool build_project(const std::filesystem::path& project_file, const std::string&
     return true;
 }
 
-struct game_library_t
+struct loaded_library_t
 {
-    tau::os::lib_handle_t handle = nullptr;
-    std::string loaded_copy;
-    game_register_types_func register_types = nullptr;
-    game_init_func init = nullptr;
-    game_update_func update = nullptr;
-    game_shutdown_func shutdown = nullptr;
+    tau::game_library_t lib;
+    std::filesystem::path copy;
     editor_init_func editor_init = nullptr;
 };
 
-// loading ran the library's static initialisers, which added reflection registrations and on load hooks
-static void close_unused_library(const game_library_t& lib)
-{
-    void* module = tau::os::module_base_of_lib(lib.handle);
-    tau::reflection::remove_registrations_of(module);
-    tau::game::remove_on_load_of(module);
-    tau::os::free_lib(lib.handle);
-
-    std::error_code ec;
-    std::filesystem::remove(lib.loaded_copy, ec);
-}
-
 // loads a copy, so the next build can overwrite the original while this one runs
-static bool open_game_library(game_library_t& out)
+static bool open_game_library(loaded_library_t& out)
 {
     std::error_code trigger_ec;
     last_reload_time = std::filesystem::last_write_time(trigger_path, trigger_ec);
 
     static int reload_counter = 0;
-    std::filesystem::path temp_lib_path =
+    out.copy =
         source_lib_path.parent_path() / (source_lib_path.stem().string() + "-loaded-" +
                                          std::to_string(reload_counter++) + source_lib_path.extension().string());
-    out.loaded_copy = temp_lib_path.string();
 
     std::error_code ec;
-    std::filesystem::copy_file(source_lib_name, out.loaded_copy, std::filesystem::copy_options::overwrite_existing, ec);
+    std::filesystem::copy_file(source_lib_path, out.copy, std::filesystem::copy_options::overwrite_existing, ec);
     if (ec)
     {
-        TAU_LOG_WARN("EDITOR", "Could not copy game logic lib '{}': {}", source_lib_name, ec.message());
+        TAU_LOG_WARN("EDITOR", "Could not copy game logic lib '{}': {}", source_lib_path.string(), ec.message());
         return false;
     }
 
-    out.handle = tau::os::load_lib(out.loaded_copy.c_str());
-    if (!out.handle)
+    if (!tau::game_library::open(out.copy.string(), out.lib))
     {
-#if TAU_PLATFORM_WIN
-        TAU_LOG_ERROR("EDITOR", "Failed to load library with name: {}; Error: {}", out.loaded_copy, GetLastError());
-#elif TAU_PLATFORM_LINUX
-        TAU_LOG_ERROR("EDITOR", "Failed to load library with name: {}; Error: {}", out.loaded_copy, dlerror());
-#endif
-        std::filesystem::remove(out.loaded_copy, ec);
+        std::filesystem::remove(out.copy, ec);
         return false;
     }
 
-    out.register_types =
-        (game_register_types_func)tau::os::get_proc_address(out.handle, "tau_game_register_types_internal");
-    out.init = (game_init_func)tau::os::get_proc_address(out.handle, "tau_game_init_internal");
-    out.update = (game_update_func)tau::os::get_proc_address(out.handle, "tau_game_update_internal");
-    out.shutdown = (game_shutdown_func)tau::os::get_proc_address(out.handle, "tau_game_shutdown_internal");
-    out.editor_init = (editor_init_func)tau::os::get_proc_address(out.handle, "tau_editor_init");
-
-    if (!out.register_types || !out.init || !out.update || !out.shutdown)
-    {
-        TAU_LOG_ERROR("EDITOR", "Could not find one or more game logic functions necessary");
-        close_unused_library(out);
-        return false;
-    }
-
-    const char* lib_stamp = tau::game::library_stamp(out.handle);
-    if (!lib_stamp || std::string_view(lib_stamp) != tau::engine::build_stamp())
-    {
-        TAU_LOG_ERROR("EDITOR",
-                      "The game library was built against a different engine build (library: {}, editor: {}). "
-                      "Build the engine and the project again.",
-                      lib_stamp ? lib_stamp : "none", tau::engine::build_stamp());
-        close_unused_library(out);
-        return false;
-    }
-
+    out.editor_init = (editor_init_func)tau::os::get_proc_address(out.lib.handle, "tau_editor_init");
     return true;
 }
 
-// unloads the game library after removing everything holding its code: input listeners, render features,
-// on load hooks, reflection registrations, editor panels. the world it ran in was destroyed and reflection reset
-// before this. running jobs would still dangle, then it keeps the library loaded with a warning
+// the world it ran in was destroyed and reflection reset before this
 static void release_game_library(tau::editor_context_t& ctx)
 {
-    void* module = tau::os::module_base_of_lib(game_lib);
+    std::erase_if(ctx.custom_panels, [](tau::panel_draw_func panel)
+                  { return tau::os::module_base_of(reinterpret_cast<const void*>(panel)) == game_lib.module; });
 
-    const u32_t listeners = tau::input::remove_listeners_of(module);
-    const u32_t features = tau::renderer::remove_features_of(module);
-    const u32_t hooks = tau::game::remove_on_load_of(module);
-    tau::reflection::remove_registrations_of(module);
-    const auto panels =
-        std::erase_if(ctx.custom_panels, [module](tau::panel_draw_func panel)
-                      { return tau::os::module_base_of(reinterpret_cast<const void*>(panel)) == module; });
-
-    ctx.game_register_types = nullptr;
-    ctx.game_init = nullptr;
-    ctx.game_update = nullptr;
-    ctx.game_shutdown = nullptr;
-
-    if (!tau::jobs::wait_idle(5000))
+    if (!tau::game_library::close(game_lib))
     {
-        TAU_LOG_WARN("EDITOR", "Kept the previous game library loaded: jobs were still running after 5 s");
         g_retired_game_libs.push_back(game_lib);
-        game_lib = nullptr;
+        game_lib = {};
         return;
     }
 
-    tau::os::free_lib(game_lib);
-    game_lib = nullptr;
-
     std::error_code ec;
-    std::filesystem::remove(cur_temp_lib_name, ec);
-
-    TAU_LOG_INFO("EDITOR",
-                 "Unloaded the previous game library (released {} input listener(s), {} render feature(s), "
-                 "{} on-load hook(s), {} panel(s))",
-                 listeners, features, hooks, panels);
+    std::filesystem::remove(game_lib_copy, ec);
 }
 
 // the active world must be new: the library's types, then the scene, then its on load code
-static std::vector<tau::ecs::entity_t> start_game_library(tau::editor_context_t& ctx, const game_library_t& lib,
+static std::vector<tau::ecs::entity_t> start_game_library(tau::editor_context_t& ctx, const loaded_library_t& lib,
                                                           const nlohmann::json* scene)
 {
-    game_lib = lib.handle;
-    cur_temp_lib_name = lib.loaded_copy;
-    ctx.game_register_types = lib.register_types;
-    ctx.game_init = lib.init;
-    ctx.game_update = lib.update;
-    ctx.game_shutdown = lib.shutdown;
+    game_lib = lib.lib;
+    game_lib_copy = lib.copy;
 
     tau::world_t& world = tau::engine::get_active_world();
     tau::reflection::register_types();
-    ctx.game_register_types(&world);
+    tau::reflection::run_registrations(*world.reflection_ctx);
     world.init();
 
     std::vector<tau::ecs::entity_t> created;
     if (scene) { created = tau::serialization::deserialize_scene(world, *scene); }
 
-    tau::game::run_on_load(world);
+    tau::game::run_hooks(tau::game::hook_e::LOAD, world);
 
     if (lib.editor_init)
     {
@@ -322,17 +252,14 @@ static void reload_game_library(tau::editor_context_t& ctx)
 {
     TAU_LOG_INFO("EDITOR", "Build system signaled completion. Attempting hot reload...");
 
-    game_library_t lib;
+    loaded_library_t lib;
     if (!open_game_library(lib))
     {
         TAU_LOG_ERROR("EDITOR", "Kept the previous game code, the rebuilt library could not be loaded");
         return;
     }
 
-    std::vector<tau::ecs::entity_t> order;
-    const nlohmann::json scene = tau::serialization::serialize_scene(tau::engine::get_active_world(), &order);
-    const std::size_t selected =
-        static_cast<std::size_t>(std::find(order.begin(), order.end(), ctx.selected_entity) - order.begin());
+    const nlohmann::json scene = tau::serialization::serialize_scene(tau::engine::get_active_world());
 
     tau::tween::cancel_all();
 
@@ -341,8 +268,7 @@ static void reload_game_library(tau::editor_context_t& ctx)
     tau::reflection::shutdown();
     release_game_library(ctx);
 
-    const std::vector<tau::ecs::entity_t> created = start_game_library(ctx, lib, &scene);
-    ctx.selected_entity = selected < created.size() ? created[selected] : tau::ecs::NULL_ENTITY;
+    start_game_library(ctx, lib, &scene);
 
     TAU_LOG_INFO("EDITOR", "Successfully hot-reloaded game lib");
 }
@@ -351,31 +277,33 @@ static void begin_play(tau::editor_context_t& ctx)
 {
     tau::world_t& world = tau::engine::get_active_world();
 
-    ctx.world_backup = tau::serialization::serialize_scene(world, &g_play_order);
+    ctx.world_backup = tau::serialization::serialize_scene(world);
     world.begin_play();
-    if (ctx.game_init) { ctx.game_init(&world); }
 }
 
 static void end_play(tau::editor_context_t& ctx)
 {
     tau::world_t& world = tau::engine::get_active_world();
 
-    if (ctx.game_shutdown) { ctx.game_shutdown(&world); }
     world.end_play();
     tau::tween::cancel_all();
 
-    const std::size_t selected = static_cast<std::size_t>(
-        std::find(g_play_order.begin(), g_play_order.end(), ctx.selected_entity) - g_play_order.begin());
-
     tau::serialization::clear_scene(world);
-    const std::vector<tau::ecs::entity_t> created = tau::serialization::deserialize_scene(world, ctx.world_backup);
-    ctx.selected_entity = selected < created.size() ? created[selected] : tau::ecs::NULL_ENTITY;
+    tau::serialization::deserialize_scene(world, ctx.world_backup);
+    tau::assets::collect();
 }
 
 bool process_editor_event(const SDL_Event& event, tau::editor_context_t& ctx)
 {
     ImGui_ImplSDL3_ProcessEvent(&event);
     ImGuiIO& io = ImGui::GetIO();
+
+    // window close asks when unsaved, signal quit does not
+    if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
+    {
+        tau::editor::panels::request_action(tau::engine::get_active_world(), ctx, tau::unsaved_action_e::QUIT);
+        return true;
+    }
 
     if (ctx.cur_mode == tau::editor_mode_e::EDIT) { return false; }
 
@@ -393,6 +321,20 @@ bool process_editor_event(const SDL_Event& event, tau::editor_context_t& ctx)
 using tau::operator""_h;
 
 bool open_project(const std::filesystem::path& project_file, tau::editor_context_t& ctx);
+
+static void update_window_title(const tau::editor_context_t& ctx)
+{
+    static std::string current;
+
+    const std::string scene = ctx.current_scene_path.empty()
+                                  ? std::string("Untitled")
+                                  : std::filesystem::path(ctx.current_scene_path).filename().string();
+    const std::string title = scene + (tau::editor::history::any_dirty() ? "*" : "") + " - tau editor";
+    if (title == current) { return; }
+
+    current = title;
+    SDL_SetWindowTitle(tau::window::get_window(), title.c_str());
+}
 
 namespace
 {
@@ -428,6 +370,7 @@ namespace
         g_gate = gate_state_e::COOKING;
         ctx.project_loaded = false;
 
+        tau::editor::asset_watch::flush();
         tau::editor::asset_cook::set_project(project_file.string());
         g_cook_cancel.reset();
         g_cook_future = std::async(std::launch::async,
@@ -627,7 +570,7 @@ void update_editor_ui(tau::editor_context_t& ctx)
         }
     }
 
-    if (ctx.reload_pending && game_lib)
+    if (ctx.reload_pending && game_lib.handle)
     {
         if (ctx.cur_mode == tau::editor_mode_e::EDIT && g_prev_mode == tau::editor_mode_e::EDIT)
         {
@@ -653,54 +596,24 @@ void update_editor_ui(tau::editor_context_t& ctx)
     if (ctx.pending_scene_load)
     {
         ctx.pending_scene_load = false;
-        std::ifstream file(ctx.pending_scene_path);
-        if (file.is_open())
-        {
-            nlohmann::json scene_json = nlohmann::json::parse(file, nullptr, false);
-            if (scene_json.is_discarded())
-            {
-                TAU_LOG_ERROR("EDITOR", "Failed to parse scene file '{}'", ctx.pending_scene_path);
-            }
-            else
-            {
-                tau::serialization::clear_scene(world);
-                tau::serialization::deserialize_scene(world, scene_json);
-                ctx.current_scene_path = ctx.pending_scene_path;
-                tau::editor::asset_watch::set_open_scene(ctx.current_scene_path);
-                TAU_LOG_INFO("EDITOR", "Scene loaded from {}", ctx.pending_scene_path);
-            }
-        }
-        else
-        {
-            TAU_LOG_ERROR("EDITOR", "Failed to open scene file '{}'", ctx.pending_scene_path);
-        }
+        tau::editor::scene_io::load(world, ctx, ctx.pending_scene_path);
         ctx.pending_scene_path.clear();
     }
 
     if (ctx.pending_scene_save)
     {
         ctx.pending_scene_save = false;
-        nlohmann::json scene_json = tau::serialization::serialize_scene(world);
-        // a scene saved somewhere new is a new asset, over an existing one it keeps its identity
-        scene_json["guid"] = tau::asset_meta::guid_for_writing(ctx.pending_scene_path);
-        std::ofstream file(ctx.pending_scene_path);
-        file << scene_json.dump(4);
-        file.close();
-
-        ctx.current_scene_path = ctx.pending_scene_path;
-        TAU_LOG_INFO("EDITOR", "Scene saved to {}", ctx.pending_scene_path);
+        tau::editor::scene_io::save(world, ctx, ctx.pending_scene_path);
         ctx.pending_scene_path.clear();
-
-        tau::editor::asset_watch::ignore_own_write(ctx.current_scene_path);
-        tau::editor::asset_watch::set_open_scene(ctx.current_scene_path);
-
-        // nothing to reload: the world is the scene, the cooked .tauscene is only for the runtime
-        std::string cook_err;
-        if (!tau::editor::asset_cook::cook_asset(ctx.current_scene_path, cook_err))
-        {
-            TAU_LOG_ERROR("EDITOR", "Scene saved but could not be reimported: {}", cook_err);
-        }
     }
+
+    if (!ctx.confirmed_project.empty())
+    {
+        request_open_project(ctx.confirmed_project, ctx);
+        ctx.confirmed_project.clear();
+    }
+
+    update_window_title(ctx);
 
     tau::editor::asset_watch::tick();
 
@@ -708,7 +621,7 @@ void update_editor_ui(tau::editor_context_t& ctx)
     ImGui::NewFrame();
 
     // bump to override layouts saved in imgui.ini
-    ImGuiID dockspace_id = ImGui::GetID("MainDockSpace_v4");
+    ImGuiID dockspace_id = ImGui::GetID("MainDockSpace_v6");
 
     static bool first_time = true;
     if (first_time)
@@ -743,8 +656,14 @@ void update_editor_ui(tau::editor_context_t& ctx)
             ImGui::DockBuilderDockWindow("Toolbar", dock_toolbar);
             ImGui::DockBuilderDockWindow("Scene Viewport", dock_viewport);
             ImGui::DockBuilderDockWindow("Hierarchy", dock_hierarchy);
+            ImGui::DockBuilderDockWindow("History", dock_hierarchy);
             ImGui::DockBuilderDockWindow("Inspector", dock_inspector);
+            ImGui::DockBuilderDockWindow("Assets", dock_bottom);
             ImGui::DockBuilderDockWindow("Console", dock_bottom);
+
+            // hierarchy in front
+            ImGui::DockBuilderGetNode(dock_hierarchy)->SelectedTabId = ImHashStr("#TAB", 4, ImHashStr("Hierarchy"));
+            ImGui::DockBuilderGetNode(dock_bottom)->SelectedTabId = ImHashStr("#TAB", 4, ImHashStr("Assets"));
 
             ImGui::DockBuilderFinish(dockspace_id);
         }
@@ -757,11 +676,21 @@ void update_editor_ui(tau::editor_context_t& ctx)
     tau::editor::panels::draw_main_menu_bar(world, ctx);
     tau::editor::panels::draw_viewport(world, ctx);
     tau::editor::panels::draw_hierarchy(world, ctx);
+    tau::editor::panels::draw_history(world, ctx);
     tau::editor::panels::draw_inspector(world, ctx);
     tau::editor::panels::draw_toolbar(world, ctx);
+    // asset browser last, so it is in front
     tau::editor::panels::draw_console(world, ctx);
+    tau::editor::panels::draw_asset_browser(world, ctx);
 
     for (tau::panel_draw_func custom_panel : ctx.custom_panels) { custom_panel(world, ctx); }
+
+    tau::editor::handles::update(world, ctx);
+    tau::editor::viewport_input::update(world, ctx);
+    tau::editor::picking::update(world, ctx);
+    tau::editor::history::update(world, ctx);
+    // after shortcuts: a key captured for a binding must not also fire the old one
+    tau::editor::settings::draw(ctx);
 
     if (ctx.recompile_requested && !ctx.recompiling)
     {
@@ -817,23 +746,18 @@ void update_editor_ui(tau::editor_context_t& ctx)
         tau::camera_system::build_view_projection(ecam.position, ecam.rotation.forward(), ecam.rotation.up(),
                                                   ecam.fov_deg, aspect, ecam.near_plane, ecam.far_plane, view, proj,
                                                   view_proj);
+        ctx.view = view;
+        ctx.view_proj = view_proj;
 
         tau::renderer::submit_color_view("PrimaryView"_h, view, proj, view_proj, ecam.position, "SceneColor"_h,
                                          "SceneDepth"_h, tau::renderer::ctx.render_extent, ecam.near_plane,
                                          ecam.far_plane);
     }
-    else
-    {
-        if (ctx.cur_mode == tau::editor_mode_e::PLAY && ctx.game_update)
-        {
-            ctx.game_update(&tau::engine::get_active_world());
-        }
-    }
 
     if (commit_project)
     {
         ctx.show_project_manager = false;
-        request_open_project(chosen_project, ctx);
+        tau::editor::panels::request_action(world, ctx, tau::unsaved_action_e::OPEN_PROJECT, chosen_project);
     }
 }
 
@@ -854,7 +778,6 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
 
     source_lib_path = project.lib_path;
     trigger_path = project.trigger_path;
-    source_lib_name = project.lib_path.string();
     ctx.project_file = project_file.string();
     // saving from the inspector reimports through the cooker, which needs to know the project
     tau::editor::asset_cook::set_project(ctx.project_file);
@@ -868,27 +791,22 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
         if (entry.path().string().find("-loaded-") != std::string::npos) { std::filesystem::remove(entry.path(), ec); }
     }
 
-    const std::filesystem::path cooked = project.cooked_assets_dir;
-
     // assets were brought up to date before this, see start_cook
 
     // engine:// stays on the editor's own cooked tree where vfs::init put it
     // the project's engine asset copy only refreshes on a game build, the editor's own tree always matches
-    tau::vfs::mount("game://assets/", (cooked / "game").generic_string() + "/");
+    tau::project::mount(project, false);
     tau::vfs::mount("src://", project.assets_dir.generic_string() + "/");
-
-    tau::asset_meta::load_guid_map((cooked / "guid_map.json").generic_string());
 
     if (g_prev_mode != tau::editor_mode_e::EDIT)
     {
-        if (ctx.game_shutdown) { ctx.game_shutdown(&tau::engine::get_active_world()); }
         tau::engine::get_active_world().end_play();
         ctx.cur_mode = g_prev_mode = tau::editor_mode_e::EDIT;
     }
 
     // the previous project's world goes while its library is loaded
     tau::engine::create_scene();
-    if (game_lib)
+    if (game_lib.handle)
     {
         tau::reflection::shutdown();
         release_game_library(ctx);
@@ -896,9 +814,18 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
     ctx.reload_pending = false;
     g_replay_after_reload = false;
 
+    tau::editor::history::clear();
+    ctx.selection.clear();
+    ctx.current_scene_path.clear();
+    ctx.inspected_asset.clear();
+    ctx.project_assets_dir = project.assets_dir.string();
+    ctx.project_cooked_dir = project.cooked_assets_dir.string();
+    tau::editor::asset_files::reset();
+    tau::editor::asset_watch::set_open_scene({});
     ctx.project_dir = project.project_dir.string();
+    tau::assets::collect();
 
-    game_library_t lib;
+    loaded_library_t lib;
     if (!open_game_library(lib))
     {
         tau::engine::get_active_world().init();
@@ -911,19 +838,11 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
 
     if (!project.startup_scene.empty())
     {
-        std::string vfs = project.startup_scene;
-        if (vfs.find("://") == std::string::npos)
-        {
-            std::string_view guid_path = tau::asset_meta::get_path_for_guid(project.startup_scene);
-            vfs = !guid_path.empty() ? std::string(guid_path) : ("game://assets/" + project.startup_scene);
-        }
-
-        std::string rel = vfs;
+        std::string rel = tau::project::scene_path(project.startup_scene);
         const std::string prefix = "game://assets/";
         if (rel.rfind(prefix, 0) == 0) { rel = rel.substr(prefix.size()); }
 
-        // map the cooked artifact back to the source a human edits, extensions come from asset_table
-        if (const tau::asset_type_t* scene_type = tau::asset_table::by_key("scene"))
+        if (const tau::asset_type_t* scene_type = tau::assets::type_by_key("scene"))
         {
             const std::string cooked_ext(scene_type->cooked_extension);
             const std::string source_ext(scene_type->source_extensions.front());
@@ -936,21 +855,9 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
         }
         std::filesystem::path scene_src = project.assets_dir / rel;
 
-        std::ifstream file(scene_src);
-        if (file.is_open())
+        if (std::filesystem::exists(scene_src))
         {
-            nlohmann::json scene_json = nlohmann::json::parse(file, nullptr, false);
-            if (!scene_json.is_discarded())
-            {
-                tau::serialization::deserialize_scene(tau::engine::get_active_world(), scene_json);
-                ctx.current_scene_path = scene_src.string();
-                tau::editor::asset_watch::set_open_scene(ctx.current_scene_path);
-                TAU_LOG_INFO("EDITOR", "Opened startup scene: {}", scene_src.string());
-            }
-            else
-            {
-                TAU_LOG_ERROR("EDITOR", "Startup scene is not valid: {}", scene_src.string());
-            }
+            tau::editor::scene_io::load(tau::engine::get_active_world(), ctx, scene_src.string());
         }
         else
         {
@@ -989,6 +896,8 @@ int main(i32 argc, char** argv)
 
     if (!tau::engine::init("tau-editor", 1280, 720)) { return -1; }
 
+    SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
+
     volkInitialize();
     volkLoadInstance(tau::renderer::ctx.instance);
     volkLoadDevice(tau::renderer::ctx.device);
@@ -1004,17 +913,26 @@ int main(i32 argc, char** argv)
     tau::editor::imgui::init();
     tau::editor::imgui::init_multiviewport();
 
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
-    {
-        ImGuiStyle& style = ImGui::GetStyle();
-        style.WindowRounding = 0.0f;
-        style.Colors[ImGuiCol_WindowBg].w = 1.0f;
-    }
-
     tau::engine::create_scene();
     tau::engine::get_active_world().init();
 
     static tau::editor_context_t editor_ctx;
+    tau::editor::picking::init(editor_ctx);
+    tau::editor::handles::init(editor_ctx);
+    tau::editor::history::init(editor_ctx);
+    tau::editor::material_edit::init(editor_ctx);
+    tau::editor::asset_files::init(editor_ctx);
+    tau::editor::prefab_edit::init(editor_ctx);
+    // after the transform update, before the overlay
+    tau::renderer::register_renderer_feature("EditorColliders"_h, tau::renderer::FEATURE_ORDER_OVERLAY - 1,
+                                             [](tau::renderer::rendergraph_t&, tau::ecs::registry_t& reg)
+                                             {
+                                                 if (editor_ctx.show_colliders)
+                                                 {
+                                                     tau::physics::draw_colliders(reg, "PrimaryView"_h);
+                                                 }
+                                             });
+    tau::editor::settings::load(editor_ctx);
 
     if (have_startup_project) { request_open_project(startup_project, editor_ctx); }
 
@@ -1035,14 +953,12 @@ int main(i32 argc, char** argv)
 
     tau::engine::run();
 
+    tau::editor::asset_watch::flush();
+
     // a running build or cook would hold up the exit, so stop it
     g_build_cancel.cancel();
     g_cook_cancel.cancel();
 
-    if (g_prev_mode != tau::editor_mode_e::EDIT && editor_ctx.game_shutdown)
-    {
-        editor_ctx.game_shutdown(&tau::engine::get_active_world());
-    }
 
     vkDeviceWaitIdle(tau::renderer::ctx.device);
 

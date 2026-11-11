@@ -1,10 +1,10 @@
 #include "tau-editor/asset_cook.h"
 
 #include "tau-editor/project_manager.h"
+#include "tau/asset.h"
 #include "tau/log.h"
-#include "tau/project.h"
-
 #include "tau/os.h"
+#include "tau/project.h"
 #include "tau/vfs.h"
 
 #include "json/json.hpp"
@@ -13,6 +13,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -296,6 +297,13 @@ namespace tau::editor::asset_cook
         {
             read_report(report_path, *out_cooked);
             fs::remove(report_path, ec);
+        }
+
+        if (run.started && !run.cancelled)
+        {
+            std::ifstream map(target.output.parent_path() / "guid_map.json");
+            const std::string text((std::istreambuf_iterator<char>(map)), std::istreambuf_iterator<char>());
+            if (!text.empty()) { tau::assets::merge_guid_map(text); }
         }
 
         if (!run.started)

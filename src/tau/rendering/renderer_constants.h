@@ -20,6 +20,8 @@ namespace tau::renderer
     constexpr u32_t MAX_VIEWS_PER_FRAME = 32;
 
     constexpr i32 FEATURE_ORDER_AFTER_POST = 1000;
+    constexpr i32 FEATURE_ORDER_OVERLAY = FEATURE_ORDER_AFTER_POST + 10;
+    constexpr i32 FEATURE_ORDER_UI = FEATURE_ORDER_AFTER_POST + 100;
 
     // what a mesh, material or texture that failed to load is drawn with instead
     inline constexpr const char* FALLBACK_TEXTURE_PATH = "engine://assets/textures/fallback_tex.png";

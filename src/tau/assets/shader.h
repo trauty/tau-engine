@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tau/asset_registry.h"
+#include "tau/asset.h"
 #include "tau/assets/shader_format.h"
 #include "tau/containers/flat_map.h"
 #include "tau/defines.h"

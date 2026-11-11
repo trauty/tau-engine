@@ -29,13 +29,6 @@ target("tau-interface")
     add_includedirs("src", {public = true})
 
     add_defines("CGLM_FORCE_LEFT_HANDED", "VK_NO_PROTOTYPES", "CGLM_FORCE_DEPTH_ZERO_TO_ONE", {public = true})
-
-    add_includedirs("lib/JoltPhysics", {public = true})
-    add_defines("JPH_OBJECT_LAYER_BITS=16", "JPH_PROFILE_ENABLED",
-                "JPH_DEBUG_RENDERER", "JPH_OBJECT_STREAM", {public = true})
-    if not is_mode("debug") then
-        add_defines("JPH_NO_DEBUG", {public = true})
-    end
 target_end()
 
 for _, variant in ipairs({"shared", "static"}) do
@@ -64,6 +57,12 @@ target(is_static and "tau-engine-static" or "tau-engine")
     add_options("profiling", {public = true})
     add_defines("TAU_ENGINE_EXPORT", "CGLM_FORCE_LEFT_HANDED")
     add_deps("tau-interface")
+
+    add_includedirs("lib/JoltPhysics")
+    add_defines("JPH_OBJECT_LAYER_BITS=16", "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER", "JPH_OBJECT_STREAM")
+    if not is_mode("debug") then
+        add_defines("JPH_NO_DEBUG")
+    end
     add_undefines("JPH_FLOATING_POINT_EXCEPTIONS_ENABLED")
 
     if has_config("profiling") then
@@ -108,8 +107,6 @@ target(is_static and "tau-engine-static" or "tau-engine")
     if not is_static then
         add_headerfiles("src/(tau/**.h)")
         add_headerfiles("include/(**)")
-        add_headerfiles("lib/JoltPhysics/(Jolt/**.h)")
-        add_headerfiles("lib/JoltPhysics/(Jolt/**.inl)")
 
         add_installfiles("xmake/tau.lua", {prefixdir = "xmake"})
         add_installfiles("xmake/rules/*.lua", {prefixdir = "xmake/rules"})
@@ -122,6 +119,8 @@ target(is_static and "tau-engine-static" or "tau-engine")
 
         if is_plat("linux") then
             add_installfiles("scripts/tau", {prefixdir = "bin"})
+        elseif is_plat("windows") then
+            add_installfiles("scripts/tau.cmd", {prefixdir = "bin"})
         end
 
         after_install(function (target)
@@ -161,7 +160,6 @@ target("tau-runtime")
     end
 
     add_files("src/tau-runtime/main.cpp")
-    add_files("src/tau-runtime/empty_game.cpp")
 
 target_end()
 

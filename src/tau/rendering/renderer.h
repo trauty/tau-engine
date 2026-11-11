@@ -41,6 +41,12 @@ namespace tau::renderer
                                                   pass_execute_func_t on_execute = {}, u32_t view_name_hash = 0,
                                                   rg_resource_id depth_tex_res = RG_NULL_ID);
 
+    TAU_ENGINE_API bool bind_view_descriptors(VkCommandBuffer cmd, VkPipelineLayout layout, u32_t view_name_hash);
+
+    // every culled object in the view, one pipeline, fills object_buffer
+    TAU_ENGINE_API void draw_view_objects(VkCommandBuffer cmd, u32_t view_name_hash, VkPipeline pipeline,
+                                          VkPipelineLayout layout, push_constants_t pc);
+
     TAU_ENGINE_API rg_pass_t& add_compute_pass(rendergraph_t& graph, u32_t name_hash, const char* debug_name,
                                                tau::material_t* material, u32_t dispatch_x, u32_t dispatch_y,
                                                u32_t dispatch_z, const std::vector<rg_resource_id>& reads,
@@ -53,6 +59,9 @@ namespace tau::renderer
 
     TAU_ENGINE_API extern render_context_t ctx;
 
+    // waits for the frame slot, acquires the swapchain image (vsync wait under FIFO)
+    // called before input so the frame shows post-wait input
+    void begin_frame();
     void render(ecs::registry_t& reg);
 
     void init_per_frame(per_frame_t& frame_data);

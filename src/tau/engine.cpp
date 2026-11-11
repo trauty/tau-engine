@@ -1,13 +1,7 @@
 #include "engine.h"
 
-#include "tau/asset_meta.h"
-#include "tau/asset_registry.h"
-#include "tau/asset_serde.h"
-#include "tau/assets/material.h"
-#include "tau/assets/mesh.h"
-#include "tau/assets/scene.h"
-#include "tau/assets/shader.h"
-#include "tau/assets/texture.h"
+#include "tau/asset.h"
+#include "tau/asset_types.h"
 #include "tau/defines.h"
 #include "tau/input.h"
 #include "tau/jobs.h"
@@ -53,7 +47,6 @@ namespace tau::engine
     {
         std::string game_name;
         std::unique_ptr<world_t> active_scene;
-        asset_registry_t engine_assets;
         bool is_running = true;
         bool is_suspended = false;
 
@@ -75,8 +68,7 @@ namespace tau::engine
         // named after the process, as the editor and a game can share a bin directory
         if (const char* base = SDL_GetBasePath())
         {
-            const std::filesystem::path log_path =
-                std::filesystem::path(base) / "logs" / (name + ".log");
+            const std::filesystem::path log_path = std::filesystem::path(base) / "logs" / (name + ".log");
             if (!tau::log::to_file(log_path.string()))
             {
                 TAU_LOG_WARN("ENGINE", "Could not open a log file at {}", log_path.string());
@@ -85,37 +77,14 @@ namespace tau::engine
 
         TAU_LOG_INFO("ENGINE", "Starting engine...");
 
-        // load the guid map first: engine:// assets loaded at init would otherwise get uuids as paths
+        // guid map before any load
+        tau::assets::register_engine_types();
         const std::string& cooked_root = tau::vfs::cooked_root();
-        if (!cooked_root.empty()) { tau::asset_meta::load_guid_map(cooked_root + "/guid_map.json"); }
+        if (!cooked_root.empty()) { tau::assets::read_guid_map(cooked_root + "/guid_map.json"); }
 
         tau::reflection::register_types();
         tau::jobs::init();
 
-        // names and extensions live in asset_table; only the loader is bound here
-        tau::asset_serde::reg(tau::get_type_id<tau::mesh_t>(), [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.load_sync<tau::mesh_t>(p); },
-                               [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.reload<tau::mesh_t>(p); });
-        tau::asset_serde::reg(tau::get_type_id<tau::material_t>(),
-                               [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.load_sync<tau::material_t>(p); },
-                               [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.reload<tau::material_t>(p); });
-        tau::asset_serde::reg(tau::get_type_id<tau::texture_t>(), [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.load_sync<tau::texture_t>(p); },
-                               [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.reload<tau::texture_t>(p); });
-        tau::asset_serde::reg(tau::get_type_id<tau::shader_t>(), [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.load_sync<tau::shader_t>(p); },
-                               [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.reload<tau::shader_t>(p); });
-        tau::asset_serde::reg(tau::get_type_id<tau::scene_t>(), [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.load_sync<tau::scene_t>(p); },
-                               [](tau::asset_registry_t& r, const std::string& p)
-                               { return r.reload<tau::scene_t>(p); });
-
-        // SDL_SetHintWithPriority(SDL_HINT_SHUTDOWN_DBUS_ON_QUIT, "1", SDL_HintPriority::SDL_HINT_OVERRIDE);
         SDL_Init(SDL_INIT_VIDEO);
 
         tau::input::detail::init();
@@ -163,6 +132,8 @@ namespace tau::engine
         {
             if (!is_suspended)
             {
+                tau::renderer::begin_frame();
+
                 tau::time::update();
                 f64 frame_time = tau::time::get_dt();
 
@@ -249,8 +220,7 @@ namespace tau::engine
         }
 
         tau::renderer::reset_assets();
-        engine_assets.shutdown();
-        tau::asset_meta::shutdown();
+        tau::assets::shutdown();
         tau::renderer::shutdown();
         tau::jobs::shutdown();
         tau::window::shutdown();
@@ -290,8 +260,6 @@ namespace tau::engine
     }
 
     world_t& get_active_world() { return *active_scene; }
-
-    asset_registry_t& get_asset_registry() { return engine_assets; }
 
     void set_event_callback(event_callback_t cb) { user_event_cb = cb; }
     void set_ui_callback(ui_callback_t cb) { user_ui_cb = cb; }

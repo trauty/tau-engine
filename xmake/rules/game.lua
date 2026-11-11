@@ -51,10 +51,10 @@ on_load(function(target)
         target:add("files", info.volk_source)
 
         import("tau_stamp")
-        local stamp_file = path.join(target:autogendir(), "engine_stamp.cpp")
-        os.mkdir(path.directory(stamp_file))
-        tau_stamp.write_game_source(stamp_file, info.header_root, info.version_file, tau_stamp.build_mode())
-        target:add("files", stamp_file)
+        local entry_file = path.join(target:autogendir(), "game_entry.cpp")
+        os.mkdir(path.directory(entry_file))
+        tau_stamp.write_game_source(entry_file, info.header_root, info.version_file, tau_stamp.build_mode())
+        target:add("files", entry_file)
     end
 
     if config.get("mode") == "release" then
@@ -66,11 +66,6 @@ on_load(function(target)
         target:add("includedirs", dir)
     end
     target:add("defines", "CGLM_FORCE_LEFT_HANDED", "VK_NO_PROTOTYPES", "CGLM_FORCE_DEPTH_ZERO_TO_ONE")
-    target:add("defines", "JPH_OBJECT_LAYER_BITS=16", "JPH_PROFILE_ENABLED",
-        "JPH_DEBUG_RENDERER", "JPH_OBJECT_STREAM")
-    if not is_mode("debug") then
-        target:add("defines", "JPH_NO_DEBUG")
-    end
     if target:is_plat("windows") then
         target:add("defines", "KHRONOS_STATIC")
     end

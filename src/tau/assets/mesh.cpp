@@ -1,6 +1,5 @@
 #include "mesh.h"
 
-#include "tau/asset_table.h"
 #include "tau/asset.h"
 #include "tau/assets/mesh_format.h"
 #include "tau/log.h"
@@ -21,7 +20,7 @@ namespace tau
 {
     std::optional<mesh_t> asset_loader_t<mesh_t>::load(const std::string& path)
     {
-        std::string cooked_path = tau::asset_table::cooked_path(tau::get_type_id<mesh_t>(), path);
+        std::string cooked_path = tau::assets::cooked_path(tau::get_type_id<mesh_t>(), path);
 
         SDL_IOStream* stream = tau::vfs::open_read(cooked_path);
         if (!stream)

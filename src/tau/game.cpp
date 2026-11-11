@@ -2,46 +2,42 @@
 
 #include "tau/os.h"
 
-#include <algorithm>
 #include <vector>
 
 namespace tau::game
 {
     namespace
     {
-        // filled from the game library's static initialisers as it loads
-        std::vector<on_load_fn>& hooks()
+        struct hook_t
         {
-            static std::vector<on_load_fn> list;
+            hook_e when;
+            hook_fn fn;
+        };
+
+        std::vector<hook_t>& hooks()
+        {
+            static std::vector<hook_t> list;
             return list;
         }
     } // namespace
 
-    const char* library_stamp(void* lib)
+    void add_hook(hook_e when, hook_fn fn)
     {
-        using stamp_fn = const char* (*)();
-        const stamp_fn stamp = reinterpret_cast<stamp_fn>(os::get_proc_address(lib, "tau_game_engine_stamp"));
-        return stamp ? stamp() : nullptr;
+        if (fn != nullptr) { hooks().push_back({when, fn}); }
     }
 
-    void add_on_load(on_load_fn fn)
+    void run_hooks(hook_e when, tau::world_t& world)
     {
-        if (fn != nullptr) { hooks().push_back(fn); }
+        for (const hook_t& hook : hooks())
+        {
+            if (hook.when == when) { hook.fn(world); }
+        }
     }
 
-    void run_on_load(tau::world_t& world)
+    u32_t remove_hooks_of(void* module_base)
     {
-        for (on_load_fn fn : hooks()) { fn(world); }
-    }
-
-    u32_t remove_on_load_of(void* module_base)
-    {
-        std::vector<on_load_fn>& list = hooks();
-        const auto first =
-            std::remove_if(list.begin(), list.end(), [module_base](on_load_fn fn)
-                           { return os::module_base_of(reinterpret_cast<const void*>(fn)) == module_base; });
-        const u32_t removed = static_cast<u32_t>(list.end() - first);
-        list.erase(first, list.end());
-        return removed;
+        return static_cast<u32_t>(
+            std::erase_if(hooks(), [module_base](const hook_t& hook)
+                          { return os::module_base_of(reinterpret_cast<const void*>(hook.fn)) == module_base; }));
     }
 } // namespace tau::game

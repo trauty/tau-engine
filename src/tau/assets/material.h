@@ -4,13 +4,14 @@
 #include "tau/assets/texture.h"
 #include "tau/containers/flat_map.h"
 #include "tau/defines.h"
-#include "tau/engine.h"
 #include "tau/log.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/samplers.h"
 
 #include <climits>
 #include <cstring>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -22,38 +23,35 @@ namespace tau
     {
         static constexpr std::string_view type_key = "material";
 
-        asset_handle_t shader_handle;
+        asset_t<shader_t> shader;
         std::vector<u8> data;
 
         std::vector<u32_t> authored_properties;
 
-        flat_map_t<asset_handle_t> bound_textures;
-
-        // a texture the file names that failed to load draws as the fallback, the original reference is kept
-        // so saving writes what the file said. rebinding or clearing the slot forgets it
-        flat_map_t<std::string> missing_textures;
+        // failed texture stays bound, draws fallback
+        flat_map_t<asset_t<texture_t>> textures;
 
         u32_t heap_offset[renderer::MAX_FRAMES_IN_FLIGHT];
         u32_t dirty_frames = renderer::MAX_FRAMES_IN_FLIGHT;
         u32_t last_synced_frame = renderer::BINDLESS_NULL_HANDLE;
 
         material_t() = default;
-        material_t(asset_handle_t target_shader);
+        explicit material_t(asset_t<shader_t> target_shader);
 
         void sync();
 
         template <typename T>
         void set_property(u32_t name_hash, const T& value)
         {
-            shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(shader_handle);
-            if (!shader) { return; }
+            const shader_t* layout = assets::get(shader);
+            if (!layout) { return; }
 
-            const flat_map_t<shader_member_t>& members = shader->module.members;
+            const flat_map_t<shader_member_t>& members = layout->module.members;
             const shader_member_t* it = members.find(name_hash);
 
             if (it == nullptr)
             {
-                TAU_LOG_WARN("MATERIAL", "Property {} not found in shader '{}'", name_hash, shader->module.name);
+                TAU_LOG_WARN("MATERIAL", "Property {} not found in shader '{}'", name_hash, layout->module.name);
                 return;
             }
 
@@ -70,12 +68,10 @@ namespace tau
             dirty_frames = renderer::MAX_FRAMES_IN_FLIGHT;
         }
 
-        // every bound_textures entry is a reference the material owns, released on rebind, clear or unload
-        // set_texture takes over a caller held reference, even when the texture did not load
-        void set_texture(u32_t name_hash, asset_handle_t tex_handle);
+        void set_texture(u32_t name_hash, asset_t<texture_t> texture);
         void clear_texture(u32_t name_hash);
 
-        // rereads the bindless id of bound textures reloaded in place, touches no reference counts
+        // rewrites bindless id, changes every load
         void refresh_texture(u32_t name_hash);
 
         void set_property_raw(u32_t name_hash, const void* value, u32_t size);
@@ -99,5 +95,7 @@ namespace tau
     {
         static std::optional<material_t> load(const std::string& path);
         static void unload(material_t& mat);
+        static void deps(const material_t& mat, std::vector<asset_handle_t>& out);
+        static asset_dep_e dep_reloaded(material_t& mat, asset_handle_t dep);
     };
 } // namespace tau

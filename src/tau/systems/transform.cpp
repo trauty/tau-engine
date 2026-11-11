@@ -11,6 +11,7 @@
 #include "tau/math.h"
 #include "tau/profiling.h"
 
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -26,6 +27,13 @@ namespace tau::transform_system
         struct orphans_t
         { std::vector<ecs::entity_t> entities; };
 
+        // top level transforms are linked siblings too
+        struct roots_t
+        {
+            ecs::entity_t first = ecs::NULL_ENTITY;
+            ecs::entity_t last = ecs::NULL_ENTITY;
+        };
+
         template <typename T>
         bool same_bits(const T& a, const T& b)
         { return std::memcmp(&a, &b, sizeof(T)) == 0; }
@@ -39,6 +47,11 @@ namespace tau::transform_system
             {
                 transform_t& parent_transform = reg.get<transform_t>(transform.parent);
                 if (parent_transform.first_child == entity) { parent_transform.first_child = transform.next_sibling; }
+            }
+            else if (roots_t* roots = reg.ctx().find<roots_t>())
+            {
+                if (roots->first == entity) { roots->first = transform.next_sibling; }
+                if (roots->last == entity) { roots->last = transform.prev_sibling; }
             }
             if (transform.prev_sibling != ecs::NULL_ENTITY)
             {
@@ -54,7 +67,61 @@ namespace tau::transform_system
             transform.prev_sibling = ecs::NULL_ENTITY;
         }
 
-        static void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent)
+        // before `before` if it is a sibling, else last
+        static void link(ecs::registry_t& reg, ecs::entity_t entity, transform_t& transform, ecs::entity_t parent,
+                         ecs::entity_t before)
+        {
+            transform.parent = parent;
+
+            roots_t* roots = parent == ecs::NULL_ENTITY ? reg.ctx().find<roots_t>() : nullptr;
+            if (parent == ecs::NULL_ENTITY && !roots) { return; }
+
+            ecs::entity_t& first = roots ? roots->first : reg.get<transform_t>(parent).first_child;
+
+            transform_t* before_transform = before != ecs::NULL_ENTITY && before != entity && reg.valid(before)
+                                                ? reg.try_get<transform_t>(before)
+                                                : nullptr;
+            // top level without predecessor and not first: orphan about to go
+            const bool before_linked =
+                before_transform && before_transform->parent == parent &&
+                (parent != ecs::NULL_ENTITY || before_transform->prev_sibling != ecs::NULL_ENTITY || first == before);
+
+            if (before_linked)
+            {
+                transform.next_sibling = before;
+                transform.prev_sibling = before_transform->prev_sibling;
+                if (before_transform->prev_sibling != ecs::NULL_ENTITY)
+                {
+                    reg.get<transform_t>(before_transform->prev_sibling).next_sibling = entity;
+                }
+                else
+                {
+                    first = entity;
+                }
+                before_transform->prev_sibling = entity;
+                return;
+            }
+
+            ecs::entity_t last = roots ? roots->last : first;
+            if (!roots && last != ecs::NULL_ENTITY)
+            {
+                while (reg.get<transform_t>(last).next_sibling != ecs::NULL_ENTITY)
+                {
+                    last = reg.get<transform_t>(last).next_sibling;
+                }
+            }
+
+            transform.prev_sibling = last;
+            transform.next_sibling = ecs::NULL_ENTITY;
+            if (last != ecs::NULL_ENTITY) { reg.get<transform_t>(last).next_sibling = entity; }
+            else
+            {
+                first = entity;
+            }
+            if (roots) { roots->last = entity; }
+        }
+
+        static void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent, ecs::entity_t before)
         {
             for (ecs::entity_t e = parent; e != ecs::NULL_ENTITY; e = reg.get<transform_t>(e).parent)
             {
@@ -67,26 +134,23 @@ namespace tau::transform_system
 
             transform_t& child_transform = reg.get<transform_t>(child);
             unlink(reg, child, child_transform);
-
-            child_transform.parent = parent;
-
-            if (parent != ecs::NULL_ENTITY)
-            {
-                transform_t& parent_transform = reg.get<transform_t>(parent);
-
-                child_transform.next_sibling = parent_transform.first_child;
-                if (parent_transform.first_child != ecs::NULL_ENTITY)
-                {
-                    reg.get<transform_t>(parent_transform.first_child).prev_sibling = child;
-                }
-                parent_transform.first_child = child;
-            }
+            link(reg, child, child_transform, parent, before);
 
             is_hierarchy_dirty = true;
             child_transform.is_dirty = true;
         }
 
-        static void on_construct(ecs::registry_t&, ecs::entity_t) { is_hierarchy_dirty = true; }
+        static void on_construct(ecs::registry_t& reg, ecs::entity_t entity)
+        {
+            transform_t& transform = reg.get<transform_t>(entity);
+            transform.parent = ecs::NULL_ENTITY;
+            transform.first_child = ecs::NULL_ENTITY;
+            transform.next_sibling = ecs::NULL_ENTITY;
+            transform.prev_sibling = ecs::NULL_ENTITY;
+
+            link(reg, entity, transform, ecs::NULL_ENTITY, ecs::NULL_ENTITY);
+            is_hierarchy_dirty = true;
+        }
 
         // children are destroyed in the next update, destroying them inside entt's signal breaks range destroy
         static void on_destroy(ecs::registry_t& reg, ecs::entity_t entity)
@@ -281,12 +345,54 @@ namespace tau::transform_system
         set_local_position(reg, entity, new_local_pos);
     }
 
-    void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent)
-    { internal_t::set_parent(reg, child, parent); }
+    void set_world_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat_t world_rot)
+    {
+        transform_t& t = reg.get<transform_t>(entity);
+
+        if (t.get_parent() == ecs::NULL_ENTITY)
+        {
+            t.local_rotation = quat_t::normalize(world_rot);
+            return;
+        }
+
+        quat_t parent_inv = get_world_rotation(reg, t.get_parent());
+        glm_quat_inv(parent_inv, parent_inv);
+        t.local_rotation = quat_t::normalize(parent_inv * world_rot);
+    }
+
+    void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent, ecs::entity_t before)
+    { internal_t::set_parent(reg, child, parent, before); }
+
+    void set_parent_keep_world(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent, ecs::entity_t before)
+    {
+        const vec3_t position = get_world_position(reg, child);
+        const quat_t rotation = get_world_rotation(reg, child);
+        const vec3_t scale = get_world_scale(reg, child);
+
+        internal_t::set_parent(reg, child, parent, before);
+        if (reg.get<transform_t>(child).get_parent() != parent) { return; }
+
+        set_world_position(reg, child, position);
+        set_world_rotation(reg, child, rotation);
+
+        // per axis, exact under a uniformly scaled parent
+        const vec3_t parent_scale =
+            parent != ecs::NULL_ENTITY ? get_world_scale(reg, parent) : vec3_t{1.0f, 1.0f, 1.0f};
+        auto ratio = [](f32 a, f32 b) { return std::fabs(b) > 1e-6f ? a / b : a; };
+        reg.get<transform_t>(child).local_scale = {ratio(scale.x, parent_scale.x), ratio(scale.y, parent_scale.y),
+                                                   ratio(scale.z, parent_scale.z)};
+    }
+
+    ecs::entity_t first_root(const ecs::registry_t& reg)
+    {
+        const roots_t* roots = reg.ctx().find<roots_t>();
+        return roots ? roots->first : ecs::NULL_ENTITY;
+    }
 
     void connect(ecs::registry_t& reg)
     {
         reg.ctx().emplace<orphans_t>();
+        reg.ctx().emplace<roots_t>();
         reg.on_construct<transform_t>().connect<&internal_t::on_construct>();
         reg.on_destroy<transform_t>().connect<&internal_t::on_destroy>();
     }

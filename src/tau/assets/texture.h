@@ -11,19 +11,12 @@
 
 namespace tau
 {
-    enum class texture_format_e
-    {
-        SRGB,
-        LINEAR
-    };
-
     struct TAU_ENGINE_API texture_t
     {
         static constexpr std::string_view type_key = "texture";
 
         i32 width = 0;
         i32 height = 0;
-        texture_format_e type = texture_format_e::SRGB;
 
         VkImage image = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
@@ -34,7 +27,7 @@ namespace tau
     template <>
     struct TAU_ENGINE_API asset_loader_t<texture_t>
     {
-        static std::optional<texture_t> load(const std::string& path, texture_format_e type = texture_format_e::SRGB);
+        static std::optional<texture_t> load(const std::string& path);
         static void unload(texture_t& tex);
     };
 } // namespace tau

@@ -1,6 +1,5 @@
 #include "texture.h"
 
-#include "tau/asset_table.h"
 #include "tau/asset.h"
 #include "tau/defines.h"
 #include "tau/log.h"
@@ -21,9 +20,9 @@
 
 namespace tau
 {
-    std::optional<texture_t> asset_loader_t<texture_t>::load(const std::string& path, texture_format_e type)
+    std::optional<texture_t> asset_loader_t<texture_t>::load(const std::string& path)
     {
-        std::string cooked_path = tau::asset_table::cooked_path(tau::get_type_id<texture_t>(), path);
+        std::string cooked_path = tau::assets::cooked_path(tau::get_type_id<texture_t>(), path);
 
         std::vector<u8_t> file_data = tau::vfs::read_bytes(cooked_path);
         if (file_data.empty())
@@ -71,7 +70,6 @@ namespace tau
         texture_t tex;
         tex.width = k_tex->baseWidth;
         tex.height = k_tex->baseHeight;
-        tex.type = type;
 
         VkFormat format = (VkFormat)k_tex->vkFormat;
         VkDeviceSize image_size = ktxTexture_GetDataSize(ktxTexture(k_tex));

@@ -1,8 +1,6 @@
 #include "scene.h"
 
-#include "tau/asset_table.h"
 #include "tau/hash.h"
-#include "tau/asset_handle.h"
 #include "tau/assets/scene_format.h"
 #include "tau/log.h"
 #include "tau/vfs.h"
@@ -54,7 +52,7 @@ namespace tau
                 return read_pod(stream, prop.vec.x) && read_pod(stream, prop.vec.y) && read_pod(stream, prop.vec.z);
             case scene_value_type_e::STRING: return read_str(stream, prop.str);
             case scene_value_type_e::ASSET_REF:
-                return read_pod(stream, prop.asset_type) && read_str(stream, prop.str) && read_str(stream, prop.guid);
+                return read_pod(stream, prop.asset_type) && read_str(stream, prop.str) && read_pod(stream, prop.guid);
             case scene_value_type_e::ASSET_REF_LIST:
             {
                 u32_t entry_count = 0;
@@ -62,11 +60,11 @@ namespace tau
 
                 for (u32_t i = 0; i < entry_count && ok; i++)
                 {
-                    ok = read_str(stream, prop.strs.emplace_back()) && read_str(stream, prop.guids.emplace_back());
+                    ok = read_str(stream, prop.strs.emplace_back()) && read_pod(stream, prop.guids.emplace_back());
                 }
                 return ok;
             }
-            case scene_value_type_e::ENTITY: return read_pod(stream, prop.u);
+            case scene_value_type_e::ENTITY: return read_pod(stream, prop.ref);
             case scene_value_type_e::STRUCT:
             case scene_value_type_e::LIST:
             {
@@ -87,7 +85,7 @@ namespace tau
 
     std::optional<scene_t> asset_loader_t<scene_t>::load(const std::string& path)
     {
-        std::string cooked_path = tau::asset_table::cooked_path(tau::get_type_id<scene_t>(), path);
+        std::string cooked_path = tau::assets::cooked_path(tau::get_type_id<scene_t>(), path);
 
         SDL_IOStream* stream = tau::vfs::open_read(cooked_path);
         if (!stream)
@@ -121,7 +119,7 @@ namespace tau
             scene_entity_t& entity = scene.entities.emplace_back();
 
             u32_t component_count = 0;
-            if (!read_pod(stream, entity.parent) || !read_pod(stream, component_count))
+            if (!read_pod(stream, entity.id) || !read_pod(stream, entity.parent) || !read_pod(stream, component_count))
             {
                 ok = false;
                 break;

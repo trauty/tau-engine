@@ -1,36 +1,17 @@
-#include "tau/asset_meta.h"
-#include "tau/asset_registry.h"
+#include "tau/asset.h"
 #include "tau/assets/scene.h"
-#include "tau/ecs_fwd.h"
 #include "tau/engine.h"
 #include "tau/game.h"
 #include "tau/log.h"
 #include "tau/project.h"
+#include "tau/reflection.h"
 #include "tau/serialization.h"
-#include "tau/vfs.h"
 #include "tau/world.h"
 
 #include <SDL3/SDL_main.h>
-#include <filesystem>
 
-#ifdef TAU_STATIC_LINK
-extern "C" void tau_game_register_types(tau::world_t* world);
-extern "C" void tau_game_init(tau::world_t* world);
-extern "C" void tau_game_update(tau::world_t* world);
-extern "C" void tau_game_shutdown(tau::world_t* world);
-#else
-    #include "tau/os.h"
-    #if TAU_PLATFORM_WIN
-        #include <windows.h>
-    #elif TAU_PLATFORM_LINUX
-        #include <dlfcn.h>
-    #endif
-
-game_register_types_func game_register_types = nullptr;
-game_init_func game_init = nullptr;
-game_update_func game_update = nullptr;
-game_shutdown_func game_shutdown = nullptr;
-tau::os::lib_handle_t game_lib = nullptr;
+#ifndef TAU_STATIC_LINK
+    #include "tau/game_library.h"
 #endif
 
 int main(int argc, char* argv[])
@@ -57,64 +38,17 @@ int main(int argc, char* argv[])
 
     // engine::init() already mounted the cooked tree beside the binary and loaded its guid map
     // a project keeps its own engine asset copy, its root supersedes that one, guid maps merge
-    if (have_project)
-    {
-        namespace fs = std::filesystem;
-        const fs::path cooked = project.cooked_assets_dir;
-        tau::vfs::mount("engine://assets/", (cooked / "engine").generic_string() + "/");
-        tau::vfs::mount("game://assets/", (cooked / "game").generic_string() + "/");
-        tau::asset_meta::load_guid_map((cooked / "guid_map.json").generic_string());
-    }
+    if (have_project) { tau::project::mount(project, true); }
 
     tau::engine::create_scene();
-    tau::world_t& cur_world = tau::engine::get_active_world();
-    cur_world.init();
+    tau::world_t& world = tau::engine::get_active_world();
+    world.init();
 
-    // game types before the scene loads, else its components are unknown and dropped
-#ifdef TAU_STATIC_LINK
-    tau_game_register_types(&cur_world);
-    tau::game::run_on_load(cur_world);
-#else
+#ifndef TAU_STATIC_LINK
+    tau::game_library_t game_lib;
     if (have_project)
     {
-        std::string lib_name = project.lib_path.string();
-
-        game_lib = tau::os::load_lib(lib_name.c_str());
-
-        if (!game_lib)
-        {
-    #if TAU_PLATFORM_WIN
-            TAU_LOG_FATAL("ENGINE", "Failed to load library with name: {}; Error: {}", lib_name, GetLastError());
-    #elif TAU_PLATFORM_LINUX
-            TAU_LOG_FATAL("ENGINE", "Failed to load library with name: {}; Error: {}", lib_name, dlerror());
-    #endif
-            return -1;
-        }
-
-        game_register_types =
-            (game_register_types_func)tau::os::get_proc_address(game_lib, "tau_game_register_types_internal");
-        game_init = (game_init_func)tau::os::get_proc_address(game_lib, "tau_game_init_internal");
-        game_update = (game_update_func)tau::os::get_proc_address(game_lib, "tau_game_update_internal");
-        game_shutdown = (game_shutdown_func)tau::os::get_proc_address(game_lib, "tau_game_shutdown_internal");
-
-        if (!game_register_types || !game_init || !game_update || !game_shutdown)
-        {
-            TAU_LOG_FATAL("ENGINE", "Could not find one or more game logic functions inside game lib");
-            return -1;
-        }
-
-        const char* lib_stamp = tau::game::library_stamp(game_lib);
-        if (!lib_stamp || std::string_view(lib_stamp) != tau::engine::build_stamp())
-        {
-            TAU_LOG_FATAL("ENGINE",
-                          "The game library was built against a different engine build (library: {}, runtime: {}). "
-                          "Build the engine and the project again.",
-                          lib_stamp ? lib_stamp : "none", tau::engine::build_stamp());
-            return -1;
-        }
-
-        game_register_types(&cur_world);
-        tau::game::run_on_load(cur_world);
+        if (!tau::game_library::open(project.lib_path.string(), game_lib)) { return -1; }
     }
     else
     {
@@ -123,29 +57,22 @@ int main(int argc, char* argv[])
     }
 #endif
 
+    // game types first, else its components are dropped
+    tau::reflection::run_registrations(*world.reflection_ctx);
+
 #ifdef TAU_STARTUP_SCENE
     const std::string baked_startup_scene = TAU_STARTUP_SCENE;
 #else
     const std::string baked_startup_scene;
 #endif
-    std::string startup_scene_ref =
-        (have_project && !project.startup_scene.empty()) ? project.startup_scene : baked_startup_scene;
+    const std::string scene_path = tau::project::scene_path(
+        (have_project && !project.startup_scene.empty()) ? project.startup_scene : baked_startup_scene);
 
-    if (!startup_scene_ref.empty())
+    if (!scene_path.empty())
     {
-        std::string scene_path = startup_scene_ref;
-        if (scene_path.find("://") == std::string::npos)
+        if (const tau::scene_t* scene = tau::assets::get(tau::assets::load<tau::scene_t>(scene_path)))
         {
-            std::string_view guid_path = tau::asset_meta::get_path_for_guid(startup_scene_ref);
-            scene_path = !guid_path.empty() ? std::string(guid_path) : ("game://assets/" + startup_scene_ref);
-        }
-
-        tau::asset_registry_t& registry = tau::engine::get_asset_registry();
-        tau::asset_handle_t scene_handle = registry.load_sync<tau::scene_t>(scene_path);
-
-        if (tau::scene_t* scene = registry.get<tau::scene_t>(scene_handle))
-        {
-            tau::serialization::instantiate_scene(cur_world, *scene);
+            tau::serialization::instantiate_scene(world, *scene);
             TAU_LOG_INFO("ENGINE", "Loaded startup scene: {}", scene_path);
         }
         else
@@ -153,41 +80,27 @@ int main(int argc, char* argv[])
             TAU_LOG_ERROR("ENGINE", "Failed to load startup scene: {}", scene_path);
         }
 
-        registry.release<tau::scene_t>(scene_handle);
+        // the entities hold what they use
+        tau::assets::collect();
     }
 
-    tau::engine::get_active_world().register_update_system(
-        [](tau::world_t& world)
-        {
-#ifdef TAU_STATIC_LINK
-            tau_game_update(&world);
-#else
-            if (game_update) { game_update(&world); }
-#endif
-        });
-
-    // with the scene loaded, as when the editor starts Play
-    cur_world.begin_play();
-#ifdef TAU_STATIC_LINK
-    tau_game_init(&cur_world);
-#else
-    if (game_init) { game_init(&cur_world); }
-#endif
+    tau::game::run_hooks(tau::game::hook_e::LOAD, world);
+    world.begin_play();
 
     tau::engine::run();
 
-#ifdef TAU_STATIC_LINK
-    tau_game_shutdown(&tau::engine::get_active_world());
-#else
-    if (game_shutdown) { game_shutdown(&tau::engine::get_active_world()); }
-#endif
     tau::engine::get_active_world().end_play();
 
-    tau::engine::shutdown();
-
+    // world and types run its code, so they go first
 #ifndef TAU_STATIC_LINK
-    if (game_lib) { tau::os::free_lib(game_lib); }
+    if (game_lib.handle)
+    {
+        tau::engine::create_scene();
+        tau::reflection::shutdown();
+        tau::game_library::close(game_lib);
+    }
 #endif
 
+    tau::engine::shutdown();
     return 0;
 }

@@ -1,7 +1,6 @@
 #include "shader.h"
 
 #include "tau/asset.h"
-#include "tau/asset_table.h"
 #include "tau/assets/shader_format.h"
 #include "tau/containers/flat_map.h"
 #include "tau/defines.h"
@@ -44,7 +43,7 @@ namespace tau
 
     std::optional<shader_t> tau::asset_loader_t<shader_t>::load(const std::string& path)
     {
-        std::string cooked_path = tau::asset_table::cooked_path(tau::get_type_id<shader_t>(), path);
+        std::string cooked_path = tau::assets::cooked_path(tau::get_type_id<shader_t>(), path);
 
         SDL_IOStream* stream = tau::vfs::open_read(cooked_path);
         if (!stream)

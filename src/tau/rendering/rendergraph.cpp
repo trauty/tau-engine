@@ -9,6 +9,7 @@
 #include "tau/rendering/vulkan.h"
 #include "vulkan/vulkan_core.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <queue>
@@ -318,9 +319,7 @@ namespace tau::renderer
                     render_width = res.desc.width;
                     render_height = res.desc.height;
 
-                    VkClearValue clear_color = {
-                        {0.01f, 0.01f, 0.01f, 1.0f}
-                    };
+                    VkClearValue clear_color = {.color = res.desc.color_clear};
 
                     color_attachments.push_back({
                         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -421,6 +420,8 @@ namespace tau::renderer
     VkImageLayout rendergraph_t::get_layout(rg_resource_id id) const { return resources[id].cur_layout; }
 
     VkFormat rendergraph_t::get_format(rg_resource_id id) const { return resources[id].desc.format; }
+
+    VkImage rendergraph_t::get_image(rg_resource_id id) const { return resources[id].image; }
 
     u32_t rendergraph_t::get_bindless_id(rg_resource_id id) const { return resources[id].bindless_id; }
 

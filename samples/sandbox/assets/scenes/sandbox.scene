@@ -28,7 +28,7 @@
                     "material": {
                         "ty": 6,
                         "v": {
-                            "g": "784f873c-c691-5155-9995-6107b75c4869",
+                            "g": "84621d302ca05ce8",
                             "p": "game://assets/materials/sphere.mat",
                             "t": "material"
                         }
@@ -36,7 +36,7 @@
                     "mesh": {
                         "ty": 6,
                         "v": {
-                            "g": "9c461082-f0a8-25cf-a35e-e4808a0c2ab0",
+                            "g": "71fad64bce5f169b",
                             "p": "game://assets/models/sphere.glb",
                             "t": "mesh"
                         }
@@ -90,7 +90,7 @@
                     "material": {
                         "ty": 6,
                         "v": {
-                            "g": "2e4c17cd-51ed-9a1f-b280-8e1f12f40b3d",
+                            "g": "195956c96db324aa",
                             "p": "game://assets/materials/ground.mat",
                             "t": "material"
                         }
@@ -98,7 +98,7 @@
                     "mesh": {
                         "ty": 6,
                         "v": {
-                            "g": "f545e40d-c05e-e053-a022-897a586cffa5",
+                            "g": "ff888a45bfef7a58",
                             "p": "game://assets/models/ground.glb",
                             "t": "mesh"
                         }
@@ -228,7 +228,7 @@
                     "final_pass": {
                         "ty": 6,
                         "v": {
-                            "g": "634021bc-77f6-1712-9e81-9a38f9cc07bf",
+                            "g": "81dae41f7ec5eca9",
                             "p": "engine://assets/materials/uberpost.mat",
                             "t": "material"
                         }
@@ -269,5 +269,5 @@
             }
         }
     ],
-    "guid": "2946b33c-1bb2-e9fe-b606-762af10042c5"
+    "guid": "e4cc745292634ddc"
 }

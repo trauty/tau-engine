@@ -39,4 +39,5 @@
     X(RGBA8_UNORM, VK_FORMAT_R8G8B8A8_UNORM)                                                                           \
     X(RGBA16_FLOAT, VK_FORMAT_R16G16B16A16_SFLOAT)                                                                     \
     X(RG16_FLOAT, VK_FORMAT_R16G16_SFLOAT)                                                                             \
-    X(R8_UNORM, VK_FORMAT_R8_UNORM)
+    X(R8_UNORM, VK_FORMAT_R8_UNORM)                                                                                    \
+    X(R32_UINT, VK_FORMAT_R32_UINT)

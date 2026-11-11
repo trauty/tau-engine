@@ -3,6 +3,9 @@
 # CRLF on checkout while editors, clang-format and generators wrote LF, so the working tree
 # mixed both per file and every touched file warned about being converted.
 * text=auto eol=lf
+# cmd misreads labels in LF batch files
+*.cmd    text eol=crlf
+*.bat    text eol=crlf
 
 # Binaries: never converted, never diffed as text. Detection would catch most of these on its
 # own; naming them means a file that happens to look like text cannot be mangled.

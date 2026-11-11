@@ -4,19 +4,20 @@
 #include "tau-cooker/scene_cooker.h"
 #include "tau-cooker/shader_cooker.h"
 #include "tau-cooker/texture_cooker.h"
-#include "tau/asset_meta.h"
-#include "tau/asset_table.h"
+#include "tau/asset.h"
+#include "tau/asset_sources.h"
+#include "tau/asset_types.h"
 #include "tau/log.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
-#include <fstream>
-#include <iterator>
-#include <filesystem>
-#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -58,6 +59,7 @@ int main(i32 argc, char** argv)
 
     // logging needs init() first: TAU_LOG_* queues onto the worker it starts
     tau::log::init();
+    tau::assets::register_engine_types();
 
     if (input_dirs.empty() || name_space.empty())
     {
@@ -89,12 +91,6 @@ int main(i32 argc, char** argv)
         const std::filesystem::path log_path =
             std::filesystem::path(parent.empty() ? "." : parent) / "logs" / "cooker.log";
         tau::log::to_file(log_path.string());
-    }
-
-    if (!tau::cooker::shader::init())
-    {
-        tau::log::shutdown();
-        return 1;
     }
 
     // a shared struct moving in C++ changes no shader source, so fingerprint it for the cache
@@ -161,7 +157,7 @@ int main(i32 argc, char** argv)
                 return 1;
             }
 
-            if (tau::asset_table::by_source_extension(placed->rel_path) == nullptr)
+            if (tau::assets::type_by_path(placed->rel_path) == nullptr)
             {
                 TAU_LOG_ERROR("ASSET_COOKER", "--file {} is not a cookable asset type", named);
                 tau::log::shutdown();
@@ -217,8 +213,7 @@ int main(i32 argc, char** argv)
     std::filesystem::create_directories(output_dir + "/shaders");
 
     std::string vfs_prefix = name_space + "://assets/";
-    // an object even when empty: a run naming only include files places no source, and "null" is no guid map
-    nlohmann::json guid_map_data = nlohmann::json::object();
+    std::vector<std::pair<std::string, tau::asset_guid_t>> guid_map;
     bool any_failed = false;
     std::unordered_set<std::string> expected_outputs;
 
@@ -236,7 +231,7 @@ int main(i32 argc, char** argv)
 
             // only what the cooker can build is an asset, other files get no guid or stray .meta
             const std::string rel = std::filesystem::relative(entry.path(), dir).generic_string();
-            if (tau::asset_table::by_source_extension(rel) == nullptr) { continue; }
+            if (tau::assets::type_by_path(rel) == nullptr) { continue; }
 
             sources.push_back({entry.path(), rel});
         }
@@ -252,7 +247,7 @@ int main(i32 argc, char** argv)
             std::ifstream map_file(map_path);
             std::string text((std::istreambuf_iterator<char>(map_file)), std::istreambuf_iterator<char>());
             existing_map = nlohmann::json::parse(text, nullptr, false);
-            tau::asset_meta::load_guid_map_json(text);
+            tau::assets::merge_guid_map(text);
         }
     }
 
@@ -263,14 +258,17 @@ int main(i32 argc, char** argv)
     for (const source_t& source : sources)
     {
         const std::string key = vfs_prefix + source.rel_path;
-        const std::string guid = tau::asset_meta::find_or_create_guid(source.path.generic_string());
+        const tau::asset_guid_t guid = tau::asset_sources::find_or_create_guid(source.path.generic_string());
 
-        guid_map_data[key] = guid;
+        guid_map.emplace_back(key, guid);
+        tau::assets::set_location(key, guid);
 
-        if (!existing_map.is_object() || existing_map.value(key, std::string{}) != guid) { guid_map_dirty = true; }
+        // the old spelling of the same guid rewrites the map too
+        if (!existing_map.is_object() || existing_map.value(key, std::string{}) != tau::assets::guid_text(guid))
+        {
+            guid_map_dirty = true;
+        }
     }
-
-    tau::asset_meta::load_guid_map_json(guid_map_data.dump());
 
     // how the cooker builds each type, a cook reports its output and the files it read
     struct cook_result_t
@@ -288,6 +286,23 @@ int main(i32 argc, char** argv)
         { return {fn(in, out), true, {std::filesystem::path(in)}}; };
     };
 
+    // "ns://assets/rel" to the source: this run's own namespace in the input dirs, others in the include dirs
+    const auto resolve_source = [&](const std::string& vfs_path) -> std::filesystem::path
+    {
+        constexpr std::string_view marker = "://assets/";
+        const std::size_t at = vfs_path.find(marker);
+        if (at == std::string::npos) { return {}; }
+
+        const std::string rel = vfs_path.substr(at + marker.size());
+        const std::vector<std::string>& dirs = vfs_path.substr(0, at) == name_space ? input_dirs : include_dirs;
+        for (const std::string& dir : dirs)
+        {
+            const std::filesystem::path candidate = std::filesystem::path(dir) / rel;
+            if (std::filesystem::exists(candidate)) { return candidate; }
+        }
+        return {};
+    };
+
     const std::unordered_map<std::string_view, cook_fn_t> cookers = {
         {"shader",
          cook_fn_t{[&all_shader_dirs](const std::string& in, const std::string& out) -> cook_result_t
@@ -301,7 +316,14 @@ int main(i32 argc, char** argv)
                    }}},
         {"mesh", simple(&tau::cooker::mesh::cook_mesh)},
         {"material", simple(&tau::cooker::material::cook_material)},
-        {"scene", simple(&tau::cooker::scene::cook_scene)},
+        {"scene",
+         cook_fn_t{[&](const std::string& in, const std::string& out) -> cook_result_t
+                   {
+                       std::vector<std::filesystem::path> deps = {std::filesystem::path(in)};
+                       const bool ok = tau::cooker::scene::cook_scene(in, out, resolve_source, deps);
+                       return {ok, true, std::move(deps)};
+                   }}},
+        {"prefab", simple(&tau::cooker::scene::cook_prefab)},
         {"texture",
          cook_fn_t{[](const std::string& in, const std::string& out) -> cook_result_t
                    {
@@ -319,7 +341,7 @@ int main(i32 argc, char** argv)
         const std::string path = source.path.generic_string();
         std::filesystem::path out_path = std::filesystem::path(output_dir) / source.rel_path;
 
-        const tau::asset_type_t* type = tau::asset_table::by_source_extension(source.rel_path);
+        const tau::asset_type_t* type = tau::assets::type_by_path(source.rel_path);
         if (type == nullptr) { continue; }
 
         auto cooker_it = cookers.find(type->key);
@@ -409,8 +431,8 @@ int main(i32 argc, char** argv)
 
         // the prefix retires entries whose source is gone, only a full walk knows that
         // a single file run merges its one entry and leaves the rest
-        tau::asset_meta::write_guid_map(parent_out + "/guid_map.json", guid_map_data.dump(4),
-                                        single_files.empty() ? vfs_prefix : std::string{});
+        tau::asset_sources::write_guid_map(parent_out + "/guid_map.json", guid_map,
+                                           single_files.empty() ? vfs_prefix : std::string{});
     }
 
     cache.save();

@@ -11,7 +11,7 @@
 
 namespace tau::cooker::shader
 {
-    // false if Slang cannot run the way the cooker relies on, the cook must stop
+    // false if Slang cannot run the way the cooker relies on, then no shader cooks
     bool init();
 
     // fingerprints the shared struct layouts for the cook cache, see verify_core_layouts

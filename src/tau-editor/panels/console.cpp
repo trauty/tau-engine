@@ -133,11 +133,7 @@ namespace tau::editor::panels
         pull_new_lines();
         if (g_console.visible_dirty) { rebuild_visible(); }
 
-        ImGuiWindowClass window_class;
-        window_class.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoTabBar;
-        ImGui::SetNextWindowClass(&window_class);
-
-        ImGui::Begin("Console", nullptr, ImGuiWindowFlags_NoTitleBar);
+        ImGui::Begin("Console");
 
         ImGui::BeginDisabled(ctx.recompiling);
         if (ImGui::Button("Recompile")) { ctx.recompile_requested = true; }

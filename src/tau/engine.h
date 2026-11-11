@@ -1,7 +1,6 @@
 #pragma once
 
 #include "defines.h"
-#include "tau/asset_fwd.h"
 #include "tau/world.h"
 
 #include <functional>
@@ -30,7 +29,6 @@ namespace tau::engine
     TAU_ENGINE_API void create_scene();
     TAU_ENGINE_API void set_scene(std::unique_ptr<tau::world_t> scene);
     TAU_ENGINE_API world_t& get_active_world();
-    TAU_ENGINE_API asset_registry_t& get_asset_registry();
 
     TAU_ENGINE_API void set_event_callback(event_callback_t cb);
     TAU_ENGINE_API void set_ui_callback(ui_callback_t cb);

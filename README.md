@@ -58,7 +58,8 @@ xmake
 
 A project builds with the engine that configured it. Opening it in the editor
 configures it with that editor's engine. From a terminal, use the `tau` script of
-the engine you want (`scripts/tau` in a checkout, `bin/tau` in a packaged engine):
+the engine you want (`scripts/tau` in a checkout, `bin/tau` in a packaged engine,
+`tau.cmd` on Windows):
 
 **Bash:**
 ```bash
@@ -66,11 +67,15 @@ the engine you want (`scripts/tau` in a checkout, `bin/tau` in a packaged engine
 xmake                                       # -> bin/<game>.so; game assets cook to .tau/game
 ```
 
-**Powershell:**
-```powershell
-xmake f -m debug --tau_engine_dir=C:\path\to\tau-engine
+**Windows:**
+```bat
+C:\path\to\tau-engine\scripts\tau configure
 xmake                     # -> bin\<game>.dll
 ```
+
+`tau build` configures and builds, `tau open` opens the project in that engine's
+editor, anything else goes to xmake. The mode defaults to the editor's, pick
+another with `-m`.
 
 The `.tauproject` names the engine version the project is made for
 (`"engine": { "version": "0.1" }`), never a path. The editor opens projects of its
@@ -93,22 +98,29 @@ keeps exactly what saving the scene keeps:
   on a reload, the same as on save and load.
 * **Register callbacks in `TAU_ON_LOAD()`.** Input actions, render features,
   systems and signal listeners point at your code, and `TAU_ON_LOAD()` runs
-  after every load, the first and every reload. `tau_game_init` and
-  `tau_game_shutdown` run when Play starts and stops, set up game state there.
+  after every load, the first and every reload. `TAU_ON_PLAY()` and
+  `TAU_ON_STOP()` run when Play starts and stops, set up game state there.
+
+A game is its reflected types and these hooks, nothing else. Per frame logic
+goes in systems, which only update during Play:
 
 ```cpp
+#include "tau/game.h"
+
 TAU_ON_LOAD()
 {
     tau::input::bind_button("jump", tau::input::key_e::Space);
     tau::input::on_action("jump", tau::input::input_state_t::PRESSED, [](const auto&) { /* ... */ });
     world.register_update_system(&update_player);
 }
+
+TAU_ON_PLAY() { score = 0; }
 ```
 
 Reflected fields can be numbers, bools, strings, `vec3_t`, enums, asset
 handles, entity references, structs registered with `reflection::structure`,
-and `std::vector`s of any of these. Scenes store entity references as scene
-indices, so they survive save and load.
+and `std::vector`s of any of these. Scenes store entity references by entity
+GUID, so they survive save and load.
 
 ```cpp
 struct waypoint_t { tau::vec3_t pos; f32 wait = 0.0f; };
@@ -124,6 +136,45 @@ TAU_REFLECT()
         .field<&patrol_t::target>("Target");
 }
 ```
+
+### Physics
+
+An entity with a `rigidbody_t` and a box, sphere or capsule collider gets a
+Jolt body when Play starts. Dynamic bodies move their transform. Moving the
+transform yourself teleports a body, and a kinematic body moves there over the
+step, pushing what it hits. Jolt itself stays inside the engine.
+`tau/physics/physics.h` is the game's side of it:
+
+```cpp
+TAU_ON_LOAD()
+{
+    tau::physics::set_layers_collide(world, PLAYER, PICKUPS, false);
+    world.register_update_system(&shoot);
+}
+
+static void shoot(tau::world_t& world)
+{
+    tau::physics::ray_hit_t hit;
+    if (tau::physics::raycast(world, eye, forward, 100.0f, hit, {.ignore = player}))
+    {
+        tau::physics::add_impulse(world, hit.entity, forward * 5.0f);
+    }
+
+    for (const tau::physics::contact_t& contact : tau::physics::contacts(world))
+    {
+        if (contact.phase == tau::physics::contact_phase_e::BEGIN) { /* contact.a hit contact.b */ }
+    }
+}
+```
+
+* **Velocities, forces and impulses** apply to dynamic bodies, and those given
+  before the body exists, such as right after spawning, wait for it.
+* **Contacts** are seen once by every system: a fixed update system gets the
+  previous step's, an update system those of all steps this frame.
+* **Queries** (`raycast`, `raycast_all`, `overlap_sphere`, `overlap_box`) skip
+  sensors unless the filter asks for them, and see bodies only, so nothing
+  before Play.
+* The toolbar's **Colliders** toggle outlines every collider, in Edit and Play.
 
 ### Standalone (no editor)
 

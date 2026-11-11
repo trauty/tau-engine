@@ -32,7 +32,6 @@ function resolve(engine_dir)
             path.join(engine_dir, "include"),
             path.join(engine_dir, "include", "imgui"),
             path.join(engine_dir, "src"),
-            path.join(engine_dir, "lib", "JoltPhysics"),
         }
         info.header_root = path.join(engine_dir, "src")
         info.engine_assets = path.join(engine_dir, "assets")

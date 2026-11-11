@@ -1,5 +1,5 @@
 {
-    "guid": "da40a6f0-4b68-8573-b26f-31bcc32c0611",
+    "guid": "72c97a18dcab5800",
     "shader": "engine://assets/shaders/deferred_lighting.slang",
     "properties": {}
 }

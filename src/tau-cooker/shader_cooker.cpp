@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <slang-com-ptr.h>
 #include <slang.h>
 #include <string>
@@ -40,6 +41,11 @@ namespace tau::cooker::shader
     // without it Slang skips both quietly or loads a mismatched one from PATH, so the cook stops
     bool init()
     {
+        // once per run, on the first shader: starting Slang is most of a run that cooks none
+        static std::optional<bool> ready;
+        if (ready) { return *ready; }
+        ready = false;
+
         SlangGlobalSessionDesc global_desc = {};
         if (SLANG_FAILED(slang::createGlobalSession(&global_desc, global_session.writeRef())))
         {
@@ -56,6 +62,7 @@ namespace tau::cooker::shader
         }
 
         TAU_LOG_INFO("SHADER_COOKER", "Slang {}", global_session->getBuildTagString());
+        ready = true;
         return true;
     }
 
@@ -404,7 +411,7 @@ namespace tau::cooker::shader
                 {"ObjectData", "object_data_t", layout_kind_e::BUFFER_ARRAY, sizeof(object_data_t),
                  {TAU_FIELD(object_data_t, model_matrix), TAU_FIELD(object_data_t, normal_matrix),
                   TAU_FIELD(object_data_t, vertex_buffer), TAU_FIELD(object_data_t, index_buffer),
-                  TAU_FIELD(object_data_t, material_offset), TAU_FIELD(object_data_t, _pad0),
+                  TAU_FIELD(object_data_t, material_offset), TAU_FIELD(object_data_t, entity),
                   TAU_FIELD(object_data_t, _pad1), TAU_FIELD(object_data_t, _pad2)}},
 
                 {"CullData", "cull_data_t", layout_kind_e::BUFFER_ARRAY, sizeof(cull_data_t),
@@ -1119,6 +1126,7 @@ namespace tau::cooker::shader
                               std::vector<std::filesystem::path>& out_dependencies)
     {
         TAU_LOG_INFO("SHADER_COOKER", "Cooking Shader: {} -> {}", input_path, output_path);
+        if (!init()) { return cook_status_e::FAILED; }
 
         std::ifstream file(input_path, std::ios::binary);
         if (!file.is_open())

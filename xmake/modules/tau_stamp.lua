@@ -36,6 +36,8 @@ end
 
 function write_game_source(file, header_root, version_file, mode)
     local stamp = compute(header_root, version_file, mode)
-    write_source(file, '#include "tau/defines.h"\n\nextern "C" TAU_GAME_API const char* tau_game_engine_stamp() { return "' ..
-                           stamp .. '"; }\n')
+    write_source(file, '#include "tau/defines.h"\n\n#include <volk.h>\n\n' ..
+                           'extern "C" TAU_GAME_API const char* tau_game_engine_stamp() { return "' .. stamp .. '"; }\n\n' ..
+                           'extern "C" TAU_GAME_API void tau_game_load_vulkan(VkInstance instance, VkDevice device)\n' ..
+                           '{\n    volkInitialize();\n    volkLoadInstance(instance);\n    volkLoadDevice(device);\n}\n')
 end

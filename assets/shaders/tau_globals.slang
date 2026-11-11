@@ -83,7 +83,7 @@ public struct ObjectData
     public uint64_t vertex_buffer;
     public uint64_t index_buffer;
     public uint material_offset;
-    public uint _pad0;
+    public uint entity;
     public uint _pad1;
     public uint _pad2;
 };

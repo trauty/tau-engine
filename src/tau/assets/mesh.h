@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tau/asset_loader.h"
+#include "tau/asset.h"
 #include "tau/defines.h"
 #include "tau/math.h"
 #include "tau/rendering/vulkan.h"

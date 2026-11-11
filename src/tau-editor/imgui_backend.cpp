@@ -26,7 +26,7 @@ namespace tau::editor::imgui
 {
     struct imgui_ctx_t
     {
-        asset_handle_t shader;
+        asset_t<shader_t> shader;
         // built straight from the shader: nothing authors or shares it, so it is not an asset
         material_t material;
 
@@ -101,7 +101,7 @@ namespace tau::editor::imgui
     static bool get_imgui_pipeline(VkPipeline& out_pipeline, VkPipelineLayout& out_layout)
     {
         material_t* mat = &ctx.material;
-        shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(mat->shader_handle);
+        shader_t* shader = assets::get(mat->shader);
         if (!shader) { return false; }
         out_pipeline = shader->get_pipeline(pipeline_variant_e::FORWARD);
         out_layout = shader->pipeline_layout;
@@ -583,7 +583,7 @@ namespace tau::editor::imgui
     void init()
     {
 
-        ctx.shader = tau::engine::get_asset_registry().load_sync<shader_t>("engine://assets/shaders/imgui.slang");
+        ctx.shader = assets::pin(assets::load<shader_t>("engine://assets/shaders/imgui.slang"));
         ctx.material = material_t(ctx.shader);
 
         ImGuiIO& io = ImGui::GetIO();
@@ -729,7 +729,7 @@ namespace tau::editor::imgui
         }
 
         renderer::register_renderer_feature(
-            "ImGui"_h, renderer::FEATURE_ORDER_AFTER_POST,
+            "ImGui"_h, renderer::FEATURE_ORDER_UI,
             [](renderer::rendergraph_t& graph, ecs::registry_t& reg)
             {
                 renderer::rg_pass_t& pass = graph.add_pass("ImGuiPass"_h, "ImGuiPass");
@@ -837,7 +837,7 @@ namespace tau::editor::imgui
                     mat->set_property("vertex_buffer"_h, renderer::get_buffer_address(ctx.vertex_buffer[cur_frame]));
                     mat->sync();
 
-                    shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(mat->shader_handle);
+                    shader_t* shader = assets::get(mat->shader);
 
                     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                       shader->get_pipeline(pipeline_variant_e::FORWARD));
@@ -926,7 +926,7 @@ namespace tau::editor::imgui
         }
 
         ctx.material.release_heap();
-        tau::engine::get_asset_registry().release<shader_t>(ctx.shader);
+        assets::unpin(ctx.shader);
     }
 
     void submit(ImDrawData* draw_data) { ctx.draw_data = draw_data; }

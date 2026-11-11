@@ -56,6 +56,8 @@ on_load(function(target)
 
         target:add("cxflags", "/GR-", { force = true })
         target:set("runtimes", "MD")
+        -- msvc stl refuses aligned_storage over alignas(32) (mat4_t) in std::stable_sort
+        target:add("defines", "_ENABLE_EXTENDED_ALIGNED_STORAGE")
     end
 
     if extra.march ~= false and is_arch("x86_64", "x64") then

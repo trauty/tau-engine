@@ -1,30 +1,31 @@
 #include "inspector.h"
 
 #include "imgui.h"
-#include "tau-editor/asset_cook.h"
-#include "tau-editor/asset_watch.h"
-#include "tau-editor/project_manager.h"
+#include "tau-editor/asset_files.h"
+#include "tau-editor/history.h"
+#include "tau-editor/panels/asset_browser.h"
+#include "tau-editor/panels/main_menu_bar.h"
+#include "tau-editor/prefab_edit.h"
 #include "tau/asset.h"
-#include "tau/asset_meta.h"
-#include "tau/asset_serde.h"
 #include "tau/assets/material.h"
 #include "tau/assets/shader.h"
+#include "tau/assets/texture.h"
+#include "tau/components/prefab.h"
 #include "tau/components/tag.h"
 #include "tau/ecs_fwd.h"
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/reflection.h"
-#include "tau/vfs.h"
+#include "tau/systems/guid.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
-#include <json/json.hpp>
 #include <numeric>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace tau::editor::panels
@@ -41,169 +42,6 @@ namespace tau::editor::panels
         };
 
         degree_edit_t active_degree_edit;
-
-        struct source_roots_t
-        {
-            std::filesystem::path engine;
-            std::filesystem::path game;
-        };
-
-        source_roots_t source_roots;
-
-        std::filesystem::path resolve_source_path(const std::string& virtual_path)
-        {
-            const tau::vfs::path_parts_t parts = tau::vfs::split_protocol(virtual_path);
-            if (parts.protocol.empty()) { return {}; }
-
-            // the protocol includes its "://", the roots are keyed by the bare name
-            const std::string protocol(parts.protocol.substr(0, parts.protocol.size() - 3));
-            std::string rel(parts.rest);
-
-            constexpr std::string_view assets_prefix = "assets/";
-            if (rel.rfind(assets_prefix, 0) == 0) { rel.erase(0, assets_prefix.size()); }
-
-            const std::filesystem::path& root = (protocol == "engine") ? source_roots.engine : source_roots.game;
-            if (protocol != "engine" && protocol != "game") { return {}; }
-            if (root.empty()) { return {}; }
-
-            return root / rel;
-        }
-
-        bool save_material(asset_handle_t handle, std::string& out_err)
-        {
-            tau::asset_registry_t& assets = tau::engine::get_asset_registry();
-
-            material_t* mat = assets.get<material_t>(handle);
-            shader_t* shader = mat ? assets.get<shader_t>(mat->shader_handle) : nullptr;
-            if (!mat || !shader)
-            {
-                out_err = "material or its shader is not loaded";
-                return false;
-            }
-
-            const std::string virtual_path = assets.get_path(handle);
-            const std::filesystem::path target = resolve_source_path(virtual_path);
-            if (target.empty())
-            {
-                out_err = "cannot map '" + virtual_path + "' to a source file";
-                return false;
-            }
-
-            nlohmann::json out;
-            // the material's identity, kept inside it, scenes reference the material by it
-            out["guid"] = tau::asset_meta::guid_for_writing(target.string());
-
-            const std::string shader_path = assets.get_path(mat->shader_handle);
-            out["shader"] = shader_path;
-
-            // record the guid next to the path so renaming the shader does not orphan this material
-            // the path stays for readability and as the fallback
-            const std::string_view shader_guid = tau::asset_meta::get_guid(shader_path);
-            if (!shader_guid.empty()) { out["shader_guid"] = std::string(shader_guid); }
-
-            nlohmann::json properties = nlohmann::json::object();
-            nlohmann::json textures = nlohmann::json::object();
-            nlohmann::json texture_guids = nlohmann::json::object();
-            nlohmann::json samplers = nlohmann::json::object();
-
-            for (u32_t name_hash : mat->authored_properties)
-            {
-                const shader_member_t* it = shader->module.members.find(name_hash);
-                if (it == nullptr) { continue; }
-
-                const shader_member_t& member = *it;
-                if (member.edit == shader_member_edit_e::HIDDEN) { continue; }
-                if (member.offset + member.size > mat->data.size()) { continue; }
-
-                const void* slot = mat->data.data() + member.offset;
-
-                if (member.edit == shader_member_edit_e::TEXTURE)
-                {
-                    // keep what the file named, not the fallback drawn in its place
-                    std::string tex_path;
-                    if (const std::string* missing = mat->missing_textures.find(name_hash)) { tex_path = *missing; }
-                    else if (const asset_handle_t* bound = mat->bound_textures.find(name_hash);
-                             bound != nullptr && bound->is_valid())
-                    {
-                        tex_path = assets.get_path(*bound);
-                    }
-
-                    if (!tex_path.empty())
-                    {
-                        textures[member.name] = tex_path;
-
-                        const std::string_view tex_guid = tau::asset_meta::get_guid(tex_path);
-                        if (!tex_guid.empty()) { texture_guids[member.name] = std::string(tex_guid); }
-                    }
-                    continue;
-                }
-
-                if (member.edit == shader_member_edit_e::SAMPLER)
-                {
-                    samplers[member.name] = *static_cast<const u32_t*>(slot);
-                    continue;
-                }
-
-                switch (member.type)
-                {
-                case shader_member_type_e::FLOAT: properties[member.name] = *static_cast<const f32*>(slot); break;
-                case shader_member_type_e::FLOAT2:
-                case shader_member_type_e::FLOAT3:
-                case shader_member_type_e::FLOAT4:
-                {
-                    const u32_t count = member.size / sizeof(f32);
-                    const f32* values = static_cast<const f32*>(slot);
-                    properties[member.name] = std::vector<f32>(values, values + count);
-                    break;
-                }
-                case shader_member_type_e::INT: properties[member.name] = *static_cast<const i32*>(slot); break;
-                case shader_member_type_e::UINT: properties[member.name] = *static_cast<const u32_t*>(slot); break;
-                case shader_member_type_e::BOOL:
-                    properties[member.name] = (*static_cast<const u32_t*>(slot) != 0u);
-                    break;
-                default: break;
-                }
-            }
-
-            if (!properties.empty()) { out["properties"] = std::move(properties); }
-            if (!textures.empty()) { out["textures"] = std::move(textures); }
-            if (!texture_guids.empty()) { out["texture_guids"] = std::move(texture_guids); }
-            if (!samplers.empty()) { out["samplers"] = std::move(samplers); }
-
-            std::error_code ec;
-            std::filesystem::create_directories(target.parent_path(), ec);
-
-            std::ofstream file(target);
-            if (!file.is_open())
-            {
-                out_err = "cannot open " + target.string();
-                return false;
-            }
-
-            file << out.dump(4) << '\n';
-            file.close();
-
-            TAU_LOG_INFO("EDITOR", "Material saved to {}", target.string());
-
-            // our own write, the watcher must not take it for an outside edit and cook again
-            asset_watch::ignore_own_write(target);
-
-            std::string cook_err;
-            if (!asset_cook::cook_asset(target, cook_err))
-            {
-                out_err = "saved " + target.string() + " but could not reimport it: " + cook_err;
-                return false;
-            }
-
-            // the cooked .taumat is fresh, update the registry copy too since everything draws from it
-            if (!assets.reload<material_t>(virtual_path))
-            {
-                out_err = "saved and reimported " + target.string() + " but could not reload it";
-                return false;
-            }
-
-            return true;
-        }
 
         std::vector<std::string> split_enum_labels(const std::string& csv)
         {
@@ -235,17 +73,15 @@ namespace tau::editor::panels
             ImGui::SetTooltip("%s", member.tooltip.c_str());
         }
 
-        bool draw_asset_slot(const char* label, u64_t asset_type_hash, asset_handle_t handle,
+        bool draw_asset_slot(tau::world_t& world, const char* label, u64_t asset_type_hash, asset_handle_t handle,
                              asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove = nullptr);
 
-        bool draw_material_properties(asset_handle_t handle)
+        bool draw_material_properties(tau::world_t& world, asset_handle_t handle)
         {
-            tau::asset_registry_t& assets = tau::engine::get_asset_registry();
-
-            material_t* mat = assets.get<material_t>(handle);
+            material_t* mat = assets::get(asset_t<material_t>{handle});
             if (!mat) { return false; }
 
-            shader_t* shader = assets.get<shader_t>(mat->shader_handle);
+            const shader_t* shader = assets::get(mat->shader);
             if (!shader || mat->data.empty()) { return false; }
 
             std::vector<const shader_member_t*> ordered;
@@ -278,19 +114,14 @@ namespace tau::editor::panels
                 {
                 case shader_member_edit_e::TEXTURE:
                 {
-                    const asset_handle_t* bound = mat->bound_textures.find(name_hash);
-                    const asset_handle_t cur = bound ? *bound : asset_handle_t{};
+                    const asset_t<texture_t>* bound = mat->textures.find(name_hash);
+                    const asset_handle_t cur = bound ? bound->handle : asset_handle_t{};
 
                     asset_handle_t picked = cur;
-                    if (draw_asset_slot(label, tau::get_type_id<tau::texture_t>(), cur, picked,
+                    if (draw_asset_slot(world, label, tau::get_type_id<tau::texture_t>(), cur, picked,
                                         "##mattex_" + std::to_string(member->offset)))
                     {
-                        // the picker took a reference, set_texture takes it over and returns the previous one
-                        if (picked.is_valid()) { mat->set_texture(name_hash, picked); }
-                        else
-                        {
-                            mat->clear_texture(name_hash);
-                        }
+                        mat->set_texture(name_hash, asset_t<texture_t>{picked});
                         member_changed = true;
                     }
                     break;
@@ -508,12 +339,9 @@ namespace tau::editor::panels
             asset_picker.search[0] = '\0';
             asset_picker.candidates.clear();
 
-            for (std::string& path : tau::asset_meta::all_paths())
+            for (auto& [path, guid] : assets::locations())
             {
-                if (tau::asset_serde::path_matches_type(asset_type_hash, path))
-                {
-                    asset_picker.candidates.push_back(std::move(path));
-                }
+                if (assets::path_is(path, asset_type_hash)) { asset_picker.candidates.push_back(std::move(path)); }
             }
         }
 
@@ -540,7 +368,8 @@ namespace tau::editor::panels
 
         bool draw_asset_picker(u64_t asset_type_hash, std::string& out_path)
         {
-            ImGui::TextDisabled("%s", std::string(tau::asset_serde::display_name(asset_type_hash)).c_str());
+            const asset_type_t* type = assets::type_by_id(asset_type_hash);
+            ImGui::TextDisabled("%s", type ? std::string(type->display_name).c_str() : "Unknown");
 
             ImGui::SetNextItemWidth(PICKER_WIDTH);
             if (ImGui::IsWindowAppearing()) { ImGui::SetKeyboardFocusHere(); }
@@ -590,33 +419,14 @@ namespace tau::editor::panels
             return chose;
         }
 
-        void draw_material_save_row(asset_handle_t handle)
-        {
-            material_t* mat = tau::engine::get_asset_registry().get<material_t>(handle);
-            if (!mat) { return; }
+        bool asset_unsaved(asset_handle_t handle)
+        { return handle.is_valid() && history::is_dirty({history::doc_kind_e::ASSET, handle.guid}); }
 
-            static std::string last_error;
-
-            if (ImGui::SmallButton("Save to .mat"))
-            {
-                last_error.clear();
-                if (!save_material(handle, last_error))
-                {
-                    TAU_LOG_ERROR("EDITOR", "Failed to save material: {}", last_error);
-                }
-            }
-
-            ImGui::SameLine();
-            ImGui::TextDisabled("%zu authored", mat->authored_properties.size());
-
-            if (!last_error.empty()) { ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", last_error.c_str()); }
-        }
-
-        bool draw_asset_slot(const char* label, u64_t asset_type_hash, asset_handle_t handle,
+        bool draw_asset_slot(tau::world_t& world, const char* label, u64_t asset_type_hash, asset_handle_t handle,
                              asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove)
         {
             bool modified = false;
-            std::string cur_path = tau::engine::get_asset_registry().get_path(handle);
+            const std::string cur_path = assets::path_of(handle);
 
             ImGui::Text("%s", label);
             ImGui::SameLine();
@@ -624,7 +434,8 @@ namespace tau::editor::panels
             const f32 remove_width = out_remove ? (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x) : 0.0f;
             const f32 field_width = std::max(ImGui::GetContentRegionAvail().x - remove_width, 60.0f);
 
-            const std::string name = cur_path.empty() ? "None" : std::string(asset_file_name(cur_path));
+            std::string name = cur_path.empty() ? "None" : std::string(asset_file_name(cur_path));
+            if (asset_unsaved(handle)) { name += "*"; }
 
             if (ImGui::Button((name + popup_id).c_str(), ImVec2(field_width, 0.0f)))
             {
@@ -635,6 +446,21 @@ namespace tau::editor::panels
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip("%s", cur_path.empty() ? "nothing assigned, click to pick" : cur_path.c_str());
+            }
+
+            if (ImGui::BeginDragDropTarget())
+            {
+                const ImGuiPayload* peek = ImGui::GetDragDropPayload();
+                if (peek && peek->IsDataType(ASSET_PAYLOAD) &&
+                    assets::path_is(static_cast<const char*>(peek->Data), asset_type_hash))
+                {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))
+                    {
+                        out_handle = assets::load(asset_type_hash, static_cast<const char*>(payload->Data));
+                        modified = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
             }
 
             if (out_remove)
@@ -651,9 +477,7 @@ namespace tau::editor::panels
                 std::string picked;
                 if (draw_asset_picker(asset_type_hash, picked))
                 {
-                    out_handle = picked.empty() ? asset_handle_t{}
-                                                : tau::asset_serde::load(asset_type_hash,
-                                                                         tau::engine::get_asset_registry(), picked);
+                    out_handle = picked.empty() ? asset_handle_t{} : assets::load(asset_type_hash, picked);
                     modified = true;
                     ImGui::CloseCurrentPopup();
                 }
@@ -666,8 +490,9 @@ namespace tau::editor::panels
                 ImGui::Indent();
                 if (ImGui::TreeNode("Properties"))
                 {
-                    draw_material_properties(handle);
-                    draw_material_save_row(handle);
+                    const history::target_t target = history::asset_target(asset_type_hash, handle);
+                    history::watch(world, target);
+                    if (draw_material_properties(world, handle)) { history::edited(world, target, "Edit Material"); }
                     ImGui::TreePop();
                 }
                 ImGui::Unindent();
@@ -677,10 +502,10 @@ namespace tau::editor::panels
             return modified;
         }
 
-        bool draw_asset_list(tau::reflection::data_t& data, tau::reflection::any_t& instance,
+        bool draw_asset_list(tau::world_t& world, tau::reflection::data_t& data, tau::reflection::any_t& instance,
                              tau::reflection::any_t& field_value, const tau::reflection::editor_prop_t& prop, u32_t id)
         {
-            std::vector<asset_handle_t> list = field_value.cast<std::vector<asset_handle_t>>();
+            std::vector<asset_handle_t> list = tau::reflection::assets_of(field_value);
 
             bool modified = false;
             const std::string base_id = "##list_" + std::to_string(id);
@@ -704,7 +529,8 @@ namespace tau::editor::panels
                 bool remove = false;
                 asset_handle_t new_handle = list[i];
 
-                if (draw_asset_slot(row_label.c_str(), prop.asset_type_hash, list[i], new_handle, row_id, &remove))
+                if (draw_asset_slot(world, row_label.c_str(), prop.asset_type_hash, list[i], new_handle, row_id,
+                                    &remove))
                 {
                     list[i] = new_handle;
                     modified = true;
@@ -727,7 +553,9 @@ namespace tau::editor::panels
             return modified;
         }
 
-        bool draw_meta_any(tau::world_t& world, tau::reflection::any_t& instance, tau::reflection::type_t type);
+        // overridden: field keys differing from the prefab
+        bool draw_meta_any(tau::world_t& world, tau::reflection::any_t& instance, tau::reflection::type_t type,
+                           const std::unordered_set<std::string>* overridden = nullptr);
 
         std::string entity_name(tau::world_t& world, tau::ecs::entity_t entity)
         {
@@ -982,7 +810,20 @@ namespace tau::editor::panels
             return false;
         }
 
-        bool draw_meta_any(tau::world_t& world, tau::reflection::any_t& instance, tau::reflection::type_t type)
+        std::string meta_key(const char* name, u32_t id) { return name ? std::string(name) : std::to_string(id); }
+
+        constexpr ImVec4 PREFAB_COLOR = {0.45f, 0.72f, 1.0f, 1.0f};
+
+        void mark_override()
+        {
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(at.x - 6.0f, at.y + 1.0f),
+                                                      ImVec2(at.x - 3.0f, at.y + ImGui::GetFrameHeight() - 1.0f),
+                                                      ImGui::GetColorU32(PREFAB_COLOR));
+        }
+
+        bool draw_meta_any(tau::world_t& world, tau::reflection::any_t& instance, tau::reflection::type_t type,
+                           const std::unordered_set<std::string>* overridden)
         {
             bool was_modified = false;
 
@@ -990,21 +831,22 @@ namespace tau::editor::panels
             {
                 tau::reflection::editor_prop_t* prop = data.custom();
                 const char* label = prop ? prop->name : "Unknown";
+                if (overridden && overridden->contains(meta_key(data.name(), id))) { mark_override(); }
 
                 tau::reflection::any_t field_value = data.get(instance);
 
                 if (prop && prop->asset_type_hash != 0 && prop->is_list)
                 {
-                    if (draw_asset_list(data, instance, field_value, *prop, id)) { was_modified = true; }
+                    if (draw_asset_list(world, data, instance, field_value, *prop, id)) { was_modified = true; }
                     continue;
                 }
 
                 if (prop && prop->asset_type_hash != 0)
                 {
-                    asset_handle_t handle = field_value.cast<asset_handle_t>();
+                    const asset_handle_t handle = tau::reflection::asset_of(field_value);
                     asset_handle_t new_handle = handle;
 
-                    if (draw_asset_slot(label, prop->asset_type_hash, handle, new_handle,
+                    if (draw_asset_slot(world, label, prop->asset_type_hash, handle, new_handle,
                                         "##asset_" + std::to_string(id)))
                     {
                         data.set(instance, new_handle);
@@ -1024,31 +866,172 @@ namespace tau::editor::panels
 
             return was_modified;
         }
+        struct inspected_t
+        {
+            std::string path;
+            asset_handle_t handle;
+        };
+
+        inspected_t inspected;
+
+        void release_inspected()
+        {
+            assets::unpin(inspected.handle);
+            inspected = {};
+        }
+
+        void draw_asset_inspector(tau::world_t& world, editor_context_t& ctx)
+        {
+            const std::string& path = ctx.inspected_asset;
+            const asset_type_t* type = assets::type_by_path(path);
+            if (!type) { return; }
+
+            if (inspected.path != path)
+            {
+                release_inspected();
+                inspected.path = path;
+                if (type->id == tau::get_type_id<material_t>() || type->id == tau::get_type_id<texture_t>())
+                {
+                    inspected.handle = assets::pin(assets::load(type->id, path));
+                }
+            }
+
+            const history::doc_t doc = {history::doc_kind_e::ASSET, inspected.handle.guid};
+            const bool unsaved = inspected.handle.is_valid() && history::is_dirty(doc);
+            ImGui::TextUnformatted((std::string(asset_file_name(path)) + (unsaved ? "*" : "")).c_str());
+            if (ImGui::BeginPopupContextItem("##asset_menu"))
+            {
+                const bool editing = ctx.cur_mode == editor_mode_e::EDIT;
+                if (ImGui::MenuItem("Save", nullptr, false, unsaved && editing)) { history::save_asset(doc); }
+                if (ImGui::MenuItem("Revert", nullptr, false, unsaved && editing)) { history::revert_asset(doc); }
+                ImGui::EndPopup();
+            }
+            ImGui::TextDisabled("%s, %s", std::string(type->display_name).c_str(), path.c_str());
+            const asset_guid_t guid = assets::guid_of(path);
+            ImGui::TextDisabled("GUID %s", guid != 0 ? assets::guid_text(guid).c_str() : "none yet");
+            ImGui::Separator();
+
+            if (type->id == tau::get_type_id<material_t>())
+            {
+                const history::target_t target = history::asset_target(type->id, inspected.handle);
+                history::watch(world, target);
+                if (draw_material_properties(world, inspected.handle))
+                {
+                    history::edited(world, target, "Edit Material");
+                }
+            }
+            else if (const texture_t* tex = type->id == tau::get_type_id<texture_t>()
+                                                ? assets::get(asset_t<texture_t>{inspected.handle})
+                                                : nullptr)
+            {
+                ImGui::Text("%d x %d", tex->width, tex->height);
+                const f32 width = std::min(ImGui::GetContentRegionAvail().x, 512.0f);
+                if (tex->width > 0)
+                {
+                    ImGui::Image((ImTextureID)(intptr_t)tex->bindless_id,
+                                 ImVec2(width, width * static_cast<f32>(tex->height) / static_cast<f32>(tex->width)));
+                }
+            }
+            else if (type->key == "scene" && path.starts_with("game://assets/"))
+            {
+                if (ImGui::Button("Open Scene"))
+                {
+                    ctx.unsaved_action_scene =
+                        asset_files::source_path(path.substr(std::strlen("game://assets/"))).string();
+                    request_action(world, ctx, unsaved_action_e::LOAD_SCENE);
+                }
+            }
+        }
+        enum class prefab_action_e : u8_t
+        {
+            NONE,
+            REVERT,
+            APPLY,
+            UNPACK,
+        };
+
+        struct pending_prefab_t
+        {
+            prefab_action_e action = prefab_action_e::NONE;
+            u64_t root = 0;
+        };
+
+        pending_prefab_t pending_prefab;
+
+        void draw_prefab_header(tau::world_t& world, editor_context_t& ctx, ecs::entity_t root)
+        {
+            const std::string path = prefab_edit::prefab_path(world, root);
+            const prefab_instance_t& instance = world.registry.get<prefab_instance_t>(root);
+            const bool unsaved = asset_unsaved(instance.prefab);
+
+            ImGui::TextColored(PREFAB_COLOR, "Prefab");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(path.empty() ? "missing"
+                                                : (std::string(asset_file_name(path)) + (unsaved ? "*" : "")).c_str());
+            if (ImGui::IsItemHovered() && !path.empty()) { ImGui::SetTooltip("%s", path.c_str()); }
+
+            const u64_t root_guid = guid_system::of(world.registry, root);
+            ImGui::BeginDisabled(ctx.cur_mode != editor_mode_e::EDIT || path.empty());
+            if (ImGui::SmallButton("Select"))
+            {
+                ctx.inspected_asset = path;
+                ctx.selection.clear();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Revert")) { pending_prefab = {prefab_action_e::REVERT, root_guid}; }
+            if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Back to the prefab, the root keeps its placement"); }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Apply")) { pending_prefab = {prefab_action_e::APPLY, root_guid}; }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("The prefab becomes this instance, its other instances follow");
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Unpack")) { pending_prefab = {prefab_action_e::UNPACK, root_guid}; }
+            if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Plain entities, no longer linked to the prefab"); }
+            ImGui::EndDisabled();
+            ImGui::Separator();
+        }
+
+        void run_prefab_action(tau::world_t& world, editor_context_t& ctx)
+        {
+            const pending_prefab_t pending = pending_prefab;
+            pending_prefab = {};
+
+            const ecs::entity_t root = guid_system::find(world.registry, pending.root);
+            if (root == ecs::NULL_ENTITY) { return; }
+
+            switch (pending.action)
+            {
+            case prefab_action_e::NONE: break;
+            case prefab_action_e::REVERT: prefab_edit::revert(world, ctx, root); break;
+            case prefab_action_e::APPLY: prefab_edit::apply(world, ctx, root); break;
+            case prefab_action_e::UNPACK: prefab_edit::unpack(world, ctx, root); break;
+            }
+        }
     } // namespace
 
     void draw_inspector(world_t& world, editor_context_t& ctx)
     {
-        if (source_roots.game.empty() && !ctx.project_dir.empty())
-        {
-            source_roots.game = std::filesystem::path(ctx.project_dir) / "assets";
-        }
-
-        if (source_roots.engine.empty())
-        {
-            const std::filesystem::path engine = project_manager::engine_dir();
-            if (!engine.empty())
-            {
-                const std::filesystem::path installed = engine / "share" / "tau" / "engine-assets-src";
-                source_roots.engine = std::filesystem::is_directory(installed) ? installed : engine / "assets";
-            }
-        }
-
-        ecs::entity_t selected_entity = ctx.selected_entity;
+        const ecs::entity_t selected_entity = guid_system::find(world.registry, ctx.selection.primary());
 
         if (ImGui::Begin("Inspector"))
         {
             if (selected_entity != tau::ecs::NULL_ENTITY && world.registry.valid(selected_entity))
             {
+                ctx.inspected_asset.clear();
+
+                const history::target_t target = history::entity_target(ctx.selection.primary());
+                history::watch(world, target);
+
+                const ecs::entity_t prefab_root = prefab_edit::instance_root(world, selected_entity);
+                prefab_edit::overrides_t overrides;
+                if (prefab_root != ecs::NULL_ENTITY)
+                {
+                    overrides = prefab_edit::overrides_of(world, selected_entity);
+                    draw_prefab_header(world, ctx, prefab_root);
+                }
+
                 for (auto [id, type] : tau::reflection::resolve(*world.reflection_ctx))
                 {
                     if (tau::reflection::func_t get_func = type.func("get"_h); get_func)
@@ -1063,8 +1046,17 @@ namespace tau::editor::panels
 
                             ImGui::PushID(static_cast<i32>(id));
 
+                            // vs prefab: missing component or differing fields
+                            const auto changed_fields =
+                                overrides.find(meta_key(type.name(), static_cast<u32_t>(type.id())));
+                            const bool added =
+                                changed_fields != overrides.end() && changed_fields->second.contains("*");
+                            if (changed_fields != overrides.end()) { mark_override(); }
+                            const std::string header =
+                                std::string(header_name) + (added ? "  (added)" : "") + "###" + header_name;
+
                             bool header_open = ImGui::CollapsingHeader(
-                                header_name, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+                                header.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
 
                             ImGui::SameLine(ImGui::GetWindowWidth() - 30.0f);
                             if (ImGui::Button("X"))
@@ -1073,12 +1065,15 @@ namespace tau::editor::panels
                                 {
                                     remove_func.invoke({}, tau::reflection::forward_as_meta(world.registry),
                                                        selected_entity);
+                                    history::edited(world, target, std::string("Remove ") + header_name);
                                 }
                             }
 
                             if (header_open)
                             {
-                                bool changed = draw_meta_any(world, instance, type);
+                                bool changed = draw_meta_any(world, instance, type,
+                                                             changed_fields != overrides.end() ? &changed_fields->second
+                                                                                               : nullptr);
 
                                 if (changed)
                                 {
@@ -1087,6 +1082,7 @@ namespace tau::editor::panels
                                         on_changed.invoke({}, tau::reflection::forward_as_meta(world.registry),
                                                           selected_entity);
                                     }
+                                    history::edited(world, target, std::string("Edit ") + header_name);
                                 }
                             }
 
@@ -1120,6 +1116,7 @@ namespace tau::editor::panels
                                 {
                                     add_func.invoke({}, tau::reflection::forward_as_meta(world.registry),
                                                     selected_entity);
+                                    history::edited(world, target, std::string("Add ") + menu_name);
                                     ImGui::CloseCurrentPopup();
                                 }
                             }
@@ -1129,8 +1126,12 @@ namespace tau::editor::panels
                     ImGui::EndPopup();
                 }
             }
+            else if (!ctx.inspected_asset.empty()) { draw_asset_inspector(world, ctx); }
         }
 
+        if (ctx.inspected_asset.empty() && !inspected.path.empty()) { release_inspected(); }
+
         ImGui::End();
+        run_prefab_action(world, ctx);
     }
 } // namespace tau::editor::panels

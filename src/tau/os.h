@@ -27,6 +27,7 @@ namespace tau::os
     TAU_ENGINE_API lib_handle_t load_lib(const char* path);
     TAU_ENGINE_API void* get_proc_address(lib_handle_t lib, const char* func_name);
     TAU_ENGINE_API void free_lib(lib_handle_t lib);
+    TAU_ENGINE_API std::string lib_error();
 
     // the module (executable or shared library) an address lies in, named by its image base, or nullptr
     // equal results mean the same module, which is what unloading a library must know about anything pointing at it

@@ -14,8 +14,16 @@ namespace tau::transform_system
     TAU_ENGINE_API quat_t get_world_rotation(ecs::registry_t& reg, ecs::entity_t entity);
 
     TAU_ENGINE_API void set_world_position(ecs::registry_t& reg, ecs::entity_t entity, vec3_t world_pos);
+    TAU_ENGINE_API void set_world_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat_t world_rot);
 
-    TAU_ENGINE_API void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent);
+    // before: sibling to go in front of, null = last
+    TAU_ENGINE_API void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent,
+                                   ecs::entity_t before = ecs::NULL_ENTITY);
+    // keeps the world pose, local values adjust
+    TAU_ENGINE_API void set_parent_keep_world(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent,
+                                              ecs::entity_t before = ecs::NULL_ENTITY);
+
+    TAU_ENGINE_API ecs::entity_t first_root(const ecs::registry_t& reg);
 
     void connect(ecs::registry_t& reg);
     void update(ecs::registry_t& reg);

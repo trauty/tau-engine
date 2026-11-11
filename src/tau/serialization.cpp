@@ -3,17 +3,19 @@
 #include "entt/meta/meta.hpp"
 #include "entt/meta/resolve.hpp"
 #include "tau/asset.h"
-#include "tau/asset_meta.h"
-#include "tau/asset_serde.h"
-#include "tau/asset_table.h"
+#include "tau/assets/prefab.h"
 #include "tau/assets/scene_format.h"
+#include "tau/components/prefab.h"
 #include "tau/components/transform.h"
 #include "tau/ecs_fwd.h"
 #include "tau/engine.h"
+#include "tau/guid.h"
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/math.h"
+#include "tau/prefab.h"
 #include "tau/reflection.h"
+#include "tau/systems/guid.h"
 #include "tau/systems/transform.h"
 
 #include "json/json.hpp"
@@ -22,6 +24,7 @@
 #include <fstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -51,20 +54,26 @@ namespace tau::serialization
         // a scene names an asset type by its key, as it names components and fields, the type id is only its hash
         std::string asset_type_key(u64_t type_id)
         {
-            const asset_type_t* type = tau::asset_table::by_type_id(type_id);
+            const asset_type_t* type = tau::assets::type_by_id(type_id);
             return type != nullptr ? std::string(type->key) : std::string{};
         }
 
         u64_t asset_type_id(const nlohmann::json& value, const std::string& prop_key)
         {
             const nlohmann::json key = value.value("t", nlohmann::json{});
-            const asset_type_t* type = key.is_string() ? tau::asset_table::by_key(key.get<std::string>()) : nullptr;
+            const asset_type_t* type = key.is_string() ? tau::assets::type_by_key(key.get<std::string>()) : nullptr;
             if (type == nullptr)
             {
                 TAU_LOG_WARN("SCENE", "Property '{}' names no known asset type ({})", prop_key, key.dump());
                 return 0;
             }
-            return type->type_id;
+            return type->id;
+        }
+
+        asset_guid_t ref_guid(const nlohmann::json& ref)
+        {
+            const nlohmann::json guid = ref.value("g", nlohmann::json{});
+            return guid.is_string() ? tau::assets::parse_guid(guid.get<std::string>()) : 0;
         }
 
         template <typename T>
@@ -82,13 +91,19 @@ namespace tau::serialization
         std::vector<tau::ecs::entity_t> hierarchy_order(tau::ecs::registry_t& reg)
         {
             std::vector<tau::ecs::entity_t> roots;
+            for (tau::ecs::entity_t root = tau::transform_system::first_root(reg); root != tau::ecs::NULL_ENTITY;
+                 root = reg.get<transform_t>(root).get_next_sibling())
+            {
+                roots.push_back(root);
+            }
+
+            // no transform: after the rest, oldest first
+            const std::size_t ordered = roots.size();
             for (tau::ecs::entity_t entity : reg.view<tau::ecs::entity_t>())
             {
-                const transform_t* transform = reg.try_get<transform_t>(entity);
-                if (!transform || transform->get_parent() == tau::ecs::NULL_ENTITY) { roots.push_back(entity); }
+                if (!reg.all_of<transform_t>(entity)) { roots.push_back(entity); }
             }
-            // views run newest first
-            std::reverse(roots.begin(), roots.end());
+            std::reverse(roots.begin() + static_cast<std::ptrdiff_t>(ordered), roots.end());
 
             std::vector<tau::ecs::entity_t> order;
             std::vector<tau::ecs::entity_t> stack;
@@ -129,21 +144,27 @@ namespace tau::serialization
             return by_pool;
         }
 
-        // scenes store entity references as scene indices, saving maps through slots, loading through created
         struct entity_refs_t
         {
-            const std::unordered_map<tau::ecs::entity_t, std::size_t>* slots = nullptr;
-            const std::vector<tau::ecs::entity_t>* created = nullptr;
+            const tau::ecs::registry_t* reg = nullptr;
+            const std::unordered_map<u64_t, tau::ecs::entity_t>* by_file_id = nullptr;
+            bool search_world = false;
 
-            u32_t encode(tau::ecs::entity_t entity) const
+            u64_t encode(tau::ecs::entity_t entity) const { return tau::guid_system::of(*reg, entity); }
+
+            tau::ecs::entity_t decode(u64_t file_id) const
             {
-                const auto it = slots->find(entity);
-                return it != slots->end() ? static_cast<u32_t>(it->second) : TAU_SCENE_NULL_ENTITY;
+                const auto it = by_file_id->find(file_id);
+                if (it != by_file_id->end()) { return it->second; }
+                return search_world ? tau::guid_system::find(*reg, file_id) : tau::ecs::NULL_ENTITY;
             }
-
-            tau::ecs::entity_t decode(u32_t value) const
-            { return value < created->size() ? (*created)[value] : tau::ecs::NULL_ENTITY; }
         };
+
+        nlohmann::json guid_json(u64_t guid)
+        { return guid == 0 ? nlohmann::json(nullptr) : nlohmann::json(tau::guid::to_string(guid)); }
+
+        u64_t guid_from_json(const nlohmann::json& value)
+        { return value.is_string() ? tau::guid::from_string(value.get<std::string>()) : 0; }
 
         nlohmann::json encode_fields(tau::world_t& world, tau::reflection::type_t type,
                                      tau::reflection::any_t& instance, const entity_refs_t& refs);
@@ -182,9 +203,7 @@ namespace tau::serialization
             // before the enum check, entities are an enum
             if (type == tau::reflection::resolve<tau::ecs::entity_t>(ctx))
             {
-                const u32_t ref = refs.encode(value.cast<tau::ecs::entity_t>());
-                return tagged(scene_value_type_e::ENTITY,
-                              ref == TAU_SCENE_NULL_ENTITY ? nlohmann::json(nullptr) : nlohmann::json(ref));
+                return tagged(scene_value_type_e::ENTITY, guid_json(refs.encode(value.cast<tau::ecs::entity_t>())));
             }
 
             if (type.is_enum())
@@ -229,41 +248,26 @@ namespace tau::serialization
                 tau::reflection::editor_prop_t* prop = static_cast<tau::reflection::editor_prop_t*>(data.custom());
                 if (prop && prop->asset_type_hash != 0 && prop->is_list)
                 {
-                    const std::vector<asset_handle_t> list = field_value.cast<std::vector<asset_handle_t>>();
-
                     nlohmann::json entries = nlohmann::json::array();
-                    for (const asset_handle_t& handle : list)
+                    for (const asset_handle_t& handle : tau::reflection::assets_of(field_value))
                     {
-                        std::string path = tau::engine::get_asset_registry().get_path(handle);
-                        std::string_view guid = tau::asset_meta::get_guid(path);
-                        entries.push_back({
-                            {"g", guid.empty() ? "" : std::string(guid)},
-                            {"p", path                                 }
-                        });
+                        entries.push_back(asset_ref(handle));
                     }
 
-                    const std::string asset_type = asset_type_key(prop->asset_type_hash);
                     fields[prop_key] =
-                        tagged(scene_value_type_e::ASSET_REF_LIST, {
-                                                                       {"t", asset_type        },
-                                                                       {"e", std::move(entries)}
+                        tagged(scene_value_type_e::ASSET_REF_LIST,
+                               {
+                                   {"t", asset_type_key(prop->asset_type_hash)},
+                                   {"e", std::move(entries)                   }
                     });
                     continue;
                 }
 
                 if (prop && prop->asset_type_hash != 0)
                 {
-                    asset_handle_t handle = field_value.cast<asset_handle_t>();
-                    std::string path = tau::engine::get_asset_registry().get_path(handle);
-                    std::string_view guid = tau::asset_meta::get_guid(path);
-                    const std::string asset_type = asset_type_key(prop->asset_type_hash);
-                    fields[prop_key] =
-                        tagged(scene_value_type_e::ASSET_REF,
-                               {
-                                   {"t", asset_type                           },
-                                   {"g", guid.empty() ? "" : std::string(guid)},
-                                   {"p", path                                 }
-                    });
+                    nlohmann::json ref = asset_ref(tau::reflection::asset_of(field_value));
+                    ref["t"] = asset_type_key(prop->asset_type_hash);
+                    fields[prop_key] = tagged(scene_value_type_e::ASSET_REF, std::move(ref));
                     continue;
                 }
 
@@ -272,6 +276,37 @@ namespace tau::serialization
             }
 
             return fields;
+        }
+
+        nlohmann::json encode_components(tau::world_t& world, tau::ecs::entity_t entity, const entity_refs_t& refs)
+        {
+            const std::unordered_map<u32_t, tau::reflection::type_t> by_pool = component_types_by_pool(world);
+            nlohmann::json components = nlohmann::json::object();
+
+            for (auto [pool_id, pool] : world.registry.storage())
+            {
+                if (!pool.contains(entity)) { continue; }
+
+                const auto type_it = by_pool.find(static_cast<u32_t>(pool_id));
+                if (type_it == by_pool.end()) { continue; }
+
+                const tau::reflection::type_t type = type_it->second;
+                tau::reflection::any_t instance =
+                    type.func("get"_h).invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
+                if (!instance) { continue; }
+
+                components[meta_key(type.name(), static_cast<u32_t>(type.id()))] =
+                    encode_fields(world, type, instance, refs);
+            }
+
+            return components;
+        }
+
+        const nlohmann::json* prefab_data_of(const tau::ecs::registry_t& reg, tau::ecs::entity_t root)
+        {
+            const prefab_instance_t* instance = reg.try_get<prefab_instance_t>(root);
+            const prefab_t* prefab = instance ? tau::assets::get(instance->prefab) : nullptr;
+            return prefab ? &prefab->data : nullptr;
         }
 
         bool parse_value(const nlohmann::json& val, const std::string& prop_key, scene_property_t& prop)
@@ -298,7 +333,7 @@ namespace tau::serialization
             case scene_value_type_e::ASSET_REF:
                 prop.asset_type = asset_type_id(v, prop_key);
                 prop.str = v.value("p", std::string{});
-                prop.guid = v.value("g", std::string{});
+                prop.guid = ref_guid(v);
                 return true;
             case scene_value_type_e::ASSET_REF_LIST:
             {
@@ -307,11 +342,17 @@ namespace tau::serialization
                 for (const nlohmann::json& entry : entries)
                 {
                     prop.strs.push_back(entry.value("p", std::string{}));
-                    prop.guids.push_back(entry.value("g", std::string{}));
+                    prop.guids.push_back(ref_guid(entry));
                 }
                 return true;
             }
-            case scene_value_type_e::ENTITY: prop.u = v.is_null() ? TAU_SCENE_NULL_ENTITY : v.get<u32_t>(); return true;
+            case scene_value_type_e::ENTITY:
+                if (v.is_number_integer() && v.get<i64_t>() >= 0) { prop.u = v.get<u32_t>() + 1; }
+                else
+                {
+                    prop.ref = guid_from_json(v);
+                }
+                return true;
             case scene_value_type_e::STRUCT:
                 for (const auto& [child_key, child_val] : v.items())
                 {
@@ -335,6 +376,15 @@ namespace tau::serialization
             return false;
         }
 
+        void adopt_index_refs(std::vector<scene_property_t>& props)
+        {
+            for (scene_property_t& prop : props)
+            {
+                if (prop.type == scene_value_type_e::ENTITY && prop.ref == 0) { prop.ref = prop.u; }
+                adopt_index_refs(prop.children);
+            }
+        }
+
         void write_property(std::ofstream& out, const scene_property_t& prop)
         {
             write_pod(out, prop.prop_hash);
@@ -355,7 +405,7 @@ namespace tau::serialization
             case scene_value_type_e::ASSET_REF:
                 write_pod(out, prop.asset_type);
                 write_str(out, prop.str);
-                write_str(out, prop.guid);
+                write_pod(out, prop.guid);
                 break;
             case scene_value_type_e::ASSET_REF_LIST:
                 write_pod(out, prop.asset_type);
@@ -363,10 +413,10 @@ namespace tau::serialization
                 for (std::size_t i = 0; i < prop.strs.size(); i++)
                 {
                     write_str(out, prop.strs[i]);
-                    write_str(out, i < prop.guids.size() ? prop.guids[i] : std::string{});
+                    write_pod(out, i < prop.guids.size() ? prop.guids[i] : asset_guid_t{0});
                 }
                 break;
-            case scene_value_type_e::ENTITY: write_pod(out, prop.u); break;
+            case scene_value_type_e::ENTITY: write_pod(out, prop.ref); break;
             case scene_value_type_e::STRUCT:
             case scene_value_type_e::LIST:
                 write_pod(out, static_cast<u32_t>(prop.children.size()));
@@ -376,7 +426,21 @@ namespace tau::serialization
         }
     } // namespace
 
-    nlohmann::json serialize_scene(tau::world_t& world, std::vector<tau::ecs::entity_t>* order)
+    namespace
+    {
+        nlohmann::json collapse_instance(tau::world_t& world, tau::ecs::entity_t root)
+        {
+            const u64_t instance = tau::guid_system::of(world.registry, root);
+            std::vector<nlohmann::json> parts;
+            for (auto [entity, part] : world.registry.view<prefab_part_t>().each())
+            {
+                if (part.instance == instance) { parts.push_back(serialize_entity(world, entity)); }
+            }
+            return tau::prefab::collapse_instance(prefab_data_of(world.registry, root), parts);
+        }
+    } // namespace
+
+    nlohmann::json serialize_scene(tau::world_t& world)
     {
         nlohmann::json scene_data;
         scene_data["entities"] = nlohmann::json::array();
@@ -384,17 +448,29 @@ namespace tau::serialization
         const std::unordered_map<u32_t, tau::reflection::type_t> by_pool = component_types_by_pool(world);
 
         const std::vector<tau::ecs::entity_t> entities = hierarchy_order(world.registry);
-        if (order) { *order = entities; }
+        for (tau::ecs::entity_t entity : entities) { tau::guid_system::ensure(world.registry, entity); }
 
         std::unordered_map<tau::ecs::entity_t, std::size_t> slots;
         for (tau::ecs::entity_t entity : entities)
         {
+            // instance = one entry at its root
+            if (const prefab_part_t* part = world.registry.try_get<prefab_part_t>(entity))
+            {
+                const tau::ecs::entity_t root = tau::guid_system::find(world.registry, part->instance);
+                if (root != tau::ecs::NULL_ENTITY && world.registry.all_of<prefab_instance_t>(root))
+                {
+                    if (root == entity) { scene_data["entities"].push_back(collapse_instance(world, root)); }
+                    continue;
+                }
+            }
+
             nlohmann::json entity_json;
+            entity_json["id"] = guid_json(tau::guid_system::of(world.registry, entity));
 
             const transform_t* transform = world.registry.try_get<transform_t>(entity);
             if (transform && transform->get_parent() != tau::ecs::NULL_ENTITY)
             {
-                entity_json["parent"] = slots.at(transform->get_parent());
+                entity_json["parent"] = guid_json(tau::guid_system::of(world.registry, transform->get_parent()));
             }
 
             entity_json["components"] = nlohmann::json::object();
@@ -403,7 +479,7 @@ namespace tau::serialization
             scene_data["entities"].push_back(std::move(entity_json));
         }
 
-        const entity_refs_t refs{.slots = &slots};
+        const entity_refs_t refs{.reg = &world.registry};
 
         for (auto [pool_id, pool] : world.registry.storage())
         {
@@ -431,18 +507,19 @@ namespace tau::serialization
         return scene_data;
     }
 
-    scene_t scene_from_json(const nlohmann::json& scene_data)
+    namespace
     {
-        scene_t scene;
-
-        if (!scene_data.contains("entities")) { return scene; }
-
-        for (const nlohmann::json& entity_json : scene_data["entities"])
+        scene_entity_t parse_entity(const nlohmann::json& entity_json)
         {
-            scene_entity_t& out_entity = scene.entities.emplace_back();
-            out_entity.parent = entity_json.value("parent", -1);
+            scene_entity_t out_entity;
+            out_entity.id = guid_from_json(entity_json.value("id", nlohmann::json{}));
 
-            for (const auto& [type_key, props_json] : entity_json["components"].items())
+            const nlohmann::json parent = entity_json.value("parent", nlohmann::json{});
+            out_entity.parent = (parent.is_number_integer() && parent.get<i64_t>() >= 0) ? parent.get<u64_t>() + 1
+                                                                                         : guid_from_json(parent);
+
+            const nlohmann::json components = entity_json.value("components", nlohmann::json::object());
+            for (const auto& [type_key, props_json] : components.items())
             {
                 scene_component_t& out_comp = out_entity.components.emplace_back();
                 out_comp.type_hash = key_to_hash(type_key);
@@ -456,6 +533,93 @@ namespace tau::serialization
 
                     if (parse_value(val, prop_key, prop)) { out_comp.properties.push_back(std::move(prop)); }
                 }
+            }
+
+            if (const auto part = entity_json.find("prefab_part"); part != entity_json.end() && part->is_object())
+            {
+                out_entity.prefab_instance = guid_from_json(part->value("instance", nlohmann::json{}));
+                out_entity.prefab_source = guid_from_json(part->value("source", nlohmann::json{}));
+            }
+            if (const auto ref = entity_json.find("prefab"); ref != entity_json.end() && ref->is_object())
+            {
+                out_entity.prefab_root = true;
+                out_entity.prefab_guid = ref_guid(*ref);
+                out_entity.prefab_path = ref->value("p", std::string{});
+                for (const nlohmann::json& source : entity_json.value("removed", nlohmann::json::array()))
+                {
+                    out_entity.prefab_removed.push_back(guid_from_json(source));
+                }
+                if (entity_json.contains("unresolved"))
+                {
+                    out_entity.prefab_unresolved = entity_json["unresolved"].dump();
+                }
+            }
+
+            return out_entity;
+        }
+    } // namespace
+
+    nlohmann::json serialize_entity(tau::world_t& world, tau::ecs::entity_t entity)
+    {
+        const entity_refs_t refs{.reg = &world.registry};
+
+        nlohmann::json entity_json;
+        entity_json["id"] = guid_json(tau::guid_system::ensure(world.registry, entity));
+
+        if (const transform_t* transform = world.registry.try_get<transform_t>(entity))
+        {
+            entity_json["parent"] = guid_json(refs.encode(transform->get_parent()));
+            entity_json["next"] = guid_json(refs.encode(transform->get_next_sibling()));
+        }
+
+        entity_json["components"] = encode_components(world, entity, refs);
+
+        if (const prefab_part_t* part = world.registry.try_get<prefab_part_t>(entity))
+        {
+            entity_json["prefab_part"] = {
+                {"instance", guid_json(part->instance)},
+                {"source",   guid_json(part->source)  }
+            };
+        }
+        if (const prefab_instance_t* instance = world.registry.try_get<prefab_instance_t>(entity))
+        {
+            if (!instance->unresolved.empty())
+            {
+                entity_json["unresolved"] = nlohmann::json::parse(instance->unresolved, nullptr, false);
+                entity_json["prefab"] = entity_json["unresolved"].value("prefab", nlohmann::json::object());
+            }
+            else
+            {
+                entity_json["prefab"] = asset_ref(instance->prefab);
+            }
+
+            nlohmann::json removed = nlohmann::json::array();
+            for (const u64_t source : instance->removed) { removed.push_back(guid_json(source)); }
+            entity_json["removed"] = std::move(removed);
+        }
+        return entity_json;
+    }
+
+    scene_t scene_from_json(const nlohmann::json& scene_data)
+    {
+        scene_t scene;
+
+        if (!scene_data.contains("entities")) { return scene; }
+
+        for (const nlohmann::json& entity_json : scene_data["entities"])
+        {
+            scene.entities.push_back(parse_entity(entity_json));
+        }
+
+        const bool has_ids = std::any_of(scene.entities.begin(), scene.entities.end(),
+                                         [](const scene_entity_t& entity) { return entity.id != 0; });
+        if (!has_ids && !scene.entities.empty())
+        {
+            scene.generated_ids = true;
+            for (std::size_t i = 0; i < scene.entities.size(); i++)
+            {
+                scene.entities[i].id = i + 1;
+                for (scene_component_t& comp : scene.entities[i].components) { adopt_index_refs(comp.properties); }
             }
         }
 
@@ -477,6 +641,7 @@ namespace tau::serialization
 
         for (const scene_entity_t& entity : scene.entities)
         {
+            write_pod(out, entity.id);
             write_pod(out, entity.parent);
             write_pod(out, static_cast<u32_t>(entity.components.size()));
             for (const scene_component_t& comp : entity.components)
@@ -509,13 +674,12 @@ namespace tau::serialization
             case scene_value_type_e::BOOL: return tau::reflection::any_t{ctx, prop.b};
             case scene_value_type_e::STRING: return tau::reflection::any_t{ctx, prop.str};
             case scene_value_type_e::VEC3: return tau::reflection::any_t{ctx, prop.vec};
-            case scene_value_type_e::ENTITY: return tau::reflection::any_t{ctx, refs.decode(prop.u)};
+            case scene_value_type_e::ENTITY: return tau::reflection::any_t{ctx, refs.decode(prop.ref)};
             case scene_value_type_e::ASSET_REF:
             {
-                const std::string ref = tau::asset_meta::resolve_ref(prop.guid, prop.str);
-                if (ref.empty()) { return {}; }
-                return tau::reflection::any_t{
-                    ctx, tau::asset_serde::load(prop.asset_type, tau::engine::get_asset_registry(), ref)};
+                const std::string ref = tau::assets::resolve(prop.guid, prop.str);
+                if (ref.empty()) { return tau::reflection::any_t{ctx, asset_handle_t{}}; }
+                return tau::reflection::any_t{ctx, tau::assets::load(prop.asset_type, ref)};
             }
             case scene_value_type_e::ASSET_REF_LIST:
             {
@@ -523,11 +687,9 @@ namespace tau::serialization
                 list.reserve(prop.strs.size());
                 for (std::size_t i = 0; i < prop.strs.size(); i++)
                 {
-                    const std::string ref = tau::asset_meta::resolve_ref(
-                        i < prop.guids.size() ? prop.guids[i] : std::string{}, prop.strs[i]);
-                    list.push_back(
-                        ref.empty() ? asset_handle_t{}
-                                    : tau::asset_serde::load(prop.asset_type, tau::engine::get_asset_registry(), ref));
+                    const std::string ref =
+                        tau::assets::resolve(i < prop.guids.size() ? prop.guids[i] : asset_guid_t{0}, prop.strs[i]);
+                    list.push_back(ref.empty() ? asset_handle_t{} : tau::assets::load(prop.asset_type, ref));
                 }
                 return tau::reflection::any_t{ctx, std::move(list)};
             }
@@ -602,16 +764,21 @@ namespace tau::serialization
                     continue;
                 }
 
-                if (tau::reflection::func_t add_func = type.func("add"_h); add_func)
-                {
-                    add_func.invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
-                }
-
                 tau::reflection::func_t get_func = type.func("get"_h);
                 if (!get_func) { continue; }
 
                 tau::reflection::any_t instance =
                     get_func.invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
+
+                // only if missing: replacing resets e.g. transform links
+                if (!instance)
+                {
+                    if (tau::reflection::func_t add_func = type.func("add"_h); add_func)
+                    {
+                        add_func.invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
+                    }
+                    instance = get_func.invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
+                }
                 if (!instance) { continue; }
 
                 apply_fields(world, instance, type, comp.properties, refs,
@@ -625,41 +792,429 @@ namespace tau::serialization
         }
     } // namespace
 
+    namespace
+    {
+        void apply_prefab_tags(tau::world_t& world, tau::ecs::entity_t entity, const scene_entity_t& scene_entity)
+        {
+            tau::ecs::registry_t& reg = world.registry;
+
+            if (scene_entity.prefab_instance != 0)
+            {
+                reg.emplace_or_replace<prefab_part_t>(
+                    entity, prefab_part_t{scene_entity.prefab_instance, scene_entity.prefab_source});
+            }
+            else
+            {
+                reg.remove<prefab_part_t>(entity);
+            }
+
+            if (!scene_entity.prefab_root)
+            {
+                reg.remove<prefab_instance_t>(entity);
+                return;
+            }
+
+            prefab_instance_t instance;
+            instance.removed = scene_entity.prefab_removed;
+            instance.unresolved = scene_entity.prefab_unresolved;
+
+            const std::string ref = tau::assets::resolve(scene_entity.prefab_guid, scene_entity.prefab_path);
+            if (!ref.empty()) { instance.prefab = tau::assets::load<prefab_t>(ref); }
+
+            reg.emplace_or_replace<prefab_instance_t>(entity, std::move(instance));
+        }
+    } // namespace
+
     std::vector<tau::ecs::entity_t> instantiate_scene(tau::world_t& world, const scene_t& scene)
     {
         std::vector<tau::ecs::entity_t> created;
         created.reserve(scene.entities.size());
+        std::unordered_map<u64_t, tau::ecs::entity_t> by_file_id;
 
-        for (std::size_t i = 0; i < scene.entities.size(); i++) { created.push_back(world.registry.create()); }
+        for (const scene_entity_t& scene_entity : scene.entities)
+        {
+            const tau::ecs::entity_t entity = world.registry.create();
 
-        // after every entity exists, so references to later ones resolve
-        const entity_refs_t refs{.created = &created};
+            // keep file guid unless made up or taken
+            const bool fresh = scene.generated_ids || scene_entity.id == 0 ||
+                               tau::guid_system::find(world.registry, scene_entity.id) != tau::ecs::NULL_ENTITY;
+            tau::guid_system::assign(world.registry, entity, fresh ? tau::guid::generate() : scene_entity.id);
+
+            by_file_id.emplace(scene_entity.id, entity);
+            created.push_back(entity);
+        }
+
+        const entity_refs_t refs{.reg = &world.registry, .by_file_id = &by_file_id};
         for (std::size_t i = 0; i < scene.entities.size(); i++)
         {
             apply_scene_entity(world, created[i], scene.entities[i], refs);
+            apply_prefab_tags(world, created[i], scene.entities[i]);
         }
 
-        // reversed since set_parent prepends, keeps the saved sibling order
-        for (std::size_t i = created.size(); i-- > 0;)
+        for (std::size_t i = 0; i < created.size(); i++)
         {
-            const i32_t parent = scene.entities[i].parent;
-            if (parent < 0) { continue; }
+            const u64_t parent_id = scene.entities[i].parent;
+            if (parent_id == 0) { continue; }
 
-            if (static_cast<std::size_t>(parent) >= created.size() || !world.registry.all_of<transform_t>(created[i]) ||
-                !world.registry.all_of<transform_t>(created[static_cast<std::size_t>(parent)]))
+            const tau::ecs::entity_t parent = refs.decode(parent_id);
+            if (parent == tau::ecs::NULL_ENTITY || !world.registry.all_of<transform_t>(created[i]) ||
+                !world.registry.all_of<transform_t>(parent))
             {
-                TAU_LOG_WARN("SCENE", "Entity {} has an invalid parent {}, left at the root", i, parent);
+                TAU_LOG_WARN("SCENE", "Entity {} has an invalid parent, left at the root", i);
                 continue;
             }
 
-            tau::transform_system::set_parent(world.registry, created[i], created[static_cast<std::size_t>(parent)]);
+            tau::transform_system::set_parent(world.registry, created[i], parent);
         }
 
         return created;
     }
 
     std::vector<tau::ecs::entity_t> deserialize_scene(tau::world_t& world, const nlohmann::json& scene_data)
-    { return instantiate_scene(world, scene_from_json(scene_data)); }
+    { return instantiate_scene(world, scene_from_json(tau::prefab::expand(scene_data, &tau::prefab::asset_lookup))); }
+
+    namespace
+    {
+        u32_t depth_of(const tau::ecs::registry_t& reg, tau::ecs::entity_t entity)
+        {
+            u32_t depth = 0;
+            for (const transform_t* t = reg.try_get<transform_t>(entity); t && t->get_parent() != tau::ecs::NULL_ENTITY;
+                 t = reg.try_get<transform_t>(t->get_parent()))
+            {
+                depth++;
+            }
+            return depth;
+        }
+    } // namespace
+
+    void apply_entities(tau::world_t& world, std::span<const entity_state_t> states)
+    {
+        tau::ecs::registry_t& reg = world.registry;
+
+        std::unordered_map<u64_t, tau::ecs::entity_t> by_guid;
+        for (const entity_state_t& s : states)
+        {
+            if (!s.state) { continue; }
+
+            tau::ecs::entity_t entity = tau::guid_system::find(reg, s.guid);
+            if (entity == tau::ecs::NULL_ENTITY)
+            {
+                entity = reg.create();
+                tau::guid_system::assign(reg, entity, s.guid);
+            }
+            by_guid.emplace(s.guid, entity);
+        }
+
+        const entity_refs_t refs{.reg = &reg, .by_file_id = &by_guid, .search_world = true};
+        const std::unordered_map<u32_t, tau::reflection::type_t> by_pool = component_types_by_pool(world);
+
+        std::vector<tau::reflection::type_t> extra;
+        for (const entity_state_t& s : states)
+        {
+            if (!s.state) { continue; }
+
+            const tau::ecs::entity_t entity = by_guid.at(s.guid);
+            const scene_entity_t parsed = parse_entity(*s.state);
+
+            // in place: drop components the state lacks
+            extra.clear();
+            for (auto [pool_id, pool] : reg.storage())
+            {
+                const auto type_it = by_pool.find(static_cast<u32_t>(pool_id));
+                if (type_it == by_pool.end() || !pool.contains(entity)) { continue; }
+
+                const u32_t type_hash = static_cast<u32_t>(type_it->second.id());
+                if (std::none_of(parsed.components.begin(), parsed.components.end(),
+                                 [type_hash](const scene_component_t& c) { return c.type_hash == type_hash; }))
+                {
+                    extra.push_back(type_it->second);
+                }
+            }
+            for (const tau::reflection::type_t& type : extra)
+            {
+                if (tau::reflection::func_t remove_func = type.func("remove"_h); remove_func)
+                {
+                    remove_func.invoke({}, tau::reflection::forward_as_meta(reg), entity);
+                }
+            }
+
+            apply_scene_entity(world, entity, parsed, refs);
+            apply_prefab_tags(world, entity, parsed);
+        }
+
+        auto place = [&](const entity_state_t& s)
+        {
+            const tau::ecs::entity_t entity = by_guid.at(s.guid);
+            const transform_t* transform = reg.try_get<transform_t>(entity);
+            if (!transform) { return; }
+
+            tau::ecs::entity_t parent = refs.decode(guid_from_json(s.state->value("parent", nlohmann::json{})));
+            if (parent != tau::ecs::NULL_ENTITY && !reg.all_of<transform_t>(parent)) { parent = tau::ecs::NULL_ENTITY; }
+            const tau::ecs::entity_t next = refs.decode(guid_from_json(s.state->value("next", nlohmann::json{})));
+
+            if (transform->get_parent() == parent && transform->get_next_sibling() == next) { return; }
+            tau::transform_system::set_parent(reg, entity, parent, next);
+        };
+
+        // placed before its next sibling, which goes first if in the batch
+        std::vector<const entity_state_t*> unplaced;
+        std::unordered_set<u64_t> unplaced_guids;
+        for (const entity_state_t& s : states)
+        {
+            if (!s.state) { continue; }
+            unplaced.push_back(&s);
+            unplaced_guids.insert(s.guid);
+        }
+
+        bool stuck = false;
+        while (!unplaced.empty())
+        {
+            bool progressed = false;
+            for (auto it = unplaced.begin(); it != unplaced.end();)
+            {
+                const u64_t next = guid_from_json((*it)->state->value("next", nlohmann::json{}));
+                if (!stuck && next != 0 && unplaced_guids.contains(next))
+                {
+                    ++it;
+                    continue;
+                }
+
+                place(**it);
+                unplaced_guids.erase((*it)->guid);
+                it = unplaced.erase(it);
+                progressed = true;
+            }
+            // cycle: place the rest as they come
+            if (!progressed) { stuck = true; }
+        }
+
+        // deepest first, a parent takes children a frame later
+        std::vector<std::pair<u32_t, tau::ecs::entity_t>> doomed;
+        for (const entity_state_t& s : states)
+        {
+            if (s.state) { continue; }
+
+            const tau::ecs::entity_t entity = tau::guid_system::find(reg, s.guid);
+            if (entity != tau::ecs::NULL_ENTITY) { doomed.emplace_back(depth_of(reg, entity), entity); }
+        }
+        std::sort(doomed.begin(), doomed.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (const auto& [depth, entity] : doomed)
+        {
+            if (reg.valid(entity)) { reg.destroy(entity); }
+        }
+    }
+
+    namespace
+    {
+        void remap_guid(nlohmann::json& value, const std::unordered_map<u64_t, u64_t>& new_guids)
+        {
+            const auto it = new_guids.find(guid_from_json(value));
+            if (it != new_guids.end()) { value = guid_json(it->second); }
+        }
+
+    } // namespace
+
+    void remap_entity_refs(nlohmann::json& value, const std::unordered_map<u64_t, u64_t>& new_guids)
+    {
+        if (value.is_array())
+        {
+            for (nlohmann::json& element : value) { remap_entity_refs(element, new_guids); }
+            return;
+        }
+        if (!value.is_object()) { return; }
+
+        const auto type = value.find("ty");
+        if (type != value.end() && value.contains("v") && type->is_number() &&
+            type->get<u8_t>() == static_cast<u8_t>(scene_value_type_e::ENTITY))
+        {
+            remap_guid(value["v"], new_guids);
+            return;
+        }
+
+        for (auto& [key, child] : value.items()) { remap_entity_refs(child, new_guids); }
+    }
+
+    void duplicate_entities(tau::world_t& world, std::span<const tau::ecs::entity_t> entities,
+                            const std::unordered_map<u64_t, u64_t>& new_guids)
+    {
+        std::vector<nlohmann::json> states;
+        states.reserve(entities.size());
+        std::vector<entity_state_t> batch;
+
+        for (const tau::ecs::entity_t entity : entities)
+        {
+            nlohmann::json state = serialize_entity(world, entity);
+            remap_guid(state["id"], new_guids);
+            if (state.contains("parent")) { remap_guid(state["parent"], new_guids); }
+            if (state.contains("next")) { remap_guid(state["next"], new_guids); }
+            remap_entity_refs(state["components"], new_guids);
+
+            // copied instance is new, part without its root is plain
+            if (state.contains("prefab_part"))
+            {
+                if (new_guids.contains(guid_from_json(state["prefab_part"].value("instance", nlohmann::json{}))))
+                {
+                    remap_guid(state["prefab_part"]["instance"], new_guids);
+                }
+                else
+                {
+                    state.erase("prefab_part");
+                }
+            }
+
+            const u64_t guid = guid_from_json(state["id"]);
+            states.push_back(std::move(state));
+            batch.push_back({guid, &states.back()});
+        }
+
+        apply_entities(world, batch);
+    }
+
+    namespace
+    {
+        bool refers_to(tau::world_t& world, tau::reflection::type_t type, tau::reflection::any_t& value,
+                       const std::unordered_set<tau::ecs::entity_t>& targets)
+        {
+            tau::reflection::ctx_t& ctx = *world.reflection_ctx;
+
+            if (type == tau::reflection::resolve<tau::ecs::entity_t>(ctx))
+            {
+                return targets.contains(value.cast<tau::ecs::entity_t>());
+            }
+            if (type.is_enum() || type == tau::reflection::resolve<std::string>(ctx)) { return false; }
+
+            if (type.is_sequence_container())
+            {
+                auto list = value.as_sequence_container();
+                const tau::reflection::type_t element_type = list.value_type();
+                for (tau::reflection::any_t element : list)
+                {
+                    if (refers_to(world, element_type, element, targets)) { return true; }
+                }
+                return false;
+            }
+
+            for (auto [data_id, data] : type.data())
+            {
+                const auto* prop = static_cast<tau::reflection::editor_prop_t*>(data.custom());
+                if (prop && prop->asset_type_hash != 0) { continue; }
+
+                tau::reflection::any_t field = data.get(value);
+                if (refers_to(world, data.type(), field, targets)) { return true; }
+            }
+            return false;
+        }
+    } // namespace
+
+    std::vector<tau::ecs::entity_t> find_referrers(tau::world_t& world, std::span<const tau::ecs::entity_t> targets)
+    {
+        const std::unordered_set<tau::ecs::entity_t> target_set(targets.begin(), targets.end());
+        const std::unordered_map<u32_t, tau::reflection::type_t> by_pool = component_types_by_pool(world);
+
+        std::unordered_set<tau::ecs::entity_t> found;
+        for (auto [pool_id, pool] : world.registry.storage())
+        {
+            const auto type_it = by_pool.find(static_cast<u32_t>(pool_id));
+            if (type_it == by_pool.end()) { continue; }
+
+            const tau::reflection::type_t type = type_it->second;
+            const tau::reflection::func_t get_func = type.func("get"_h);
+
+            for (tau::ecs::entity_t entity : pool)
+            {
+                if (target_set.contains(entity) || found.contains(entity)) { continue; }
+
+                tau::reflection::any_t instance =
+                    get_func.invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
+                if (instance && refers_to(world, type, instance, target_set)) { found.insert(entity); }
+            }
+        }
+
+        return {found.begin(), found.end()};
+    }
+
+    nlohmann::json asset_ref(asset_handle_t handle)
+    {
+        const std::string path = tau::assets::path_of(handle);
+        const asset_guid_t guid = handle.is_valid() && tau::assets::guid_of(path) == handle.guid ? handle.guid : 0;
+        return {
+            {"g", tau::assets::guid_text(guid)},
+            {"p", path                        },
+        };
+    }
+
+    namespace
+    {
+        void collect_value(tau::reflection::type_t type, tau::reflection::any_t& value,
+                           std::vector<asset_handle_t>& out);
+
+        void collect_fields(tau::reflection::type_t type, tau::reflection::any_t& instance,
+                            std::vector<asset_handle_t>& out)
+        {
+            for (auto [data_id, data] : type.data())
+            {
+                tau::reflection::any_t field = data.get(instance);
+
+                const auto* prop = static_cast<const tau::reflection::editor_prop_t*>(data.custom());
+                if (prop && prop->asset_type_hash != 0 && prop->is_list)
+                {
+                    for (const asset_handle_t& handle : tau::reflection::assets_of(field))
+                    {
+                        if (handle.is_valid()) { out.push_back(handle); }
+                    }
+                    continue;
+                }
+                if (prop && prop->asset_type_hash != 0)
+                {
+                    if (const asset_handle_t handle = tau::reflection::asset_of(field); handle.is_valid())
+                    {
+                        out.push_back(handle);
+                    }
+                    continue;
+                }
+
+                collect_value(data.type(), field, out);
+            }
+        }
+
+        void collect_value(tau::reflection::type_t type, tau::reflection::any_t& value,
+                           std::vector<asset_handle_t>& out)
+        {
+            if (type.is_sequence_container())
+            {
+                auto list = value.as_sequence_container();
+                const tau::reflection::type_t element_type = list.value_type();
+                for (tau::reflection::any_t element : list) { collect_value(element_type, element, out); }
+            }
+            else if (!type.is_enum() && type.data().begin() != type.data().end()) { collect_fields(type, value, out); }
+        }
+    } // namespace
+
+    void collect_asset_refs(tau::world_t& world, std::vector<asset_handle_t>& out)
+    {
+        const std::unordered_map<u32_t, tau::reflection::type_t> by_pool = component_types_by_pool(world);
+
+        for (auto [pool_id, pool] : world.registry.storage())
+        {
+            const auto type_it = by_pool.find(static_cast<u32_t>(pool_id));
+            if (type_it == by_pool.end()) { continue; }
+
+            const tau::reflection::type_t type = type_it->second;
+            const tau::reflection::func_t get_func = type.func("get"_h);
+
+            for (tau::ecs::entity_t entity : pool)
+            {
+                tau::reflection::any_t instance =
+                    get_func.invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
+                if (instance) { collect_fields(type, instance, out); }
+            }
+        }
+
+        for (auto [entity, instance] : world.registry.view<prefab_instance_t>().each())
+        {
+            if (instance.prefab.is_valid()) { out.push_back(instance.prefab); }
+        }
+    }
 
     void clear_scene(tau::world_t& world)
     {

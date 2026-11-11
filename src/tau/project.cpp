@@ -1,6 +1,8 @@
 #include "tau/project.h"
 
+#include "tau/asset.h"
 #include "tau/log.h"
+#include "tau/vfs.h"
 
 #include "json/json.hpp"
 #include <cstdlib>
@@ -113,6 +115,29 @@ namespace tau
         out << data.dump(4) << "\n";
         return true;
     }
+
+    namespace project
+    {
+        void mount(const project_t& project, bool engine_assets)
+        {
+            const std::filesystem::path& cooked = project.cooked_assets_dir;
+            if (engine_assets) { vfs::mount("engine://assets/", (cooked / "engine").generic_string() + "/"); }
+            vfs::mount("game://assets/", (cooked / "game").generic_string() + "/");
+
+            // stale game:// entries from another project
+            for (const auto& [path, guid] : assets::locations("game://")) { assets::remove_location(path); }
+            assets::read_guid_map((cooked / "guid_map.json").generic_string());
+        }
+
+        std::string scene_path(std::string_view ref)
+        {
+            if (ref.empty() || ref.find("://") != std::string_view::npos) { return std::string(ref); }
+
+            const asset_guid_t guid = assets::parse_guid(ref);
+            const std::string by_guid = guid != 0 ? assets::path_of(asset_handle_t{guid}) : std::string{};
+            return !by_guid.empty() ? by_guid : "game://assets/" + std::string(ref);
+        }
+    } // namespace project
 
     std::string major_minor(std::string_view version)
     {

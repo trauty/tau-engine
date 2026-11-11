@@ -24,7 +24,7 @@ namespace tau
 
     struct TAU_ENGINE_API shader_instance_t
     {
-        asset_handle_t shader_handle;
+        asset_t<shader_t> shader;
 
         flat_map_t<bound_resource_t> bound_resources;
         flat_map_t<VkDescriptorSet> sets[renderer::MAX_FRAMES_IN_FLIGHT];
@@ -34,10 +34,10 @@ namespace tau
         bool is_initialized = false;
 
         shader_instance_t() = default;
-        shader_instance_t(asset_handle_t target_shader);
+        explicit shader_instance_t(asset_t<shader_t> target_shader);
         ~shader_instance_t();
 
-        void init(asset_handle_t target_shader);
+        void init(asset_t<shader_t> target_shader);
         void shutdown();
         void sync();
 

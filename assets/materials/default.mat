@@ -1,0 +1,17 @@
+{
+    "guid": "b0d280d09bb341dc",
+    "properties": {
+        "base_color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+        ],
+        "metallic": 0.0,
+        "roughness": 0.5
+    },
+    "shader": "engine://assets/shaders/pbr.slang",
+    "textures": {
+        "albedo_tex": "engine://assets/textures/default_white.png"
+    }
+}

@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,12 @@ namespace tau::editor::asset_watch
     // tells the watcher the editor is about to write this file, so the change is not an outside edit
     // without it a material save would cook, see the write, and cook again forever
     void ignore_own_write(const std::filesystem::path& path);
+
+    // editor-saved sources, cooked off thread with the next batch
+    // not reloaded, memory already holds them; their dependents are
+    void cook_saved(std::span<const std::filesystem::path> sources);
+
+    void flush();
 
     // the open scene is cooked but never reloaded, memory holds the newer copy
     void set_open_scene(const std::filesystem::path& path);

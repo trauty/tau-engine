@@ -84,6 +84,19 @@ namespace tau::os
 
     void free_lib(lib_handle_t lib) { FreeLibrary((HMODULE)lib); }
 
+    std::string lib_error()
+    {
+        const DWORD code = GetLastError();
+        char* text = nullptr;
+        const DWORD size =
+            FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                           nullptr, code, 0, reinterpret_cast<LPSTR>(&text), 0, nullptr);
+        std::string message = size ? std::string(text, size) : "error " + std::to_string(code);
+        if (text) { LocalFree(text); }
+        while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) { message.pop_back(); }
+        return message;
+    }
+
     void* module_base_of(const void* address)
     {
         HMODULE module = nullptr;
@@ -263,6 +276,12 @@ namespace tau::os
     void* get_proc_address(lib_handle_t lib, const char* func_name) { return dlsym(lib, func_name); }
 
     void free_lib(lib_handle_t lib) { dlclose(lib); }
+
+    std::string lib_error()
+    {
+        const char* error = dlerror();
+        return error ? error : "unknown error";
+    }
 
     void* module_base_of(const void* address)
     {

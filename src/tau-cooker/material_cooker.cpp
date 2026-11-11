@@ -1,6 +1,6 @@
 #include "material_cooker.h"
 
-#include "tau/asset_meta.h"
+#include "tau/asset.h"
 #include "tau/assets/material_format.h"
 #include "tau/hash.h"
 #include "tau/log.h"
@@ -38,11 +38,11 @@ namespace tau::cooker::material
 
         // a recorded guid is the real reference, resolve it to where the shader lives now
         // without one (a hand written .mat) name it by path
-        std::string shader_guid = mat_json.value("shader_guid", std::string{});
-        if (shader_guid.empty()) { shader_guid = std::string(tau::asset_meta::get_guid(shader_path)); }
+        asset_guid_t shader_guid = tau::assets::parse_guid(mat_json.value("shader_guid", std::string{}));
+        if (shader_guid == 0) { shader_guid = tau::assets::guid_of(shader_path); }
         else
         {
-            shader_path = tau::asset_meta::resolve_ref(shader_guid, shader_path);
+            shader_path = tau::assets::resolve(shader_guid, shader_path);
         }
 
         std::vector<char> prop_blob;
@@ -110,8 +110,8 @@ namespace tau::cooker::material
         }
 
         material_header_t header = {
+            .shader_guid = shader_guid,
             .shader_path_length = static_cast<u32_t>(shader_path.size()),
-            .shader_guid_length = static_cast<u32_t>(shader_guid.size()),
             .texture_count = static_cast<u32_t>(mat_json.contains("textures") ? mat_json["textures"].size() : 0),
             .sampler_count = static_cast<u32_t>(mat_json.contains("samplers") ? mat_json["samplers"].size() : 0),
             .property_count = encoded_property_count,
@@ -119,7 +119,6 @@ namespace tau::cooker::material
 
         out.write(reinterpret_cast<const char*>(&header), sizeof(material_header_t));
         out.write(shader_path.data(), shader_path.size());
-        out.write(shader_guid.data(), shader_guid.size());
 
         if (header.texture_count > 0)
         {
@@ -127,25 +126,24 @@ namespace tau::cooker::material
             {
                 std::string tex_path = tex_path_json.get<std::string>();
 
-                std::string tex_guid;
+                asset_guid_t tex_guid = 0;
                 if (mat_json.contains("texture_guids"))
                 {
-                    tex_guid = mat_json["texture_guids"].value(tex_name, std::string{});
+                    tex_guid = tau::assets::parse_guid(mat_json["texture_guids"].value(tex_name, std::string{}));
                 }
-                if (tex_guid.empty()) { tex_guid = std::string(tau::asset_meta::get_guid(tex_path)); }
+                if (tex_guid == 0) { tex_guid = tau::assets::guid_of(tex_path); }
                 else
                 {
-                    tex_path = tau::asset_meta::resolve_ref(tex_guid, tex_path);
+                    tex_path = tau::assets::resolve(tex_guid, tex_path);
                 }
 
                 cooked_texture_bind_t tex_bind;
                 tex_bind.name_hash = tau::hash_string(tex_name);
                 tex_bind.path_length = static_cast<u32_t>(tex_path.size());
-                tex_bind.guid_length = static_cast<u32_t>(tex_guid.size());
+                tex_bind.guid = tex_guid;
 
                 out.write(reinterpret_cast<const char*>(&tex_bind), sizeof(cooked_texture_bind_t));
                 out.write(tex_path.data(), tex_path.size());
-                out.write(tex_guid.data(), tex_guid.size());
             }
         }
 

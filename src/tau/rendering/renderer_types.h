@@ -2,16 +2,17 @@
 
 #include "tau/asset.h"
 #include "tau/assets/material.h"
+#include "tau/assets/mesh.h"
 #include "tau/assets/shader.h"
 #include "tau/assets/texture.h"
 #include "tau/containers/flat_map.h"
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/math.h"
-#include "tau/rendering/shader_shared.h"
 #include "tau/memory/linear_allocator.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/shader_instance.h"
+#include "tau/rendering/shader_shared.h"
 #include "tau/rendering/vulkan.h"
 #include "vulkan/vulkan_core.h"
 
@@ -121,18 +122,14 @@ namespace tau::renderer
     };
 
     struct alignas(16) gpu_mat4_t
-    {
-        f32 data[16];
-    };
+    { f32 data[16]; };
 
     struct alignas(16) gpu_vec4_t
     {
         union
         {
             struct
-            {
-                f32 x, y, z, w;
-            };
+            { f32 x, y, z, w; };
             f32 raw[4];
         } data;
     };
@@ -142,9 +139,7 @@ namespace tau::renderer
         union
         {
             struct
-            {
-                f32 x, y, z;
-            };
+            { f32 x, y, z; };
             f32 raw[3];
         } data;
     };
@@ -233,7 +228,7 @@ namespace tau::renderer
         VkDeviceAddress vertex_buffer;
         VkDeviceAddress index_buffer;
         u32_t material_offset;
-        u32_t _pad0;
+        u32_t entity;
         u32_t _pad1;
         u32_t _pad2;
     };
@@ -245,8 +240,8 @@ namespace tau::renderer
         gpu_vec4_t bounding_sphere; // xyz = world centre, w = radius
         u32_t index_count;
         u32_t pipeline_index;
-        u32_t flags;            // bit0 = shadow caster
-        u32_t draw_bin_offset;  // start of this pipeline's run in the indirect buffer
+        u32_t flags;           // bit0 = shadow caster
+        u32_t draw_bin_offset; // start of this pipeline's run in the indirect buffer
     };
 
     // no offsetof assertions here: the cooker takes these layouts from offsetof
@@ -260,6 +255,9 @@ namespace tau::renderer
         VkImageUsageFlags usage;
         VkImageAspectFlags aspect;
         f32 depth_clear = 0.0f;
+        VkClearColorValue color_clear = {
+            {0.01f, 0.01f, 0.01f, 1.0f}
+        };
 
         bool operator==(const image_desc_t& other) const
         {
@@ -477,25 +475,25 @@ namespace tau::renderer
 
         std::vector<VkSampler> samplers;
 
-        asset_handle_t culling_shader;
+        asset_t<shader_t> culling_shader;
 
-        asset_handle_t cluster_shader;
+        asset_t<shader_t> cluster_shader;
 
-        asset_handle_t depth_reduce_shader;
+        asset_t<shader_t> depth_reduce_shader;
 
         persistent_image_t punctual_shadow_atlas;
         view_depth_bounds_t primary_depth_bounds;
 
-        asset_handle_t uberpost_material;
-        asset_handle_t deferred_lighting_material;
+        asset_t<material_t> uberpost_material;
+        asset_t<material_t> deferred_lighting_material;
 
         // what a slot that was never bound gets
-        asset_handle_t default_tex;
+        asset_t<texture_t> default_tex;
 
         // and what a mesh, material or texture that failed to load gets instead of nothing
-        asset_handle_t fallback_tex;
-        asset_handle_t fallback_mesh;
-        asset_handle_t fallback_material;
+        asset_t<texture_t> fallback_tex;
+        asset_t<mesh_t> fallback_mesh;
+        asset_t<material_t> fallback_material;
 
         VkDeviceSize global_data_aligned_size = 0;
         VkBuffer global_data_buffer = VK_NULL_HANDLE;

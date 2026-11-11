@@ -6,6 +6,7 @@
 #include "entt/meta/factory.hpp"
 #include "entt/meta/meta.hpp"
 #include "entt/meta/resolve.hpp"
+#include "tau/asset.h"
 #include "tau/defines.h"
 #include "tau/ecs.h"
 #include "tau/hash.h"
@@ -14,7 +15,9 @@
 #include <array>
 #include <cstddef>
 #include <string_view>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace tau::reflection
 {
@@ -91,6 +94,61 @@ namespace tau::reflection
         constexpr explicit stable_id(const char* n) : name(n) {}
     };
 
+    // asset_t<T> and std::vector<asset_t<T>> fields know their asset type
+    template <typename F>
+    struct asset_field_t
+    {
+        static constexpr u64_t type_id = 0;
+        static constexpr bool is_list = false;
+    };
+
+    template <typename A>
+    struct asset_field_t<asset_t<A>>
+    {
+        static constexpr u64_t type_id = get_type_id<A>();
+        static constexpr bool is_list = false;
+    };
+
+    template <typename A>
+    struct asset_field_t<std::vector<asset_t<A>>>
+    {
+        static constexpr u64_t type_id = get_type_id<A>();
+        static constexpr bool is_list = true;
+    };
+
+    // asset_t<T> value as untyped handle, conversions per asset type
+    inline asset_handle_t asset_of(const any_t& value)
+    {
+        const any_t untyped = value.allow_cast<asset_handle_t>();
+        return untyped ? untyped.cast<asset_handle_t>() : asset_handle_t{};
+    }
+
+    inline std::vector<asset_handle_t> assets_of(const any_t& value)
+    {
+        const any_t untyped = value.allow_cast<std::vector<asset_handle_t>>();
+        return untyped ? untyped.cast<std::vector<asset_handle_t>>() : std::vector<asset_handle_t>{};
+    }
+
+    template <typename P>
+    struct member_type_t;
+
+    template <typename C, typename M>
+    struct member_type_t<M C::*>
+    {
+        using type = M;
+    };
+
+    template <auto MemberPtr>
+    editor_prop_t field_prop(const char* label)
+    {
+        using field_t = asset_field_t<std::remove_cv_t<typename member_type_t<decltype(MemberPtr)>::type>>;
+        if constexpr (field_t::type_id != 0) { return editor_prop_t{label, field_t::type_id, field_t::is_list}; }
+        else
+        {
+            return editor_prop_t{label};
+        }
+    }
+
     // the field builders shared by components and plain structs
     template <typename T, typename Self>
     class fields_t
@@ -106,28 +164,12 @@ namespace tau::reflection
         Self& field(const char* label)
         {
             return bind_field<MemberPtr>(tau::hash_string(tau::member_name<MemberPtr>()),
-                                         tau::member_label<MemberPtr>.c_str(), editor_prop_t{label});
+                                         tau::member_label<MemberPtr>.c_str(), field_prop<MemberPtr>(label));
         }
 
         template <auto MemberPtr>
         Self& field(const char* label, stable_id id)
-        { return bind_field<MemberPtr>(tau::hash_string(id.name), id.name, editor_prop_t{label}); }
-
-        template <auto MemberPtr, typename AssetT>
-        Self& field_asset(const char* label)
-        {
-            return bind_field<MemberPtr>(tau::hash_string(tau::member_name<MemberPtr>()),
-                                         tau::member_label<MemberPtr>.c_str(),
-                                         editor_prop_t{label, tau::get_type_id<AssetT>()});
-        }
-
-        template <auto MemberPtr, typename AssetT>
-        Self& field_asset_list(const char* label)
-        {
-            return bind_field<MemberPtr>(tau::hash_string(tau::member_name<MemberPtr>()),
-                                         tau::member_label<MemberPtr>.c_str(),
-                                         editor_prop_t{label, tau::get_type_id<AssetT>(), true});
-        }
+        { return bind_field<MemberPtr>(tau::hash_string(id.name), id.name, field_prop<MemberPtr>(label)); }
 
         template <auto Setter, auto Getter>
         Self& accessor(const char* label, stable_id id)

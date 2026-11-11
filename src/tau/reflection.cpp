@@ -69,6 +69,14 @@ namespace tau::reflection
         TAU_PIN_TYPE(rigidbody_t, "rigidbody_t");
         TAU_PIN_MEMBER(&rigidbody_t::type, "type");
         TAU_PIN_MEMBER(&rigidbody_t::is_sensor, "is_sensor");
+        TAU_PIN_MEMBER(&rigidbody_t::continuous, "continuous");
+        TAU_PIN_MEMBER(&rigidbody_t::layer, "layer");
+        TAU_PIN_MEMBER(&rigidbody_t::mass, "mass");
+        TAU_PIN_MEMBER(&rigidbody_t::friction, "friction");
+        TAU_PIN_MEMBER(&rigidbody_t::restitution, "restitution");
+        TAU_PIN_MEMBER(&rigidbody_t::linear_damping, "linear_damping");
+        TAU_PIN_MEMBER(&rigidbody_t::angular_damping, "angular_damping");
+        TAU_PIN_MEMBER(&rigidbody_t::gravity_scale, "gravity_scale");
 
         TAU_PIN_TYPE(box_collider_t, "box_collider_t");
         TAU_PIN_MEMBER(&box_collider_t::extents, "extents");
@@ -76,6 +84,12 @@ namespace tau::reflection
 
         TAU_PIN_TYPE(sphere_collider_t, "sphere_collider_t");
         TAU_PIN_MEMBER(&sphere_collider_t::radius, "radius");
+        TAU_PIN_MEMBER(&sphere_collider_t::offset, "offset");
+
+        TAU_PIN_TYPE(capsule_collider_t, "capsule_collider_t");
+        TAU_PIN_MEMBER(&capsule_collider_t::radius, "radius");
+        TAU_PIN_MEMBER(&capsule_collider_t::height, "height");
+        TAU_PIN_MEMBER(&capsule_collider_t::offset, "offset");
 
         TAU_PIN_TYPE(post_process_t, "post_process_t");
         TAU_PIN_MEMBER(&post_process_t::effects, "effects");
@@ -139,6 +153,10 @@ namespace tau::reflection
 
         factory<f32>(ctx).type("f32"_h, "f32");
         factory<asset_handle_t>(ctx).type("asset_handle_t"_h, "asset_handle_t");
+        for (const asset_type_t& type : assets::types())
+        {
+            if (type.reflect) { type.reflect(ctx); }
+        }
 
         factory<vec3_t>{ctx}
             .type("vec3_t"_h, "vec3_t")
@@ -187,22 +205,37 @@ namespace tau::reflection
 
         component<rigidbody_t>(ctx, "Rigidbody")
             .field<&rigidbody_t::type>("Body Type")
-            .field<&rigidbody_t::is_sensor>("Is Sensor");
+            .field<&rigidbody_t::is_sensor>("Is Sensor")
+            .field<&rigidbody_t::continuous>("Continuous")
+            .field<&rigidbody_t::layer>("Layer")
+            .field<&rigidbody_t::mass>("Mass")
+            .field<&rigidbody_t::friction>("Friction")
+            .field<&rigidbody_t::restitution>("Restitution")
+            .field<&rigidbody_t::linear_damping>("Linear Damping")
+            .field<&rigidbody_t::angular_damping>("Angular Damping")
+            .field<&rigidbody_t::gravity_scale>("Gravity Scale");
 
         component<box_collider_t>(ctx, "Box Collider")
             .field<&box_collider_t::extents>("Extents")
             .field<&box_collider_t::offset>("Offset");
 
-        component<sphere_collider_t>(ctx, "Sphere Collider").field<&sphere_collider_t::radius>("Radius");
+        component<sphere_collider_t>(ctx, "Sphere Collider")
+            .field<&sphere_collider_t::radius>("Radius")
+            .field<&sphere_collider_t::offset>("Offset");
+
+        component<capsule_collider_t>(ctx, "Capsule Collider")
+            .field<&capsule_collider_t::radius>("Radius")
+            .field<&capsule_collider_t::height>("Height")
+            .field<&capsule_collider_t::offset>("Offset");
 
         // rendering
         component<post_process_t>(ctx, "Post Process")
             .field<&post_process_t::enabled>("Enabled")
-            .field_asset_list<&post_process_t::effects, tau::material_t>("Effects")
-            .field_asset<&post_process_t::final_pass, tau::material_t>("Final Pass");
+            .field<&post_process_t::effects>("Effects")
+            .field<&post_process_t::final_pass>("Final Pass");
 
         component<post_volume_t>(ctx, "Post Volume")
-            .field_asset<&post_volume_t::overrides, tau::material_t>("Overrides")
+            .field<&post_volume_t::overrides>("Overrides")
             .field<&post_volume_t::is_global>("Global")
             .field<&post_volume_t::extents>("Extents")
             .field<&post_volume_t::blend_distance>("Blend Distance")
@@ -210,8 +243,8 @@ namespace tau::reflection
             .field<&post_volume_t::priority>("Priority");
 
         component<mesh_renderer_t>(ctx, "Mesh Renderer")
-            .field_asset<&mesh_renderer_t::mesh, tau::mesh_t>("Mesh")
-            .field_asset<&mesh_renderer_t::material, tau::material_t>("Material")
+            .field<&mesh_renderer_t::mesh>("Mesh")
+            .field<&mesh_renderer_t::material>("Material")
             .field<&mesh_renderer_t::active>("Active")
             .field<&mesh_renderer_t::casts_shadow>("Casts Shadow");
     }

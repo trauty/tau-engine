@@ -20,6 +20,9 @@
 #include "tau/memory/linear_allocator.h"
 #include "tau/os.h"
 #include "tau/profiling.h"
+#include "tau/rendering/frame_upload.h"
+#include "tau/rendering/overlay.h"
+#include "tau/rendering/readback.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/renderer_resources.h"
 #include "tau/rendering/renderer_types.h"
@@ -51,6 +54,7 @@
 #ifdef TAU_ENABLE_PROFILING
     #include <tracy/TracyVulkan.hpp>
 #endif
+#include <optional>
 #include <vector>
 
 namespace tau::renderer
@@ -58,6 +62,14 @@ namespace tau::renderer
     render_context_t ctx;
     namespace
     {
+        bool frame_slot_ready = false;
+
+        bool image_acquired = false;
+        u32_t acquired_index = 0;
+
+        // resize waits until the held image is presented
+        std::optional<VkExtent2D> deferred_resize;
+
         const std::vector<const char*> validation_layers = {"VK_LAYER_KHRONOS_validation"};
 #ifdef TAU_ENABLE_PROFILING
         TracyVkCtx tracy_vk_ctx = nullptr;
@@ -141,7 +153,7 @@ namespace tau::renderer
     {
         bool post_pass_target_matches(const material_t* effect, VkFormat dst_format, u32_t slot, bool is_final)
         {
-            shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(effect->shader_handle);
+            shader_t* shader = assets::get(effect->shader);
             if (!shader || shader->target_formats.empty()) { return true; } // nothing to check against
 
             if (shader->target_formats[0] == dst_format) { return true; }
@@ -238,9 +250,7 @@ namespace tau::renderer
     { return {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]}; }
 
     static vec3_t world_forward(const transform_t& transform)
-    {
-        return vec3_t::normalize({transform.world_mat[2][0], transform.world_mat[2][1], transform.world_mat[2][2]});
-    }
+    { return vec3_t::normalize({transform.world_mat[2][0], transform.world_mat[2][1], transform.world_mat[2][2]}); }
 
     static void set_vec4(gpu_vec4_t& dst, f32 x, f32 y, f32 z, f32 w)
     {
@@ -387,6 +397,43 @@ namespace tau::renderer
         return pass;
     }
 
+    bool bind_view_descriptors(VkCommandBuffer cmd, VkPipelineLayout layout, u32_t view_name_hash)
+    {
+        per_frame_t& fd = ctx.per_frame_objects[ctx.cur_frame];
+        const std::unique_ptr<view_gpu_resources_t>* found = fd.views.find(view_name_hash);
+        if (found == nullptr) { return false; }
+
+        const VkDescriptorSet sets[] = {res_system.global_set, res_system.frame_set};
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 2, sets, 1,
+                                &(*found)->global_data_offset);
+        return true;
+    }
+
+    void draw_view_objects(VkCommandBuffer cmd, u32_t view_name_hash, VkPipeline pipeline, VkPipelineLayout layout,
+                           push_constants_t pc)
+    {
+        per_frame_t& fd = ctx.per_frame_objects[ctx.cur_frame];
+        if (fd.object_counter == 0 || pipeline == VK_NULL_HANDLE) { return; }
+
+        const std::unique_ptr<view_gpu_resources_t>* found = fd.views.find(view_name_hash);
+        if (found == nullptr) { return; }
+        view_gpu_resources_t& vgr = **found;
+        if (vgr.indirect_buffer == VK_NULL_HANDLE || vgr.draw_counts_buffer == VK_NULL_HANDLE) { return; }
+
+        pc.object_buffer = fd.object_buffer_address;
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        bind_view_descriptors(cmd, layout, view_name_hash);
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           sizeof(push_constants_t), &pc);
+
+        for (const active_pipeline_t& p : fd.active_pipelines)
+        {
+            vkCmdDrawIndirectCount(cmd, vgr.indirect_buffer, p.first_object * 16, vgr.draw_counts_buffer,
+                                   p.pipeline_index * sizeof(u32_t), p.object_count, 16);
+        }
+    }
+
     static f32 volume_influence(const post_volume_t& volume, const transform_t& transform, const vec3_t& point)
     {
         if (volume.is_global) { return 1.0f; }
@@ -438,7 +485,7 @@ namespace tau::renderer
     struct volume_sample_t
     {
         const tau::material_t* overrides;
-        asset_handle_t shader;
+        asset_t<shader_t> shader;
         f32 weight;
         i32_t priority;
     };
@@ -451,39 +498,34 @@ namespace tau::renderer
     } // namespace
 
     // fills `samples` so the caller can hand the same buffer back every frame
-    static void gather_post_volumes(ecs::registry_t& reg, const vec3_t& view_pos,
-                                    std::vector<volume_sample_t>& samples)
+    static void gather_post_volumes(ecs::registry_t& reg, const vec3_t& view_pos, std::vector<volume_sample_t>& samples)
     {
-        asset_registry_t& assets = tau::engine::get_asset_registry();
-
         samples.clear();
 
         for (auto [entity, volume, transform] : reg.view<post_volume_t, transform_t>().each())
         {
             if (!volume.overrides.is_valid()) { continue; }
 
-            tau::material_t* over = assets.get<tau::material_t>(volume.overrides);
-            if (!over || !over->shader_handle.is_valid()) { continue; }
+            tau::material_t* over = assets::get(volume.overrides);
+            if (!over || !over->shader.is_valid()) { continue; }
             if (over->authored_properties.empty()) { continue; }
 
             const f32 w = volume_influence(volume, transform, view_pos) * volume.weight;
             if (w <= 0.0f) { continue; }
 
-            samples.push_back({over, over->shader_handle, std::min(w, 1.0f), volume.priority});
+            samples.push_back({over, over->shader, std::min(w, 1.0f), volume.priority});
         }
 
         std::stable_sort(samples.begin(), samples.end(),
                          [](const volume_sample_t& a, const volume_sample_t& b) { return a.priority < b.priority; });
     }
 
-    static tau::material_t* resolve_post_effect(asset_handle_t effect_handle,
+    static tau::material_t* resolve_post_effect(asset_t<material_t> effect_handle,
                                                 const std::vector<volume_sample_t>& volumes, u32_t view_name_hash,
                                                 u32_t slot, bool force_instance)
     {
-        asset_registry_t& assets = tau::engine::get_asset_registry();
-
-        tau::material_t* base = assets.get<tau::material_t>(effect_handle);
-        if (!base || !base->shader_handle.is_valid()) { return nullptr; }
+        tau::material_t* base = assets::get(effect_handle);
+        if (!base || !base->shader.is_valid()) { return nullptr; }
 
         // static: this runs once per post effect per frame and the list is never held past the call
         static std::vector<const volume_sample_t*> influences;
@@ -491,23 +533,23 @@ namespace tau::renderer
 
         for (const volume_sample_t& sample : volumes)
         {
-            if (sample.shader == base->shader_handle) { influences.push_back(&sample); }
+            if (sample.shader == base->shader) { influences.push_back(&sample); }
         }
 
         if (influences.empty() && !force_instance) { return base; }
 
         const u64_t key = (static_cast<u64_t>(view_name_hash) << 32) | slot;
         auto it = ctx.resolved_post_effects.find(key);
-        if (it == ctx.resolved_post_effects.end() || it->second->shader_handle != base->shader_handle)
+        if (it == ctx.resolved_post_effects.end() || it->second->shader != base->shader)
         {
-            auto instance = std::make_unique<tau::material_t>(base->shader_handle);
+            auto instance = std::make_unique<tau::material_t>(base->shader);
             it = ctx.resolved_post_effects.insert_or_assign(key, std::move(instance)).first;
         }
 
         tau::material_t& resolved = *it->second;
         resolved.data = base->data;
 
-        const shader_t* shader = assets.get<shader_t>(base->shader_handle);
+        const shader_t* shader = assets::get(base->shader);
         if (shader)
         {
             for (const volume_sample_t* inf : influences)
@@ -550,7 +592,7 @@ namespace tau::renderer
         pass.execute_callback = [&graph, material, on_execute, input_res, view_name_hash,
                                  depth_tex_res](VkCommandBuffer cmd, ecs::registry_t& reg)
         {
-            if (!material || !material->shader_handle.is_valid()) { return; }
+            if (!material || !material->shader.is_valid()) { return; }
 
             if (input_res != RG_NULL_ID)
             {
@@ -568,7 +610,7 @@ namespace tau::renderer
 
             material->sync();
 
-            shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(material->shader_handle);
+            shader_t* shader = assets::get(material->shader);
 
             VkPipeline pipeline = shader ? shader->get_pipeline(pipeline_variant_e::FORWARD) : VK_NULL_HANDLE;
             if (pipeline == VK_NULL_HANDLE) { return; }
@@ -611,13 +653,13 @@ namespace tau::renderer
         pass.execute_callback = [&graph, material, dispatch_x, dispatch_y, dispatch_z, on_execute,
                                  view_name_hash](VkCommandBuffer cmd, ecs::registry_t& reg)
         {
-            if (!material || !material->shader_handle.is_valid()) { return; }
+            if (!material || !material->shader.is_valid()) { return; }
 
             if (on_execute) { on_execute(graph, *material); }
 
             material->sync();
 
-            shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(material->shader_handle);
+            shader_t* shader = assets::get(material->shader);
 
             VkPipeline pipeline = shader ? shader->get_pipeline(pipeline_variant_e::FORWARD) : VK_NULL_HANDLE;
             if (pipeline == VK_NULL_HANDLE) { return; }
@@ -774,7 +816,7 @@ namespace tau::renderer
             return false;
         }
 
-        shader_t* shader = tau::engine::get_asset_registry().get<shader_t>(ctx.depth_reduce_shader);
+        shader_t* shader = assets::get(ctx.depth_reduce_shader);
         if (shader == nullptr || shader->get_pipeline(pipeline_variant_e::FORWARD) == VK_NULL_HANDLE) { return false; }
 
         if (!frame_data.depth_reduce_instance.is_initialized)
@@ -791,7 +833,7 @@ namespace tau::renderer
         {
             per_frame_t& fd = ctx.per_frame_objects[ctx.cur_frame];
 
-            shader_t* reduce_shader = tau::engine::get_asset_registry().get<shader_t>(ctx.depth_reduce_shader);
+            shader_t* reduce_shader = assets::get(ctx.depth_reduce_shader);
             VkPipeline pipeline =
                 reduce_shader ? reduce_shader->get_pipeline(pipeline_variant_e::FORWARD) : VK_NULL_HANDLE;
             if (pipeline == VK_NULL_HANDLE || fd.depth_bounds_buffer == VK_NULL_HANDLE) { return; }
@@ -802,8 +844,8 @@ namespace tau::renderer
             vkCmdFillBuffer(cmd, fd.depth_bounds_buffer, 0, sizeof(u32_t), 0xffffffffu);
             vkCmdFillBuffer(cmd, fd.depth_bounds_buffer, sizeof(u32_t), sizeof(u32_t), 0u);
 
-            buffer_barrier(cmd, {fd.depth_bounds_buffer}, VK_PIPELINE_STAGE_2_COPY_BIT,
-                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            buffer_barrier(cmd, {fd.depth_bounds_buffer}, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                            VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
             const push_constants_t pc_data = {
@@ -1471,28 +1513,23 @@ namespace tau::renderer
         };
         vkUpdateDescriptorSets(ctx.device, 1, &write_desc, 0, nullptr);
 
-        ctx.culling_shader =
-            tau::engine::get_asset_registry().load_sync<shader_t>("engine://assets/shaders/culling.slang");
+        ctx.culling_shader = assets::pin(assets::load<shader_t>("engine://assets/shaders/culling.slang"));
 
-        ctx.cluster_shader =
-            tau::engine::get_asset_registry().load_sync<shader_t>("engine://assets/shaders/cluster_build.slang");
+        ctx.cluster_shader = assets::pin(assets::load<shader_t>("engine://assets/shaders/cluster_build.slang"));
 
-        ctx.depth_reduce_shader =
-            tau::engine::get_asset_registry().load_sync<shader_t>("engine://assets/shaders/depth_reduce.slang");
+        ctx.depth_reduce_shader = assets::pin(assets::load<shader_t>("engine://assets/shaders/depth_reduce.slang"));
 
-        ctx.uberpost_material = tau::engine::get_asset_registry().load_sync<material_t>(DEFAULT_FINAL_PASS_PATH);
+        ctx.uberpost_material = assets::pin(assets::load<material_t>(DEFAULT_FINAL_PASS_PATH));
         ctx.deferred_lighting_material =
-            tau::engine::get_asset_registry().load_sync<material_t>("engine://assets/materials/deferred_lighting.mat");
+            assets::pin(assets::load<material_t>("engine://assets/materials/deferred_lighting.mat"));
 
-        ctx.default_tex =
-            tau::engine::get_asset_registry().load_sync<texture_t>("engine://assets/textures/default_white.png");
+        ctx.default_tex = assets::pin(assets::load<texture_t>("engine://assets/textures/default_white.png"));
 
-        ctx.fallback_tex =
-            tau::engine::get_asset_registry().load_sync<texture_t>(FALLBACK_TEXTURE_PATH);
-        ctx.fallback_mesh =
-            tau::engine::get_asset_registry().load_sync<mesh_t>(FALLBACK_MESH_PATH);
-        ctx.fallback_material =
-            tau::engine::get_asset_registry().load_sync<material_t>(FALLBACK_MATERIAL_PATH);
+        ctx.fallback_tex = assets::pin(assets::load<texture_t>(FALLBACK_TEXTURE_PATH));
+        ctx.fallback_mesh = assets::pin(assets::load<mesh_t>(FALLBACK_MESH_PATH));
+        ctx.fallback_material = assets::pin(assets::load<material_t>(FALLBACK_MATERIAL_PATH));
+
+        overlay::init();
 
         return true;
     }
@@ -1512,21 +1549,24 @@ namespace tau::renderer
             frame_data.depth_reduce_instance.shutdown();
         }
 
-        tau::engine::get_asset_registry().release<shader_t>(ctx.culling_shader);
-        tau::engine::get_asset_registry().release<shader_t>(ctx.cluster_shader);
-        tau::engine::get_asset_registry().release<shader_t>(ctx.depth_reduce_shader);
-        tau::engine::get_asset_registry().release<material_t>(ctx.uberpost_material);
-        tau::engine::get_asset_registry().release<material_t>(ctx.deferred_lighting_material);
-        tau::engine::get_asset_registry().release<texture_t>(ctx.default_tex);
-        tau::engine::get_asset_registry().release<texture_t>(ctx.fallback_tex);
-        tau::engine::get_asset_registry().release<mesh_t>(ctx.fallback_mesh);
-        tau::engine::get_asset_registry().release<material_t>(ctx.fallback_material);
+        assets::unpin(ctx.culling_shader);
+        assets::unpin(ctx.cluster_shader);
+        assets::unpin(ctx.depth_reduce_shader);
+        assets::unpin(ctx.uberpost_material);
+        assets::unpin(ctx.deferred_lighting_material);
+        assets::unpin(ctx.default_tex);
+        assets::unpin(ctx.fallback_tex);
+        assets::unpin(ctx.fallback_mesh);
+        assets::unpin(ctx.fallback_material);
         rendergraph.clear();
         custom_renderer_features.clear();
     }
 
     void shutdown()
     {
+        readback::shutdown();
+        overlay::shutdown();
+        frame_upload::shutdown();
         save_pipeline_cache();
         if (ctx.pipeline_cache != VK_NULL_HANDLE)
         {
@@ -1690,11 +1730,11 @@ namespace tau::renderer
         // once per asset, not once per frame: a broken mesh would write sixty lines a second
         std::unordered_set<u64_t> reported_missing;
 
-        void report_missing(const char* what, asset_registry_t& assets, asset_handle_t handle)
+        void report_missing(const char* what, asset_handle_t handle)
         {
-            if (!reported_missing.insert(handle.uuid).second) { return; }
+            if (!reported_missing.insert(handle.guid).second) { return; }
 
-            const std::string path = assets.get_path(handle);
+            const std::string path = assets::path_of(handle);
             TAU_LOG_ERROR("RENDERER", "Falling back for {} '{}' -- it is not loaded", what,
                           path.empty() ? std::string("<unknown>") : path);
         }
@@ -1709,6 +1749,7 @@ namespace tau::renderer
             mesh_t* mesh;
             const transform_t* transform;
             bool casts_shadow;
+            u32_t entity;
         };
 
         std::vector<draw_item_t> draw_items;
@@ -1718,8 +1759,6 @@ namespace tau::renderer
     // then pack the object and cull buffers and record run and range starts. returns the object count
     static u32_t build_draw_list(ecs::registry_t& reg, per_frame_t& frame_data)
     {
-        asset_registry_t& assets = tau::engine::get_asset_registry();
-
         draw_items.clear();
 
         for (auto [entity, transform, renderer] : reg.view<transform_t, mesh_renderer_t>().each())
@@ -1727,27 +1766,27 @@ namespace tau::renderer
             // an entity with nothing assigned yet is not a failure, so it still just skips
             if (!renderer.active || !renderer.mesh || !renderer.material.is_valid()) { continue; }
 
-            material_t* mat = assets.get<material_t>(renderer.material);
-            shader_t* shader = mat ? assets.get<shader_t>(mat->shader_handle) : nullptr;
+            material_t* mat = assets::get(renderer.material);
+            shader_t* shader = mat ? assets::get(mat->shader) : nullptr;
 
             // a material that will not load (usually its shader stopped compiling) draws as the fallback
             // the component's handle stays, so fixing the file and reloading swaps the real one back
             if (mat == nullptr || shader == nullptr)
             {
-                report_missing("material", assets, renderer.material);
+                report_missing("material", renderer.material);
 
-                mat = assets.get<material_t>(ctx.fallback_material);
-                shader = mat ? assets.get<shader_t>(mat->shader_handle) : nullptr;
+                mat = assets::get(ctx.fallback_material);
+                shader = mat ? assets::get(mat->shader) : nullptr;
 
                 if (mat == nullptr || shader == nullptr) { continue; } // the fallback is gone too
             }
 
-            mesh_t* mesh = assets.get<mesh_t>(renderer.mesh);
+            mesh_t* mesh = assets::get(renderer.mesh);
             if (mesh == nullptr)
             {
-                report_missing("mesh", assets, renderer.mesh);
+                report_missing("mesh", renderer.mesh);
 
-                mesh = assets.get<mesh_t>(ctx.fallback_mesh);
+                mesh = assets::get(ctx.fallback_mesh);
                 if (mesh == nullptr) { continue; }
             }
 
@@ -1759,6 +1798,7 @@ namespace tau::renderer
                 mesh,
                 &transform,
                 renderer.casts_shadow,
+                static_cast<u32_t>(entt::to_integral(entity)) + 1,
             });
         }
 
@@ -1814,6 +1854,7 @@ namespace tau::renderer
             std::memcpy(obj_data.normal_matrix.data, &normal_mat, sizeof(mat4_t));
 
             obj_data.material_offset = item.material->heap_offset[ctx.cur_frame];
+            obj_data.entity = item.entity;
             obj_data.vertex_buffer = mesh.vertex_buffer_address;
             obj_data.index_buffer = mesh.index_buffer_address;
 
@@ -2020,7 +2061,14 @@ namespace tau::renderer
             new_height = event.height;
         }
 
-        if (needs_resize) { resize(new_width, new_height); }
+        if (needs_resize)
+        {
+            if (image_acquired) { deferred_resize = VkExtent2D{new_width, new_height}; }
+            else
+            {
+                resize(new_width, new_height);
+            }
+        }
 
         // each entry waits on the timeline its value came from: see deletion_clock_e
         u64_t completed_frame = 0;
@@ -2032,23 +2080,26 @@ namespace tau::renderer
 
         save_pipeline_cache_when_settled();
 
-        u32_t index;
-        VkResult res = acquire_next_image(&index);
+        u32_t index = acquired_index;
+        if (!image_acquired)
+        {
+            const VkResult res = acquire_next_image(&index);
 
-        if (res == VK_ERROR_SURFACE_LOST_KHR)
-        {
-            recreate_surface();
-            return;
-        }
-        else if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR)
-        {
-            resize(ctx.swapchain.extent.width, ctx.swapchain.extent.height);
-            return;
-        }
-        else if (res != VK_SUCCESS)
-        {
-            vkQueueWaitIdle(ctx.present_queue);
-            return;
+            if (res == VK_ERROR_SURFACE_LOST_KHR)
+            {
+                recreate_surface();
+                return;
+            }
+            else if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR)
+            {
+                resize(ctx.swapchain.extent.width, ctx.swapchain.extent.height);
+                return;
+            }
+            else if (res != VK_SUCCESS)
+            {
+                vkQueueWaitIdle(ctx.present_queue);
+                return;
+            }
         }
 
         per_frame_t& frame_data = ctx.per_frame_objects[ctx.cur_frame];
@@ -2107,8 +2158,7 @@ namespace tau::renderer
         std::stable_partition(frame_views.begin(), frame_views.end(),
                               [](const render_view_t& v) { return v.kind == view_kind_e::DEPTH_ONLY; });
 
-        global_data_t frame_globals =
-            upload_lights(reg, frame_data, frame_punctual_slots, frame_cascade_light);
+        global_data_t frame_globals = upload_lights(reg, frame_data, frame_punctual_slots, frame_cascade_light);
 
         const u32_t cur_object_id = build_draw_list(reg, frame_data);
         frame_globals.object_count = cur_object_id;
@@ -2136,8 +2186,8 @@ namespace tau::renderer
             VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, nullptr));
         };
 
-        shader_t* culling_shader = tau::engine::get_asset_registry().get<shader_t>(ctx.culling_shader);
-        shader_t* cluster_shader = tau::engine::get_asset_registry().get<shader_t>(ctx.cluster_shader);
+        shader_t* culling_shader = assets::get(ctx.culling_shader);
+        shader_t* cluster_shader = assets::get(ctx.cluster_shader);
 
         for (u32_t view_idx = 0; view_idx < frame_views.size(); view_idx++)
         {
@@ -2297,9 +2347,9 @@ namespace tau::renderer
             dispatch_compute(cmd, *culling_shader, culling_shader->get_pipeline(pipeline_variant_e::FORWARD),
                              view_offset, &vgr.culling_instance, pc_data, (cur_object_id + 63) / 64);
 
-            buffer_barrier(cmd, {vgr.indirect_buffer, vgr.draw_counts_buffer},
-                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                           VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+            buffer_barrier(cmd, {vgr.indirect_buffer, vgr.draw_counts_buffer}, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                           VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
         }
 
         tau::active_arena = &frame_data.frame_allocator;
@@ -2340,8 +2390,6 @@ namespace tau::renderer
         image_desc_t normal_desc = color_desc;
         normal_desc.format = VK_FORMAT_R16G16_SFLOAT;
 
-        asset_registry_t& assets_for_frame = tau::engine::get_asset_registry();
-
         image_desc_t depth_desc = {
             .width = ctx.render_extent.width,
             .height = ctx.render_extent.height,
@@ -2359,7 +2407,8 @@ namespace tau::renderer
                 .width = ctx.render_extent.width,
                 .height = ctx.render_extent.height,
                 .format = ctx.swapchain.format,
-                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .usage =
+                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
             };
 
@@ -2503,14 +2552,14 @@ namespace tau::renderer
                 rendergraph.create_image("GBufferAlbedo"_h ^ sub.name_hash, "GBufferAlbedo", view_albedo_desc);
             rg_resource_id gbuffer_normal =
                 rendergraph.create_image("GBufferNormal"_h ^ sub.name_hash, "GBufferNormal", view_normal_desc);
-            rg_resource_id gbuffer_material = rendergraph.create_image("GBufferMaterial"_h ^ sub.name_hash,
-                                                                       "GBufferMaterial", view_material_desc);
+            rg_resource_id gbuffer_material =
+                rendergraph.create_image("GBufferMaterial"_h ^ sub.name_hash, "GBufferMaterial", view_material_desc);
 
             add_mesh_pass(rendergraph, sub.name_hash ^ "gbuf"_h, "GBuffer", sub.name_hash, mesh_pass_e::GBUFFER, false,
                           {}, {gbuffer_albedo, gbuffer_normal, gbuffer_material}, depth_id);
 
-            material_t* lighting_mat = assets_for_frame.get<material_t>(ctx.deferred_lighting_material);
-            if (lighting_mat && lighting_mat->shader_handle.is_valid())
+            material_t* lighting_mat = assets::get(ctx.deferred_lighting_material);
+            if (lighting_mat && lighting_mat->shader.is_valid())
             {
                 std::vector<rg_resource_id> lighting_reads = {gbuffer_albedo, gbuffer_normal, gbuffer_material,
                                                               depth_id};
@@ -2551,8 +2600,6 @@ namespace tau::renderer
         }
 
         {
-            asset_registry_t& assets = tau::engine::get_asset_registry();
-
             const post_process_t* stack = nullptr;
             ecs::entity_t cam = camera_system::get_active_camera(reg);
             if (cam != ecs::NULL_ENTITY && reg.all_of<post_process_t>(cam))
@@ -2597,7 +2644,7 @@ namespace tau::renderer
                 return false;
             };
 
-            auto resolve_unique = [&](asset_handle_t handle, u32_t slot) -> material_t*
+            auto resolve_unique = [&](asset_t<material_t> handle, u32_t slot) -> material_t*
             {
                 material_t* mat = resolve_post_effect(handle, post_volumes, post_view_hash, slot, false);
                 if (!mat) { return nullptr; }
@@ -2623,7 +2670,7 @@ namespace tau::renderer
                 for (u32_t slot = 0; slot < static_cast<u32_t>(stack->effects.size()); slot++)
                 {
                     material_t* effect = resolve_unique(stack->effects[slot], slot);
-                    if (!effect || !effect->shader_handle.is_valid()) { continue; }
+                    if (!effect || !effect->shader.is_valid()) { continue; }
 
                     if (ping == RG_NULL_ID)
                     {
@@ -2644,21 +2691,21 @@ namespace tau::renderer
                 }
             }
 
-            const asset_handle_t final_handle =
+            const asset_t<material_t> final_handle =
                 (post_enabled && stack && stack->final_pass.is_valid()) ? stack->final_pass : ctx.uberpost_material;
-            material_t* final_mat = post_enabled ? resolve_unique(final_handle, POST_FINAL_PASS_SLOT)
-                                                 : assets.get<material_t>(ctx.uberpost_material);
+            material_t* final_mat =
+                post_enabled ? resolve_unique(final_handle, POST_FINAL_PASS_SLOT) : assets::get(ctx.uberpost_material);
 
             rg_resource_id final_target = rendergraph.get_resource("FinalOutput"_h);
             const VkFormat final_format = rendergraph.get_format(final_target);
 
-            if (final_mat && final_mat->shader_handle.is_valid() &&
+            if (final_mat && final_mat->shader.is_valid() &&
                 !post_pass_target_matches(final_mat, final_format, POST_FINAL_PASS_SLOT, true))
             {
-                final_mat = assets.get<material_t>(ctx.uberpost_material);
+                final_mat = assets::get(ctx.uberpost_material);
             }
 
-            if (final_mat && final_mat->shader_handle.is_valid())
+            if (final_mat && final_mat->shader.is_valid())
             {
                 const rg_resource_id final_reads[] = {chain_src};
                 const rg_resource_id final_writes[] = {final_target};
@@ -2733,6 +2780,14 @@ namespace tau::renderer
         submit_and_present(cmd, frame_data, index);
 
         ctx.cur_frame = (ctx.cur_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        frame_slot_ready = false;
+        image_acquired = false;
+
+        if (deferred_resize)
+        {
+            resize(deferred_resize->width, deferred_resize->height);
+            deferred_resize.reset();
+        }
     }
 
     VkFormat find_depth_format()
@@ -2865,6 +2920,22 @@ namespace tau::renderer
         else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
         {
             barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            barrier.srcAccessMask = 0;
+            barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+        }
+        else if (old_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+                 new_layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+        {
+            barrier.srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            barrier.srcAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+            barrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+        }
+        else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL &&
+                 new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
+            barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
             barrier.srcAccessMask = 0;
             barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
             barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
@@ -3116,12 +3187,20 @@ namespace tau::renderer
         }
     }
 
-    VkResult acquire_next_image(u32_t* image_index)
+    void begin_frame()
     {
-        if (ctx.swapchain.handle == VK_NULL_HANDLE) { return VK_ERROR_OUT_OF_DATE_KHR; }
+        if (image_acquired || ctx.swapchain.handle == VK_NULL_HANDLE) { return; }
+
+        // suboptimal still gives an image, rebuild at present
+        const VkResult res = acquire_next_image(&acquired_index);
+        image_acquired = res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR;
+    }
+
+    void wait_for_frame()
+    {
+        if (frame_slot_ready) { return; }
 
         per_frame_t& frame_data = ctx.per_frame_objects[ctx.cur_frame];
-
         if (frame_data.target_timeline_value > 0)
         {
             VkSemaphoreWaitInfo wait_info = {
@@ -3133,6 +3212,18 @@ namespace tau::renderer
 
             vkWaitSemaphores(ctx.device, &wait_info, UINT64_MAX);
         }
+        readback::collect(ctx.cur_frame);
+        frame_upload::reset(ctx.cur_frame);
+
+        frame_slot_ready = true;
+    }
+
+    VkResult acquire_next_image(u32_t* image_index)
+    {
+        if (ctx.swapchain.handle == VK_NULL_HANDLE) { return VK_ERROR_OUT_OF_DATE_KHR; }
+
+        per_frame_t& frame_data = ctx.per_frame_objects[ctx.cur_frame];
+        wait_for_frame();
 
         VkResult res = vkAcquireNextImageKHR(ctx.device, ctx.swapchain.handle, UINT64_MAX,
                                              frame_data.swapchain_acquire_semaphore, VK_NULL_HANDLE, image_index);
@@ -3203,8 +3294,7 @@ namespace tau::renderer
         frame_data.object_buffer_address = get_buffer_address(frame_data.object_buffer);
 
         create_mapped_buffer(sizeof(cull_data_t) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                             frame_data.cull_buffer, frame_data.cull_allocation,
-                             (void*&)frame_data.mapped_cull_data);
+                             frame_data.cull_buffer, frame_data.cull_allocation, (void*&)frame_data.mapped_cull_data);
 
         create_mapped_buffer(MAX_MATERIAL_BUFFER_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.material_buffer,
                              frame_data.material_allocation, (void*&)frame_data.mapped_material_data);
@@ -3232,9 +3322,9 @@ namespace tau::renderer
                              (void*&)frame_data.mapped_shadow_cascades);
         frame_data.shadow_cascade_buffer_address = get_buffer_address(frame_data.shadow_cascade_buffer);
 
-        create_mapped_buffer(sizeof(gpu_shadow_tile_t) * MAX_PUNCTUAL_SHADOW_TILES,
-                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.punctual_shadow_buffer,
-                             frame_data.punctual_shadow_allocation, (void*&)frame_data.mapped_punctual_shadows);
+        create_mapped_buffer(sizeof(gpu_shadow_tile_t) * MAX_PUNCTUAL_SHADOW_TILES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                             frame_data.punctual_shadow_buffer, frame_data.punctual_shadow_allocation,
+                             (void*&)frame_data.mapped_punctual_shadows);
         frame_data.punctual_shadow_buffer_address = get_buffer_address(frame_data.punctual_shadow_buffer);
 
         {
