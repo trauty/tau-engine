@@ -346,8 +346,6 @@ namespace tau::editor::panels
 
         void accept_prefab(ecs::entity_t parent)
         {
-            if (prefab_stage::is_open()) { return; }
-
             const ImGuiPayload* peek = ImGui::GetDragDropPayload();
             if (!peek || !peek->IsDataType(ASSET_PAYLOAD) ||
                 !assets::path_is<prefab_t>(static_cast<const char*>(peek->Data)))

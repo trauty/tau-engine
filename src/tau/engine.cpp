@@ -154,7 +154,7 @@ namespace tau::engine
                 {
                 case SDL_EVENT_QUIT: is_running = false; break;
                 case SDL_EVENT_WINDOW_RESIZED:
-                    tau::window::set_window_size(event.window.data1, event.window.data2);
+                    tau::window::on_resized(event.window.data1, event.window.data2);
                     break;
 
                 case SDL_EVENT_WILL_ENTER_BACKGROUND:

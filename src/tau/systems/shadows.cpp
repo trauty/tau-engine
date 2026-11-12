@@ -80,8 +80,14 @@ namespace tau::shadow_system
         bool is_spot = false;
     };
 
-    static flat_map_t<punctual_cache_entry_t> g_punctual_cache;
-    static flat_map_t<vec3_t> g_caster_positions;
+    // per registry: entity ids are reused across worlds
+    struct shadow_cache_t
+    {
+        flat_map_t<punctual_cache_entry_t> punctual;
+        flat_map_t<vec3_t> caster_positions;
+    };
+
+    static shadow_cache_t& cache_of(ecs::registry_t& reg) { return reg.ctx().emplace<shadow_cache_t>(); }
 
     struct shadow_candidate_t
     {
@@ -308,6 +314,7 @@ namespace tau::shadow_system
     static void collect_moved_casters(ecs::registry_t& reg, std::vector<moved_caster_t>& out_moved)
     {
         flat_map_t<vec3_t> current;
+        flat_map_t<vec3_t>& caster_positions = cache_of(reg).caster_positions;
 
         for (auto [entity, renderer, transform] : reg.view<mesh_renderer_t, transform_t>().each())
         {
@@ -317,7 +324,7 @@ namespace tau::shadow_system
             const u32_t key = static_cast<u32_t>(entity);
             current[key] = position;
 
-            const vec3_t* previous = g_caster_positions.find(key);
+            const vec3_t* previous = caster_positions.find(key);
             if (previous == nullptr)
             {
                 out_moved.push_back({position, position});
@@ -331,12 +338,12 @@ namespace tau::shadow_system
             }
         }
 
-        for (const auto& [key, position] : g_caster_positions)
+        for (const auto& [key, position] : caster_positions)
         {
             if (current.find(key) == nullptr) { out_moved.push_back({position, position}); }
         }
 
-        g_caster_positions = std::move(current);
+        caster_positions = std::move(current);
     }
 
     static bool light_volume_touched(const shadow_candidate_t& candidate, const std::vector<moved_caster_t>& moved)
@@ -397,10 +404,12 @@ namespace tau::shadow_system
             candidates.push_back(candidate);
         }
 
+        shadow_cache_t& cache = cache_of(reg);
+        flat_map_t<punctual_cache_entry_t>& punctual_cache = cache.punctual;
         if (candidates.empty())
         {
-            g_punctual_cache.clear();
-            g_caster_positions.clear();
+            punctual_cache.clear();
+            cache.caster_positions.clear();
             return;
         }
 
@@ -446,7 +455,7 @@ namespace tau::shadow_system
         {
             candidate.tile_count = candidate.is_spot ? 1u : renderer::POINT_SHADOW_FACE_COUNT;
 
-            const punctual_cache_entry_t* cached = g_punctual_cache.find(static_cast<u32_t>(candidate.entity));
+            const punctual_cache_entry_t* cached = punctual_cache.find(static_cast<u32_t>(candidate.entity));
             if (cached == nullptr) { continue; }
             if (cached->tile_count != candidate.tile_count) { continue; }
             if (!slots_free(cached->slot, candidate.tile_count)) { continue; }
@@ -508,13 +517,13 @@ namespace tau::shadow_system
                 continue;
             }
 
-            const bool first_ever = !g_punctual_cache.contains(static_cast<u32_t>(candidate.entity));
+            const bool first_ever = !punctual_cache.contains(static_cast<u32_t>(candidate.entity));
             bool render = candidate.dirty && (needed <= budget_left || first_ever);
             if (render) { budget_left -= std::min(needed, budget_left); }
 
             if (!render)
             {
-                const punctual_cache_entry_t* previous = g_punctual_cache.find(static_cast<u32_t>(candidate.entity));
+                const punctual_cache_entry_t* previous = punctual_cache.find(static_cast<u32_t>(candidate.entity));
                 if (previous != nullptr) { *placed = *previous; }
             }
 
@@ -563,7 +572,7 @@ namespace tau::shadow_system
             renderer::submit_punctual_shadow_slot(candidate.entity, slot);
         }
 
-        g_punctual_cache = std::move(next_cache);
+        punctual_cache = std::move(next_cache);
     }
 
     void update(ecs::registry_t& reg)

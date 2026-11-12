@@ -41,6 +41,8 @@ namespace tau
         u32_t type_hash = 0;
         std::string type_name;
         std::vector<scene_property_t> properties;
+        // JSON scenes only: the fields as saved, kept if the type is unknown
+        std::string source_json;
     };
 
     struct scene_entity_t

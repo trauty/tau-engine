@@ -69,6 +69,8 @@ namespace tau::jobs
     template <typename Lambda>
     void kick_heavy(Lambda&& task, counter_t* counter = nullptr, priority_e prio = priority_e::HIGH)
     {
+        if (counter) { counter->fetch_add(1, std::memory_order_relaxed); }
+
         using decayed_lambda_t = std::decay_t<Lambda>;
         decayed_lambda_t* payload = new decayed_lambda_t(std::forward<Lambda>(task));
 

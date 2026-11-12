@@ -12,6 +12,7 @@
 #include "tau/assets/prefab.h"
 #include "tau/guid.h"
 #include "tau/log.h"
+#include "tau/prefab.h"
 #include "tau/rendering/renderer.h"
 #include "tau/serialization.h"
 #include "tau/systems/guid.h"
@@ -63,12 +64,16 @@ namespace tau::editor::prefab_stage
         {
             serialization::clear_scene(world);
 
-            const nlohmann::json& entities = data["entities"];
+            // nested prefabs come in as instances, under the guids this prefab gave them
+            const nlohmann::json expanded = prefab::expand(data, prefab::asset_lookup());
             std::vector<serialization::entity_state_t> batch;
-            for (const nlohmann::json& entity : entities) { batch.push_back({guid_of(entity["id"]), &entity}); }
+            for (const nlohmann::json& entity : expanded["entities"])
+            {
+                batch.push_back({guid_of(entity["id"]), &entity});
+            }
             serialization::apply_entities(world, batch);
 
-            g.root = guid_of(entities[0]["id"]);
+            g.root = guid_of(data["entities"][0]["id"]);
         }
 
         void frame(world_t& world, editor_context_t& ctx)

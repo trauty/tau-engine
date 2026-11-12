@@ -13,7 +13,7 @@ namespace tau
         u32_t hash = 2166136261u;
         for (char c : str)
         {
-            hash ^= static_cast<size_t>(c);
+            hash ^= static_cast<u8_t>(c);
             hash *= 16777619u;
         }
         return hash;
@@ -24,7 +24,7 @@ namespace tau
         u64_t hash = 14695981039346656037ull;
         for (char c : str)
         {
-            hash ^= static_cast<size_t>(c);
+            hash ^= static_cast<u8_t>(c);
             hash *= 1099511628211ull;
         }
         return hash;

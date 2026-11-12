@@ -37,8 +37,10 @@ namespace tau::cooker::scene
         const nlohmann::json scene_json = read_json(input_path, "scene");
         if (scene_json.is_discarded()) { return false; }
 
+        // nested prefabs read here too, so they land in deps
         std::unordered_map<std::string, nlohmann::json> prefabs;
-        const tau::prefab::lookup_t lookup = [&](asset_guid_t guid, const std::string& path) -> const nlohmann::json*
+        const tau::prefab::lookup_t lookup = tau::prefab::flattening(
+            [&](asset_guid_t guid, const std::string& path) -> const nlohmann::json*
         {
             const std::filesystem::path source = resolve(tau::assets::resolve(guid, path));
             if (source.empty()) { return nullptr; }
@@ -50,7 +52,7 @@ namespace tau::cooker::scene
                 deps.push_back(source);
             }
             return it->second.is_object() ? &it->second : nullptr;
-        };
+        });
 
         const tau::scene_t scene = tau::serialization::scene_from_json(tau::prefab::expand(scene_json, lookup));
 

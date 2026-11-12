@@ -111,7 +111,7 @@ namespace tau::editor::panels
                     const char* path =
                         peek && peek->IsDataType(ASSET_PAYLOAD) ? static_cast<const char*>(peek->Data) : "";
                     const bool mesh = assets::path_is<mesh_t>(path);
-                    const bool prefab = assets::path_is<prefab_t>(path) && !prefab_stage::is_open();
+                    const bool prefab = assets::path_is<prefab_t>(path);
                     if (mesh || prefab)
                     {
                         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))

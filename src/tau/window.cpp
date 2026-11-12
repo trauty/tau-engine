@@ -17,11 +17,10 @@ namespace tau::window
 
     void get_window_size(i32* width, i32* height) { SDL_GetWindowSizeInPixels(window, width, height); }
 
-    void set_window_size(i32 width, i32 height)
-    {
-        SDL_SetWindowSize(window, width, height);
-        tau::events::emit<window_size_changed_event>(tau::engine::get_active_world().registry, width, height);
-    }
+    void set_window_size(i32 width, i32 height) { SDL_SetWindowSize(window, width, height); }
+
+    void on_resized(i32 width, i32 height)
+    { tau::events::emit<window_size_changed_event>(tau::engine::get_active_world().registry, width, height); }
 
     void set_window_position(i32 pos_x, i32 pos_y) { SDL_SetWindowPosition(window, pos_x, pos_y); }
 

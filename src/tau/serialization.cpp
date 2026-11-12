@@ -6,6 +6,7 @@
 #include "tau/assets/prefab.h"
 #include "tau/assets/scene_format.h"
 #include "tau/components/prefab.h"
+#include "tau/components/unresolved.h"
 #include "tau/components/transform.h"
 #include "tau/ecs_fwd.h"
 #include "tau/engine.h"
@@ -302,11 +303,11 @@ namespace tau::serialization
             return components;
         }
 
-        const nlohmann::json* prefab_data_of(const tau::ecs::registry_t& reg, tau::ecs::entity_t root)
+        const nlohmann::json* prefab_data_of(const tau::ecs::registry_t& reg, tau::ecs::entity_t root,
+                                             const tau::prefab::lookup_t& lookup)
         {
             const prefab_instance_t* instance = reg.try_get<prefab_instance_t>(root);
-            const prefab_t* prefab = instance ? tau::assets::get(instance->prefab) : nullptr;
-            return prefab ? &prefab->data : nullptr;
+            return instance ? tau::prefab::lookup_asset(lookup, instance->prefab) : nullptr;
         }
 
         bool parse_value(const nlohmann::json& val, const std::string& prop_key, scene_property_t& prop)
@@ -428,7 +429,10 @@ namespace tau::serialization
 
     namespace
     {
-        nlohmann::json collapse_instance(tau::world_t& world, tau::ecs::entity_t root)
+        void add_unresolved(const tau::ecs::registry_t& reg, tau::ecs::entity_t entity, nlohmann::json& components);
+
+        nlohmann::json collapse_instance(tau::world_t& world, tau::ecs::entity_t root,
+                                         const tau::prefab::lookup_t& lookup)
         {
             const u64_t instance = tau::guid_system::of(world.registry, root);
             std::vector<nlohmann::json> parts;
@@ -436,7 +440,7 @@ namespace tau::serialization
             {
                 if (part.instance == instance) { parts.push_back(serialize_entity(world, entity)); }
             }
-            return tau::prefab::collapse_instance(prefab_data_of(world.registry, root), parts);
+            return tau::prefab::collapse_instance(prefab_data_of(world.registry, root, lookup), parts);
         }
     } // namespace
 
@@ -450,6 +454,7 @@ namespace tau::serialization
         const std::vector<tau::ecs::entity_t> entities = hierarchy_order(world.registry);
         for (tau::ecs::entity_t entity : entities) { tau::guid_system::ensure(world.registry, entity); }
 
+        const tau::prefab::lookup_t lookup = tau::prefab::asset_lookup();
         std::unordered_map<tau::ecs::entity_t, std::size_t> slots;
         for (tau::ecs::entity_t entity : entities)
         {
@@ -459,7 +464,7 @@ namespace tau::serialization
                 const tau::ecs::entity_t root = tau::guid_system::find(world.registry, part->instance);
                 if (root != tau::ecs::NULL_ENTITY && world.registry.all_of<prefab_instance_t>(root))
                 {
-                    if (root == entity) { scene_data["entities"].push_back(collapse_instance(world, root)); }
+                    if (root == entity) { scene_data["entities"].push_back(collapse_instance(world, root, lookup)); }
                     continue;
                 }
             }
@@ -504,6 +509,11 @@ namespace tau::serialization
             }
         }
 
+        for (const auto& [entity, slot] : slots)
+        {
+            add_unresolved(world.registry, entity, scene_data["entities"][slot]["components"]);
+        }
+
         return scene_data;
     }
 
@@ -524,6 +534,7 @@ namespace tau::serialization
                 scene_component_t& out_comp = out_entity.components.emplace_back();
                 out_comp.type_hash = key_to_hash(type_key);
                 if (!is_numeric_key(type_key)) { out_comp.type_name = type_key; }
+                out_comp.source_json = props_json.dump();
 
                 for (const auto& [prop_key, val] : props_json.items())
                 {
@@ -573,6 +584,7 @@ namespace tau::serialization
         }
 
         entity_json["components"] = encode_components(world, entity, refs);
+        add_unresolved(world.registry, entity, entity_json["components"]);
 
         if (const prefab_part_t* part = world.registry.try_get<prefab_part_t>(entity))
         {
@@ -753,14 +765,28 @@ namespace tau::serialization
         void apply_scene_entity(tau::world_t& world, tau::ecs::entity_t entity, const scene_entity_t& scene_entity,
                                 const entity_refs_t& refs)
         {
+            nlohmann::json unresolved = nlohmann::json::object();
             for (const scene_component_t& comp : scene_entity.components)
             {
                 tau::reflection::type_t type = tau::reflection::resolve(*world.reflection_ctx, comp.type_hash);
 
                 if (!type)
                 {
-                    TAU_LOG_WARN("SCENE", "Unknown component '{}', dropped from entity",
-                                 describe_key(comp.type_name, comp.type_hash));
+                    const std::string key = describe_key(comp.type_name, comp.type_hash);
+                    if (comp.source_json.empty())
+                    {
+                        TAU_LOG_WARN("SCENE", "Unknown component '{}', dropped from entity", key);
+                        continue;
+                    }
+
+                    // once per type, undo and duplicate apply it again
+                    static std::unordered_set<std::string> warned;
+                    if (warned.insert(key).second)
+                    {
+                        TAU_LOG_WARN("SCENE", "Unknown component '{}', kept as saved until its type is registered",
+                                     key);
+                    }
+                    unresolved[key] = nlohmann::json::parse(comp.source_json, nullptr, false);
                     continue;
                 }
 
@@ -788,6 +814,26 @@ namespace tau::serialization
                 {
                     on_changed.invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
                 }
+            }
+
+            if (unresolved.empty()) { world.registry.remove<unresolved_components_t>(entity); }
+            else
+            {
+                world.registry.emplace_or_replace<unresolved_components_t>(entity, unresolved.dump());
+            }
+        }
+
+        // written next to the reflected ones, a reflected one of the same key wins
+        void add_unresolved(const tau::ecs::registry_t& reg, tau::ecs::entity_t entity, nlohmann::json& components)
+        {
+            const unresolved_components_t* kept = reg.try_get<unresolved_components_t>(entity);
+            if (!kept) { return; }
+
+            const nlohmann::json saved = nlohmann::json::parse(kept->json, nullptr, false);
+            if (!saved.is_object()) { return; }
+            for (const auto& [key, fields] : saved.items())
+            {
+                if (!components.contains(key)) { components[key] = fields; }
             }
         }
     } // namespace
@@ -871,7 +917,7 @@ namespace tau::serialization
     }
 
     std::vector<tau::ecs::entity_t> deserialize_scene(tau::world_t& world, const nlohmann::json& scene_data)
-    { return instantiate_scene(world, scene_from_json(tau::prefab::expand(scene_data, &tau::prefab::asset_lookup))); }
+    { return instantiate_scene(world, scene_from_json(tau::prefab::expand(scene_data, tau::prefab::asset_lookup()))); }
 
     namespace
     {
@@ -1212,7 +1258,12 @@ namespace tau::serialization
 
         for (auto [entity, instance] : world.registry.view<prefab_instance_t>().each())
         {
-            if (instance.prefab.is_valid()) { out.push_back(instance.prefab); }
+            if (!instance.prefab.is_valid()) { continue; }
+            out.push_back(instance.prefab);
+            if (const prefab_t* prefab = tau::assets::get(instance.prefab))
+            {
+                tau::prefab::collect_nested(prefab->data, out);
+            }
         }
     }
 

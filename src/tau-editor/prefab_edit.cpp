@@ -17,8 +17,10 @@
 #include "tau/prefab.h"
 #include "tau/serialization.h"
 #include "tau/systems/guid.h"
+#include "tau/systems/transform.h"
 #include "tau/world.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <json/json.hpp>
@@ -83,33 +85,128 @@ namespace tau::editor::prefab_edit
             }
         }
 
-        void strip_prefab(nlohmann::json& state)
+        const nlohmann::json* raw_of(asset_handle_t handle)
         {
-            for (const char* key : {"prefab_part", "prefab", "removed", "unresolved"}) { state.erase(key); }
+            const prefab_t* prefab = assets::get(asset_t<prefab_t>{handle});
+            return prefab ? &prefab->data : nullptr;
         }
 
-        // states -> prefab entities, own guids, refs follow
-        nlohmann::json to_prefab_entities(world_t& world, const std::vector<ecs::entity_t>& entities,
-                                          const std::unordered_map<u64_t, u64_t>& to_source)
+        // flat lookup with one prefab's raw data swapped, raw outlives the lookup
+        prefab::lookup_t lookup_with(asset_handle_t changed, const nlohmann::json* raw)
         {
-            auto source_of = [&](const nlohmann::json& value) -> nlohmann::json
+            return prefab::flattening(
+                [changed, raw](asset_guid_t guid, const std::string& path) -> const nlohmann::json*
+                {
+                    const std::string ref = assets::resolve(guid, path);
+                    if (!ref.empty() && assets::find(ref) == changed) { return raw; }
+                    return prefab::asset_raw(guid, path);
+                });
+        }
+
+        bool holds(asset_handle_t outer, asset_handle_t inner)
+        {
+            const nlohmann::json* outer_raw = raw_of(outer);
+            return outer == inner || (outer_raw && prefab::holds(*outer_raw, raw_of(inner), &prefab::asset_raw));
+        }
+
+        std::string stem_of(asset_handle_t prefab)
+        { return std::filesystem::path(assets::path_of(prefab)).stem().string(); }
+
+        // states under to_source guids (others kept), prefab tags for standing alone:
+        // instances inside keep theirs, ones nested in unwrap or in an instance reaching in from outside
+        // come back out of that instance's flat data
+        std::vector<nlohmann::json> standalone_states(world_t& world, const std::vector<ecs::entity_t>& entities,
+                                                      const std::unordered_map<u64_t, u64_t>& to_source,
+                                                      ecs::entity_t unwrap, const prefab::lookup_t& lookup)
+        {
+            ecs::registry_t& reg = world.registry;
+            auto mapped = [&](const nlohmann::json& value) -> nlohmann::json
             {
                 const auto it = to_source.find(guid_of(value));
-                return it != to_source.end() ? guid_json(it->second) : nlohmann::json(nullptr);
+                return it != to_source.end() ? guid_json(it->second) : value;
             };
 
-            nlohmann::json out = nlohmann::json::array();
-            for (std::size_t i = 0; i < entities.size(); i++)
+            struct outer_t
             {
-                nlohmann::json state = serialization::serialize_entity(world, entities[i]);
-                strip_prefab(state);
-                state["id"] = source_of(state["id"]);
-                state["parent"] = i == 0 ? nlohmann::json(nullptr) : source_of(state.value("parent", nlohmann::json{}));
-                state["next"] = i == 0 ? nlohmann::json(nullptr) : source_of(state.value("next", nlohmann::json{}));
-                serialization::remap_entity_refs(state["components"], to_source);
-                out.push_back(std::move(state));
+                std::unordered_map<u64_t, const nlohmann::json*> by_source;
+                std::unordered_map<u64_t, u64_t> to_world;
+            };
+            std::unordered_map<u64_t, outer_t> outers;
+            auto outer_of = [&](ecs::entity_t root, u64_t instance) -> const outer_t&
+            {
+                auto [it, inserted] = outers.try_emplace(instance);
+                if (!inserted) { return it->second; }
+
+                const nlohmann::json* flat =
+                    prefab::lookup_asset(lookup, reg.get<prefab_instance_t>(root).prefab);
+                if (flat && flat->contains("entities"))
+                {
+                    for (const nlohmann::json& e : (*flat)["entities"]) { it->second.by_source[guid_of(e["id"])] = &e; }
+                }
+                for (auto [entity, part] : reg.view<prefab_part_t>().each())
+                {
+                    if (part.instance == instance) { it->second.to_world[part.source] = guid_system::of(reg, entity); }
+                }
+                return it->second;
+            };
+
+            std::vector<nlohmann::json> out;
+            for (const ecs::entity_t entity : entities)
+            {
+                const nlohmann::json state = serialization::serialize_entity(world, entity);
+                nlohmann::json standalone = state;
+                prefab::strip_tags(standalone);
+                standalone["id"] = mapped(state["id"]);
+                for (const char* key : {"parent", "next"})
+                {
+                    if (state.contains(key)) { standalone[key] = mapped(state[key]); }
+                }
+                serialization::remap_entity_refs(standalone["components"], to_source);
+
+                const prefab_part_t* part = reg.try_get<prefab_part_t>(entity);
+                const ecs::entity_t root = part ? guid_system::find(reg, part->instance) : ecs::NULL_ENTITY;
+                if (root != ecs::NULL_ENTITY && reg.all_of<prefab_instance_t>(root))
+                {
+                    if (root != unwrap && to_source.contains(part->instance))
+                    {
+                        standalone.update(prefab::tags_of(state, to_source.at(part->instance)));
+                    }
+                    else
+                    {
+                        const outer_t& outer = outer_of(root, part->instance);
+                        const auto source = outer.by_source.find(part->source);
+                        const nlohmann::json* tagged = source != outer.by_source.end() ? source->second : nullptr;
+                        if (tagged && tagged->contains("prefab_part"))
+                        {
+                            const auto nested = outer.to_world.find(
+                                guid_of((*tagged)["prefab_part"].value("instance", nlohmann::json{})));
+                            const auto nested_root =
+                                nested != outer.to_world.end() ? to_source.find(nested->second) : to_source.end();
+                            if (nested_root != to_source.end())
+                            {
+                                standalone.update(prefab::tags_of(*tagged, nested_root->second));
+                            }
+                        }
+                    }
+                }
+                out.push_back(std::move(standalone));
             }
             return out;
+        }
+
+        // prefab data from standalone states, root first
+        nlohmann::json prefab_data(std::vector<nlohmann::json>& states, const nlohmann::json& guid,
+                                   const prefab::lookup_t& lookup)
+        {
+            if (!states.empty())
+            {
+                states[0]["parent"] = nullptr;
+                states[0]["next"] = nullptr;
+            }
+            return {
+                {"guid",     guid                              },
+                {"entities", prefab::collapse(states, lookup)},
+            };
         }
 
         std::vector<history::target_t> entity_targets(const std::vector<u64_t>& guids)
@@ -142,63 +239,69 @@ namespace tau::editor::prefab_edit
             std::vector<nlohmann::json> states;
         };
 
-        // instance keeps its overrides vs the old prefab, on top of the new
-        resync_t resync(world_t& world, ecs::entity_t root, const nlohmann::json& old_data,
-                        const nlohmann::json& new_data)
+        // instance keeps its overrides vs the old flat data, on top of the new
+        resync_t resync(world_t& world, ecs::entity_t root, const nlohmann::json& old_flat,
+                        const nlohmann::json& new_flat)
         {
             resync_t out;
             const std::vector<ecs::entity_t> parts = parts_of(world, guid_system::of(world.registry, root));
             for (const ecs::entity_t part : parts) { out.old_parts.push_back(guid_system::of(world.registry, part)); }
 
-            const nlohmann::json entry = prefab::collapse_instance(&old_data, states_of(world, parts));
-            out.states = prefab::expand_instance(entry, &new_data);
+            const nlohmann::json entry = prefab::collapse_instance(&old_flat, states_of(world, parts));
+            out.states = prefab::expand_instance(entry, &new_flat);
             return out;
         }
 
-        std::vector<ecs::entity_t> instances_of(world_t& world, asset_handle_t prefab)
+        // instances other than skip whose flat data changes with changed's raw data, nested in theirs included;
+        // their guids go to the step
+        std::vector<resync_t> resync_dependents(world_t& world, asset_handle_t changed, const nlohmann::json& old_raw,
+                                                const nlohmann::json& new_raw, ecs::entity_t skip,
+                                                std::vector<u64_t>& guids)
         {
-            std::vector<ecs::entity_t> roots;
+            const prefab::lookup_t before = lookup_with(changed, &old_raw);
+            const prefab::lookup_t after = lookup_with(changed, &new_raw);
+
+            std::vector<std::pair<asset_handle_t, std::vector<ecs::entity_t>>> by_prefab;
             for (auto [entity, instance] : world.registry.view<prefab_instance_t>().each())
             {
-                if (instance.prefab == prefab) { roots.push_back(entity); }
+                if (!instance.prefab.is_valid() || entity == skip) { continue; }
+
+                const auto it = std::find_if(by_prefab.begin(), by_prefab.end(),
+                                             [&](const auto& p) { return p.first == instance.prefab.handle; });
+                if (it != by_prefab.end()) { it->second.push_back(entity); }
+                else
+                {
+                    by_prefab.push_back({instance.prefab.handle, {entity}});
+                }
             }
-            return roots;
-        }
 
-        // instances other than skip follow new_data, their guids go to the step
-        std::vector<resync_t> resync_instances(world_t& world, asset_handle_t prefab, ecs::entity_t skip,
-                                               const nlohmann::json& old_data, const nlohmann::json& new_data,
-                                               std::vector<u64_t>& guids)
-        {
             std::vector<resync_t> out;
-            for (const ecs::entity_t other : instances_of(world, prefab))
+            for (const auto& [handle, roots] : by_prefab)
             {
-                if (other == skip) { continue; }
+                const nlohmann::json* old_flat = prefab::lookup_asset(before, handle);
+                const nlohmann::json* new_flat = prefab::lookup_asset(after, handle);
+                if (!old_flat || !new_flat || *old_flat == *new_flat) { continue; }
 
-                out.push_back(resync(world, other, old_data, new_data));
-                guids.insert(guids.end(), out.back().old_parts.begin(), out.back().old_parts.end());
-                for (const nlohmann::json& state : out.back().states) { guids.push_back(guid_of(state["id"])); }
+                for (const ecs::entity_t root : roots)
+                {
+                    out.push_back(resync(world, root, *old_flat, *new_flat));
+                    guids.insert(guids.end(), out.back().old_parts.begin(), out.back().old_parts.end());
+                    for (const nlohmann::json& state : out.back().states) { guids.push_back(guid_of(state["id"])); }
+                }
             }
             return out;
         }
 
-        void zero_root_position(nlohmann::json& data)
+        void zero_position(nlohmann::json& state)
         {
-            nlohmann::json& entities = data["entities"];
-            if (entities.empty()) { return; }
+            nlohmann::json& components = state["components"];
+            if (!components.is_object() || !components.contains(TRANSFORM_KEY)) { return; }
 
-            nlohmann::json& transform = entities[0]["components"][TRANSFORM_KEY];
+            nlohmann::json& transform = components[TRANSFORM_KEY];
             if (transform.is_object() && transform.contains("local_position"))
             {
                 transform["local_position"]["v"] = {0.0, 0.0, 0.0};
             }
-        }
-
-        bool blocked_in_stage(const char* what)
-        {
-            if (!prefab_stage::is_open()) { return false; }
-            TAU_LOG_WARN("PREFAB", "{} is not possible while a prefab is open, prefabs cannot hold prefabs yet", what);
-            return true;
         }
 
         std::filesystem::path source_of_vfs(const std::string& vfs)
@@ -275,10 +378,9 @@ namespace tau::editor::prefab_edit
             same[guid] = guid;
         }
 
-        return {
-            {"guid",     prefab_guid                              },
-            {"entities", to_prefab_entities(world, entities, same)},
-        };
+        const prefab::lookup_t lookup = prefab::asset_lookup();
+        std::vector<nlohmann::json> states = standalone_states(world, entities, same, ecs::NULL_ENTITY, lookup);
+        return prefab_data(states, prefab_guid, lookup);
     }
 
     void replace_data(world_t& world, editor_context_t& ctx, asset_t<prefab_t> handle, nlohmann::json new_data,
@@ -289,7 +391,7 @@ namespace tau::editor::prefab_edit
 
         std::vector<u64_t> guids;
         const std::vector<resync_t> others =
-            resync_instances(world, handle, ecs::NULL_ENTITY, prefab->data, new_data, guids);
+            resync_dependents(world, handle, prefab->data, new_data, ecs::NULL_ENTITY, guids);
 
         std::vector<history::target_t> targets = entity_targets(guids);
         targets.push_back(history::asset_target(get_type_id<prefab_t>(), handle));
@@ -310,7 +412,7 @@ namespace tau::editor::prefab_edit
     std::string create(world_t& world, editor_context_t& ctx, ecs::entity_t root, const std::string& dir)
     {
         ecs::registry_t& reg = world.registry;
-        if (!reg.valid(root) || blocked_in_stage("Making a prefab")) { return {}; }
+        if (!reg.valid(root)) { return {}; }
 
         std::vector<ecs::entity_t> entities;
         append_subtree(world, root, entities);
@@ -324,13 +426,14 @@ namespace tau::editor::prefab_edit
             guids.push_back(guid);
         }
 
-        const std::string name = name_of(world, root);
-        nlohmann::json data = {
-            {"guid", guid::to_string(guid::generate())},
-            {"entities", to_prefab_entities(world, entities, to_source)},
-        };
+        // instances inside stay nested, an instance root makes a variant of its prefab
+        const prefab::lookup_t lookup = prefab::asset_lookup();
+        std::vector<nlohmann::json> states = standalone_states(world, entities, to_source, ecs::NULL_ENTITY, lookup);
         // placement belongs to the instance, the prefab opens and spawns at the origin
-        zero_root_position(data);
+        zero_position(states[0]);
+        const nlohmann::json data = prefab_data(states, guid::to_string(guid::generate()), lookup);
+
+        const std::string name = name_of(world, root);
         const std::string rel = asset_files::unique_path(dir, name, ".prefab");
 
         const u64_t file_entry = asset_files::reserve_entry();
@@ -358,19 +461,31 @@ namespace tau::editor::prefab_edit
     ecs::entity_t instantiate(world_t& world, editor_context_t& ctx, const std::string& prefab_path,
                               ecs::entity_t parent, const vec3_t* position)
     {
-        if (blocked_in_stage("Placing a prefab")) { return ecs::NULL_ENTITY; }
-
         const asset_t<prefab_t> handle = assets::load<prefab_t>(prefab_path);
-        const prefab_t* prefab = assets::get(handle);
-        if (!prefab)
+        const prefab::lookup_t lookup = prefab::asset_lookup();
+        const nlohmann::json* flat = prefab::lookup_asset(lookup, handle);
+        if (!flat)
         {
             TAU_LOG_ERROR("PREFAB", "Cannot instance {}, it did not load", prefab_path);
             return ecs::NULL_ENTITY;
         }
 
-        nlohmann::json entry = prefab::new_instance(prefab->data, serialization::asset_ref(handle));
+        ecs::entity_t stage_root = ecs::NULL_ENTITY;
+        if (prefab_stage::is_open())
+        {
+            if (holds(handle, prefab_stage::prefab()))
+            {
+                TAU_LOG_WARN("PREFAB", "{} cannot go into {}, it would hold itself", stem_of(handle),
+                             stem_of(prefab_stage::prefab()));
+                return ecs::NULL_ENTITY;
+            }
+            // one root in the stage
+            if (parent == ecs::NULL_ENTITY) { stage_root = prefab_stage::root(world); }
+        }
+
+        nlohmann::json entry = prefab::new_instance(*flat, serialization::asset_ref(handle));
         if (parent != ecs::NULL_ENTITY) { entry["parent"] = guid_json(guid_system::ensure(world.registry, parent)); }
-        const std::vector<nlohmann::json> states = prefab::expand_instance(entry, &prefab->data);
+        const std::vector<nlohmann::json> states = prefab::expand_instance(entry, flat);
 
         std::vector<u64_t> guids;
         for (const nlohmann::json& state : states) { guids.push_back(guid_of(state["id"])); }
@@ -380,9 +495,13 @@ namespace tau::editor::prefab_edit
 
         apply_states(world, states, {});
         const ecs::entity_t root = guid_system::find(world.registry, guid_of(entry["id"]));
-        if (position && root != ecs::NULL_ENTITY && world.registry.all_of<transform_t>(root))
+        if (root != ecs::NULL_ENTITY && world.registry.all_of<transform_t>(root))
         {
-            world.registry.get<transform_t>(root).local_position = *position;
+            if (position) { world.registry.get<transform_t>(root).local_position = *position; }
+            if (stage_root != ecs::NULL_ENTITY)
+            {
+                transform_system::set_parent_keep_world(world.registry, root, stage_root, ecs::NULL_ENTITY);
+            }
         }
         if (root != ecs::NULL_ENTITY) { ctx.selection.set(guid_of(entry["id"])); }
 
@@ -408,14 +527,16 @@ namespace tau::editor::prefab_edit
 
     void revert(world_t& world, editor_context_t& ctx, ecs::entity_t root)
     {
-        const prefab_t* prefab = prefab_of(world, root);
-        if (!prefab) { return; }
+        const prefab_instance_t* instance = world.registry.try_get<prefab_instance_t>(root);
+        const prefab::lookup_t lookup = prefab::asset_lookup();
+        const nlohmann::json* flat = instance ? prefab::lookup_asset(lookup, instance->prefab) : nullptr;
+        if (!flat || (*flat)["entities"].empty()) { return; }
 
         const std::vector<ecs::entity_t> parts = parts_of(world, guid_system::of(world.registry, root));
-        nlohmann::json entry = prefab::collapse_instance(&prefab->data, states_of(world, parts));
+        nlohmann::json entry = prefab::collapse_instance(flat, states_of(world, parts));
 
         // root keeps placement, rest follows the prefab
-        const std::string root_source = prefab->data["entities"][0]["id"].get<std::string>();
+        const std::string root_source = (*flat)["entities"][0]["id"].get<std::string>();
         nlohmann::json kept = nlohmann::json::object();
         const nlohmann::json placement = entry.value("overrides", nlohmann::json::object())
                                              .value(root_source, nlohmann::json::object())
@@ -425,7 +546,7 @@ namespace tau::editor::prefab_edit
         entry["overrides"] = std::move(kept);
         entry.erase("removed");
 
-        const std::vector<nlohmann::json> states = prefab::expand_instance(entry, &prefab->data);
+        const std::vector<nlohmann::json> states = prefab::expand_instance(entry, flat);
 
         std::vector<u64_t> guids;
         for (const ecs::entity_t part : parts) { guids.push_back(guid_system::of(world.registry, part)); }
@@ -444,11 +565,33 @@ namespace tau::editor::prefab_edit
         if (!instance || !prefab) { return; }
 
         const asset_t<prefab_t> handle = instance->prefab;
-        const nlohmann::json old_data = prefab->data;
+        // the stage's undo steps end at its exit, another prefab's change would outlive them
+        if (prefab_stage::is_open())
+        {
+            TAU_LOG_WARN("PREFAB", "Apply is not possible inside an open prefab, open {} to edit it", stem_of(handle));
+            return;
+        }
+
         const u64_t instance_guid = guid_system::of(reg, root);
 
         std::vector<ecs::entity_t> entities;
         append_subtree(world, root, entities);
+
+        for (const ecs::entity_t entity : entities)
+        {
+            const prefab_instance_t* inner = reg.try_get<prefab_instance_t>(entity);
+            if (entity != root && inner && inner->prefab.is_valid() && holds(inner->prefab, handle))
+            {
+                TAU_LOG_ERROR("PREFAB", "Cannot apply to {}, the {} inside would make it hold itself",
+                              stem_of(handle), stem_of(inner->prefab));
+                return;
+            }
+        }
+
+        const prefab::lookup_t lookup = prefab::asset_lookup();
+        const nlohmann::json* old_flat = prefab::lookup_asset(lookup, handle);
+        if (!old_flat) { return; }
+        const nlohmann::json old_data = prefab->data;
 
         std::unordered_map<u64_t, u64_t> to_source;
         std::vector<u64_t> guids;
@@ -461,23 +604,21 @@ namespace tau::editor::prefab_edit
             guids.push_back(guid);
         }
 
-        nlohmann::json new_data = {
-            {"guid", old_data.value("guid", nlohmann::json{})},
-            {"entities", to_prefab_entities(world, entities, to_source)},
-        };
+        std::vector<nlohmann::json> states = standalone_states(world, entities, to_source, root, lookup);
 
         // root placement is the instance's own
-        const nlohmann::json& old_root = old_data["entities"][0]["components"];
-        if (old_root.contains(TRANSFORM_KEY))
-        {
-            new_data["entities"][0]["components"][TRANSFORM_KEY] = old_root[TRANSFORM_KEY];
-        }
+        const nlohmann::json old_root = (*old_flat)["entities"].empty()
+                                            ? nlohmann::json::object()
+                                            : (*old_flat)["entities"][0].value("components", nlohmann::json::object());
+        if (old_root.contains(TRANSFORM_KEY)) { states[0]["components"][TRANSFORM_KEY] = old_root[TRANSFORM_KEY]; }
 
-        const std::vector<resync_t> others = resync_instances(world, handle, root, old_data, new_data, guids);
+        nlohmann::json new_data = prefab_data(states, old_data.value("guid", nlohmann::json{}), lookup);
+
+        const std::vector<resync_t> others = resync_dependents(world, handle, old_data, new_data, root, guids);
 
         std::vector<history::target_t> targets = entity_targets(guids);
         targets.push_back(history::asset_target(get_type_id<prefab_t>(), handle));
-        history::begin(world, "Apply to " + std::filesystem::path(assets::path_of(handle)).stem().string(), targets);
+        history::begin(world, "Apply to " + stem_of(handle), targets);
 
         prefab->data = std::move(new_data);
         for (const ecs::entity_t entity : entities)
@@ -498,29 +639,38 @@ namespace tau::editor::prefab_edit
         const std::vector<ecs::entity_t> parts = parts_of(world, guid_system::of(world.registry, root));
 
         std::vector<u64_t> guids;
-        for (const ecs::entity_t part : parts) { guids.push_back(guid_system::of(world.registry, part)); }
-
-        history::begin(world, "Unpack " + name_of(world, root), entity_targets(guids));
+        std::unordered_map<u64_t, u64_t> same;
         for (const ecs::entity_t part : parts)
         {
-            world.registry.remove<prefab_part_t>(part);
-            world.registry.remove<prefab_instance_t>(part);
+            const u64_t guid = guid_system::of(world.registry, part);
+            guids.push_back(guid);
+            same[guid] = guid;
         }
+
+        // one level: nested instances come back as instances
+        const std::vector<nlohmann::json> states =
+            standalone_states(world, parts, same, root, prefab::asset_lookup());
+
+        history::begin(world, "Unpack " + name_of(world, root), entity_targets(guids));
+        apply_states(world, states, {});
         history::end(world);
     }
 
     bool reload(world_t& world, const std::string& vfs_path)
     {
         const asset_t<prefab_t> handle{assets::find(vfs_path)};
-        prefab_t* prefab = assets::get(handle);
+        const prefab_t* prefab = assets::get(handle);
         if (!prefab) { return assets::reload(vfs_path); }
 
         const nlohmann::json old_data = prefab->data;
         if (!assets::reload(handle)) { return false; }
 
-        for (const ecs::entity_t root : instances_of(world, handle))
+        const nlohmann::json* new_data = raw_of(handle);
+        if (!new_data) { return false; }
+
+        std::vector<u64_t> guids;
+        for (const resync_t& synced : resync_dependents(world, handle, old_data, *new_data, ecs::NULL_ENTITY, guids))
         {
-            const resync_t synced = resync(world, root, old_data, prefab->data);
             apply_states(world, synced.states, synced.old_parts);
         }
         return true;
@@ -530,8 +680,12 @@ namespace tau::editor::prefab_edit
     {
         overrides_t out;
         const ecs::entity_t root = instance_root(world, entity);
-        const prefab_t* prefab = root != ecs::NULL_ENTITY ? prefab_of(world, root) : nullptr;
-        if (!prefab) { return out; }
+        if (root == ecs::NULL_ENTITY) { return out; }
+
+        const prefab::lookup_t lookup = prefab::asset_lookup();
+        const nlohmann::json* flat =
+            prefab::lookup_asset(lookup, world.registry.get<prefab_instance_t>(root).prefab);
+        if (!flat) { return out; }
 
         const u64_t instance = guid_system::of(world.registry, root);
         std::vector<nlohmann::json> parts;
@@ -545,11 +699,11 @@ namespace tau::editor::prefab_edit
         }
 
         const nlohmann::json state = serialization::serialize_entity(world, entity);
-        const nlohmann::json diff = prefab::diff_part(&prefab->data, parts, state);
+        const nlohmann::json diff = prefab::diff_part(flat, parts, state);
 
         const u64_t source = world.registry.get<prefab_part_t>(entity).source;
         nlohmann::json reference = nlohmann::json::object();
-        for (const nlohmann::json& e : prefab->data["entities"])
+        for (const nlohmann::json& e : (*flat)["entities"])
         {
             if (guid_of(e["id"]) == source) { reference = e.value("components", nlohmann::json::object()); }
         }

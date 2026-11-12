@@ -13,6 +13,7 @@
 #include "tau/assets/texture.h"
 #include "tau/components/prefab.h"
 #include "tau/components/tag.h"
+#include "tau/components/unresolved.h"
 #include "tau/ecs_fwd.h"
 #include "tau/engine.h"
 #include "tau/hash.h"
@@ -987,10 +988,14 @@ namespace tau::editor::panels
             if (ImGui::SmallButton("Revert")) { pending_prefab = {prefab_action_e::REVERT, root_guid}; }
             if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Back to the prefab, the root keeps its placement"); }
             ImGui::SameLine();
+            ImGui::BeginDisabled(prefab_stage::is_open());
             if (ImGui::SmallButton("Apply")) { pending_prefab = {prefab_action_e::APPLY, root_guid}; }
-            if (ImGui::IsItemHovered())
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
-                ImGui::SetTooltip("The prefab becomes this instance, its other instances follow");
+                ImGui::SetTooltip(prefab_stage::is_open()
+                                      ? "Not inside an open prefab, Open edits this one"
+                                      : "The prefab becomes this instance, its other instances follow");
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Unpack")) { pending_prefab = {prefab_action_e::UNPACK, root_guid}; }
@@ -1097,6 +1102,18 @@ namespace tau::editor::panels
                             }
 
                             ImGui::PopID();
+                        }
+                    }
+                }
+
+                if (const unresolved_components_t* kept = world.registry.try_get<unresolved_components_t>(selected_entity))
+                {
+                    const nlohmann::json saved = nlohmann::json::parse(kept->json, nullptr, false);
+                    if (saved.is_object())
+                    {
+                        for (const auto& [key, fields] : saved.items())
+                        {
+                            ImGui::TextDisabled("%s: type not registered, kept as saved", key.c_str());
                         }
                     }
                 }

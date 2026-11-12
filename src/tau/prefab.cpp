@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -133,10 +134,11 @@ namespace tau::prefab
             std::unordered_map<u64_t, const nlohmann::json*> by_source;
         };
 
-        // prefab entity as a part with no overrides
+        // prefab entity as a part with no overrides, nested tags belong to the prefab
         nlohmann::json reference_state(const nlohmann::json& e, const part_map_t& map)
         {
             nlohmann::json state = e;
+            strip_tags(state);
             serialization::remap_entity_refs(state["components"], map.to_instance);
             return state;
         }
@@ -163,13 +165,124 @@ namespace tau::prefab
         }
     } // namespace
 
-    const nlohmann::json* asset_lookup(asset_guid_t guid, const std::string& path)
+    namespace
+    {
+        constexpr const char* TAG_KEYS[] = {"prefab_part", "prefab", "removed", "unresolved"};
+
+        struct flat_cache_t
+        {
+            raw_lookup_t raw;
+            std::unordered_map<const nlohmann::json*, nlohmann::json> done;
+            std::unordered_set<const nlohmann::json*> busy;
+        };
+
+        const nlohmann::json* flat_of(flat_cache_t& cache, asset_guid_t guid, const std::string& path)
+        {
+            const nlohmann::json* raw = cache.raw(guid, path);
+            if (!raw) { return nullptr; }
+            if (const auto it = cache.done.find(raw); it != cache.done.end()) { return &it->second; }
+            if (cache.busy.contains(raw))
+            {
+                TAU_LOG_ERROR("PREFAB", "Prefab {} holds itself", path);
+                return nullptr;
+            }
+
+            cache.busy.insert(raw);
+            nlohmann::json flat =
+                expand(*raw, [&cache](asset_guid_t g, const std::string& p) { return flat_of(cache, g, p); });
+            cache.busy.erase(raw);
+            return &cache.done.emplace(raw, std::move(flat)).first->second;
+        }
+
+        const nlohmann::json* entry_target(const nlohmann::json& entry, const raw_lookup_t& lookup)
+        {
+            const nlohmann::json ref = entry.value("prefab", nlohmann::json::object());
+            if (!ref.is_object()) { return nullptr; }
+            return lookup(assets::parse_guid(ref.value("g", std::string{})), ref.value("p", std::string{}));
+        }
+
+        bool holds_in(const nlohmann::json& data, const nlohmann::json* target, const raw_lookup_t& raw,
+                      std::unordered_set<const nlohmann::json*>& seen)
+        {
+            for (const nlohmann::json& e : entities_of(&data))
+            {
+                if (!is_instance_entry(e)) { continue; }
+
+                const nlohmann::json* inner = entry_target(e, raw);
+                if (!inner) { continue; }
+                if (inner == target) { return true; }
+                if (seen.insert(inner).second && holds_in(*inner, target, raw, seen)) { return true; }
+            }
+            return false;
+        }
+
+        bool is_root_state(const nlohmann::json& state)
+        {
+            if (!state.contains("prefab")) { return false; }
+            const u64_t instance = part_instance(state);
+            return instance == 0 || instance == guid_of(state.value("id", nlohmann::json{}));
+        }
+    } // namespace
+
+    const nlohmann::json* asset_raw(asset_guid_t guid, const std::string& path)
     {
         const std::string ref = assets::resolve(guid, path);
         if (ref.empty()) { return nullptr; }
 
         const prefab_t* prefab = assets::get(assets::load<prefab_t>(ref));
         return prefab ? &prefab->data : nullptr;
+    }
+
+    lookup_t flattening(raw_lookup_t raw)
+    {
+        auto cache = std::make_shared<flat_cache_t>();
+        cache->raw = std::move(raw);
+        return [cache](asset_guid_t guid, const std::string& path) { return flat_of(*cache, guid, path); };
+    }
+
+    lookup_t asset_lookup() { return flattening(&asset_raw); }
+
+    const nlohmann::json* lookup_asset(const lookup_t& lookup, asset_handle_t prefab)
+    { return prefab.is_valid() ? lookup(prefab.guid, assets::path_of(prefab)) : nullptr; }
+
+    bool holds(const nlohmann::json& prefab_data, const nlohmann::json* target, const raw_lookup_t& raw)
+    {
+        std::unordered_set<const nlohmann::json*> seen;
+        return target && holds_in(prefab_data, target, raw, seen);
+    }
+
+    void collect_nested(const nlohmann::json& prefab_data, std::vector<asset_handle_t>& out)
+    {
+        // loaded ones only, nothing loads here
+        std::unordered_map<const nlohmann::json*, asset_handle_t> handles;
+        const raw_lookup_t loaded = [&](asset_guid_t guid, const std::string& path) -> const nlohmann::json*
+        {
+            const std::string ref = assets::resolve(guid, path);
+            const asset_handle_t handle = ref.empty() ? asset_handle_t{} : assets::find(ref);
+            const prefab_t* prefab = handle ? assets::get(asset_t<prefab_t>{handle}) : nullptr;
+            if (prefab) { handles.emplace(&prefab->data, handle); }
+            return prefab ? &prefab->data : nullptr;
+        };
+
+        std::unordered_set<const nlohmann::json*> seen;
+        holds_in(prefab_data, nullptr, loaded, seen);
+        for (const nlohmann::json* data : seen) { out.push_back(handles.at(data)); }
+    }
+
+    nlohmann::json tags_of(const nlohmann::json& state, u64_t instance)
+    {
+        nlohmann::json tags = nlohmann::json::object();
+        for (const char* key : TAG_KEYS)
+        {
+            if (state.contains(key)) { tags[key] = state[key]; }
+        }
+        if (tags.contains("prefab_part")) { tags["prefab_part"]["instance"] = guid_json(instance); }
+        return tags;
+    }
+
+    void strip_tags(nlohmann::json& state)
+    {
+        for (const char* key : TAG_KEYS) { state.erase(key); }
     }
 
     bool is_instance_entry(const nlohmann::json& entity)
@@ -348,6 +461,48 @@ namespace tau::prefab
         return entry;
     }
 
+    nlohmann::json collapse(std::span<const nlohmann::json> states, const lookup_t& lookup)
+    {
+        std::unordered_set<u64_t> roots;
+        for (const nlohmann::json& state : states)
+        {
+            if (is_root_state(state)) { roots.insert(guid_of(state.value("id", nlohmann::json{}))); }
+        }
+
+        nlohmann::json out = nlohmann::json::array();
+        std::unordered_map<u64_t, std::vector<nlohmann::json>> groups;
+        std::vector<std::pair<std::size_t, u64_t>> slots;
+        for (const nlohmann::json& state : states)
+        {
+            const u64_t id = guid_of(state.value("id", nlohmann::json{}));
+            if (roots.contains(id))
+            {
+                slots.emplace_back(out.size(), id);
+                out.push_back(nullptr);
+                groups[id].push_back(state);
+                continue;
+            }
+            if (const u64_t instance = part_instance(state); instance != 0 && roots.contains(instance))
+            {
+                groups[instance].push_back(state);
+                continue;
+            }
+
+            nlohmann::json plain = state;
+            strip_tags(plain);
+            out.push_back(std::move(plain));
+        }
+
+        for (const auto& [index, id] : slots)
+        {
+            const std::vector<nlohmann::json>& parts = groups[id];
+            const auto root = std::find_if(parts.begin(), parts.end(), [](const nlohmann::json& p)
+                                           { return p.contains("prefab"); });
+            out[index] = collapse_instance(entry_target(*root, lookup), parts);
+        }
+        return out;
+    }
+
     nlohmann::json new_instance(const nlohmann::json& prefab_data, const nlohmann::json& prefab_ref)
     {
         nlohmann::json entry = {
@@ -382,12 +537,13 @@ namespace tau::prefab
 
     ecs::entity_t spawn(world_t& world, asset_t<prefab_t> prefab)
     {
-        const prefab_t* data = assets::get(prefab);
+        const lookup_t lookup = asset_lookup();
+        const nlohmann::json* data = lookup_asset(lookup, prefab);
         if (!data) { return ecs::NULL_ENTITY; }
 
-        const nlohmann::json entry = new_instance(data->data, serialization::asset_ref(prefab));
+        const nlohmann::json entry = new_instance(*data, serialization::asset_ref(prefab));
         const nlohmann::json scene = {
-            {"entities", expand_instance(entry, &data->data)}
+            {"entities", expand_instance(entry, data)}
         };
 
         const std::vector<ecs::entity_t> created = serialization::deserialize_scene(world, scene);

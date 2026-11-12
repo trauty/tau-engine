@@ -1,7 +1,7 @@
 #pragma once
 #include "tau/asset.h"
-#include "tau/assets/shader.h"
 #include "tau/defines.h"
+#include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/vulkan.h"
 
 #include <memory>
@@ -21,7 +21,7 @@ namespace tau
         VkImage image = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         VmaAllocation allocation = VK_NULL_HANDLE;
-        u32_t bindless_id = 0xfffffff;
+        u32_t bindless_id = renderer::BINDLESS_NULL_HANDLE;
     };
 
     template <>

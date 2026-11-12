@@ -116,14 +116,14 @@ namespace tau::jobs
         std::vector<std::thread> high_priority_workers;
         std::thread low_priority_worker; // one for the assets and general io
         std::atomic<bool> is_running{false};
-        std::atomic<u32_t> jobs_running{0}; // popped and not yet finished, on any thread
+        // pushed and not yet finished, counted before the push so no gap shows idle
+        std::atomic<u32_t> jobs_in_flight{0};
 
         void run_job(const job_t& job)
         {
-            jobs_running.fetch_add(1, std::memory_order_acq_rel);
             if (job.task) { job.task(); }
             if (job.counter) { job.counter->fetch_sub(1, std::memory_order_release); }
-            jobs_running.fetch_sub(1, std::memory_order_acq_rel);
+            jobs_in_flight.fetch_sub(1, std::memory_order_acq_rel);
         }
 
         void park(job_queue_t& queue)
@@ -173,12 +173,12 @@ namespace tau::jobs
         {
             job_queue_t& queue = (prio == priority_e::HIGH) ? high_priority_queue : low_priority_queue;
 
+            jobs_in_flight.fetch_add(1, std::memory_order_acq_rel);
             if (queue.push(task, counter)) { return; }
 
             TAU_LOG_WARN("JOBS", "Job queue full ({} slots), running job on the submitting thread", MAX_JOBS);
 
-            if (task) { task(); }
-            if (counter) { counter->fetch_sub(1, std::memory_order_release); }
+            run_job({task, counter});
         }
 
         void wake_threads(priority_e prio, bool wake_all)
@@ -255,15 +255,8 @@ namespace tau::jobs
     {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 
-        // a job is popped before it counts as running, so idle can be seen in the gap, check twice
-        u32_t quiet_checks = 0;
-        while (quiet_checks < 2)
+        while (jobs_in_flight.load(std::memory_order_acquire) != 0)
         {
-            const bool idle = !high_priority_queue.has_work() && !low_priority_queue.has_work() &&
-                              jobs_running.load(std::memory_order_acquire) == 0;
-            quiet_checks = idle ? quiet_checks + 1 : 0;
-            if (idle) { continue; }
-
             if (std::chrono::steady_clock::now() >= deadline) { return false; }
 
             job_t job;

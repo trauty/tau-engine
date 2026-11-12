@@ -19,10 +19,16 @@ namespace tau::transform_system
 {
     namespace
     {
-        std::vector<ecs::entity_t> sort_stack;
-        std::vector<ecs::entity_t> sort_res;
+        // per registry, parents before children
+        struct order_t
+        {
+            std::vector<ecs::entity_t> stack;
+            std::vector<ecs::entity_t> sorted;
+            bool dirty = true;
+        };
 
-        bool is_hierarchy_dirty = true;
+        void mark_dirty(ecs::registry_t& reg) { reg.ctx().emplace<order_t>().dirty = true; }
+
 
         struct orphans_t
         { std::vector<ecs::entity_t> entities; };
@@ -136,7 +142,7 @@ namespace tau::transform_system
             unlink(reg, child, child_transform);
             link(reg, child, child_transform, parent, before);
 
-            is_hierarchy_dirty = true;
+            mark_dirty(reg);
             child_transform.is_dirty = true;
         }
 
@@ -149,7 +155,7 @@ namespace tau::transform_system
             transform.prev_sibling = ecs::NULL_ENTITY;
 
             link(reg, entity, transform, ecs::NULL_ENTITY, ecs::NULL_ENTITY);
-            is_hierarchy_dirty = true;
+            mark_dirty(reg);
         }
 
         // children are destroyed in the next update, destroying them inside entt's signal breaks range destroy
@@ -173,7 +179,7 @@ namespace tau::transform_system
             }
             transform.first_child = ecs::NULL_ENTITY;
 
-            is_hierarchy_dirty = true;
+            mark_dirty(reg);
         }
 
         static void destroy_orphans(ecs::registry_t& reg)
@@ -193,31 +199,32 @@ namespace tau::transform_system
         {
             auto view = reg.view<transform_t>();
 
-            sort_stack.clear();
-            sort_res.clear();
+            order_t& order = reg.ctx().emplace<order_t>();
+            order.stack.clear();
+            order.sorted.clear();
 
             for (ecs::entity_t entity : view)
             {
-                if (view.get<transform_t>(entity).parent == ecs::NULL_ENTITY) { sort_stack.push_back(entity); }
+                if (view.get<transform_t>(entity).parent == ecs::NULL_ENTITY) { order.stack.push_back(entity); }
             }
 
             // iterative dfs flatten
-            while (!sort_stack.empty())
+            while (!order.stack.empty())
             {
-                ecs::entity_t entity = sort_stack.back();
-                sort_stack.pop_back();
+                ecs::entity_t entity = order.stack.back();
+                order.stack.pop_back();
 
-                sort_res.push_back(entity);
+                order.sorted.push_back(entity);
 
                 ecs::entity_t child = view.get<transform_t>(entity).first_child;
                 while (child != ecs::NULL_ENTITY)
                 {
-                    sort_stack.push_back(child);
+                    order.stack.push_back(child);
                     child = view.get<transform_t>(child).next_sibling;
                 }
             }
 
-            is_hierarchy_dirty = false;
+            order.dirty = false;
         }
 
         static void update(ecs::registry_t& reg)
@@ -226,11 +233,12 @@ namespace tau::transform_system
 
             destroy_orphans(reg);
 
-            if (is_hierarchy_dirty) { rebuild_hierarchy(reg); }
+            order_t& order = reg.ctx().emplace<order_t>();
+            if (order.dirty) { rebuild_hierarchy(reg); }
 
             auto view = reg.view<transform_t>();
 
-            for (ecs::entity_t entity : sort_res)
+            for (ecs::entity_t entity : order.sorted)
             {
                 transform_t& transform = view.get<transform_t>(entity);
 
@@ -264,7 +272,7 @@ namespace tau::transform_system
                 else if (transform.is_dirty) { glm_mat4_copy(transform.local_mat, transform.world_mat); }
             }
 
-            for (ecs::entity_t entity : sort_res) { view.get<transform_t>(entity).is_dirty = false; }
+            for (ecs::entity_t entity : order.sorted) { view.get<transform_t>(entity).is_dirty = false; }
         }
     };
 
@@ -393,6 +401,7 @@ namespace tau::transform_system
     {
         reg.ctx().emplace<orphans_t>();
         reg.ctx().emplace<roots_t>();
+        reg.ctx().emplace<order_t>();
         reg.on_construct<transform_t>().connect<&internal_t::on_construct>();
         reg.on_destroy<transform_t>().connect<&internal_t::on_destroy>();
     }

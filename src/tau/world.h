@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace entt { struct meta_ctx; }
+namespace entt { class meta_ctx; }
 
 namespace tau
 {
@@ -20,7 +20,7 @@ namespace tau
     {
         std::string name;
         ecs::registry_t registry;
-        reflection::ctx_t* reflection_ctx;
+        reflection::ctx_t* reflection_ctx = nullptr;
         physics::detail::state_t* physics_state = nullptr;
 
         std::vector<system_func_t> init_systems;

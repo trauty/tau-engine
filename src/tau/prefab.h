@@ -19,12 +19,27 @@ namespace tau
 // scene stores an instance as one entry at its root:
 // the prefab, which guid each prefab entity has here, and the fields that differ from the prefab
 // expand turns entries into entity states, collapse turns an instance's states back into an entry
+// prefabs hold instance entries too (nested); instances read the flat data:
+// nested entries expanded, nested parts tagged one level deep, keyed by their guid in the prefab
 namespace tau::prefab
 {
     // prefab data by guid + recorded path, null if missing
-    using lookup_t = std::function<const nlohmann::json*(asset_guid_t guid, const std::string& path)>;
+    using raw_lookup_t = std::function<const nlohmann::json*(asset_guid_t guid, const std::string& path)>;
+    // same, flat data
+    using lookup_t = raw_lookup_t;
 
-    TAU_ENGINE_API const nlohmann::json* asset_lookup(asset_guid_t guid, const std::string& path);
+    // loaded prefab assets, raw
+    TAU_ENGINE_API const nlohmann::json* asset_raw(asset_guid_t guid, const std::string& path);
+    // flat data from raw, memoized per returned lookup, a prefab holding itself counts as missing
+    TAU_ENGINE_API lookup_t flattening(raw_lookup_t raw);
+    TAU_ENGINE_API lookup_t asset_lookup();
+    TAU_ENGINE_API const nlohmann::json* lookup_asset(const lookup_t& lookup, asset_handle_t prefab);
+
+    // raw prefab data holds target somewhere down its nested instances
+    TAU_ENGINE_API bool holds(const nlohmann::json& prefab_data, const nlohmann::json* target,
+                              const raw_lookup_t& raw);
+    // loaded nested prefabs, any depth
+    TAU_ENGINE_API void collect_nested(const nlohmann::json& prefab_data, std::vector<asset_handle_t>& out);
 
     TAU_ENGINE_API bool is_instance_entry(const nlohmann::json& entity);
 
@@ -37,6 +52,13 @@ namespace tau::prefab
     // entry for an instance's part states, any order
     TAU_ENGINE_API nlohmann::json collapse_instance(const nlohmann::json* prefab_data,
                                                     std::span<const nlohmann::json> parts);
+    // expand undone: instance parts back into entries at their root's place,
+    // parts whose root is not among the states become plain
+    TAU_ENGINE_API nlohmann::json collapse(std::span<const nlohmann::json> states, const lookup_t& lookup);
+
+    // prefab_part / prefab / removed / unresolved of a state, instance guid remapped
+    TAU_ENGINE_API nlohmann::json tags_of(const nlohmann::json& state, u64_t instance);
+    TAU_ENGINE_API void strip_tags(nlohmann::json& state);
 
     TAU_ENGINE_API nlohmann::json new_instance(const nlohmann::json& prefab_data, const nlohmann::json& prefab_ref);
 
