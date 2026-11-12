@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "tau-editor/editor_context.h"
+#include "tau-editor/handle_math.h"
 #include "tau-editor/keymap.h"
 #include "tau/asset.h"
 #include "tau/assets/mesh.h"
@@ -86,31 +87,66 @@ namespace tau::editor::viewport_input
         return true;
     }
 
-    void frame_selection(world_t& world, editor_context_t& ctx)
+    void frame_entities(world_t& world, editor_context_t& ctx, std::span<const ecs::entity_t> entities)
     {
-        const ecs::entity_t entity = guid_system::find(world.registry, ctx.selection.primary());
-        if (entity == ecs::NULL_ENTITY || !world.registry.all_of<transform_t>(entity)) { return; }
-
-        const transform_t& transform = world.registry.get<transform_t>(entity);
-        vec3_t center = transform_system::get_world_position(world.registry, entity);
-        f32 radius = 1.0f;
-
-        if (const mesh_renderer_t* renderer = world.registry.try_get<mesh_renderer_t>(entity))
+        bool any = false;
+        vec3_t center = {0.0f, 0.0f, 0.0f};
+        f32 radius = 0.0f;
+        auto merge = [&](vec3_t c, f32 r)
         {
-            if (const mesh_t* mesh = assets::get(renderer->mesh))
+            const vec3_t offset = c - center;
+            const f32 distance = std::sqrt(handle_math::dot(offset, offset));
+            if (!any || distance + radius <= r)
             {
-                vec3_t local_center = mesh->local_center;
-                glm_mat4_mulv3(const_cast<mat4_t&>(transform.world_mat), local_center, 1.0f, center);
+                center = c;
+                radius = r;
+                any = true;
+            }
+            else if (distance + r > radius)
+            {
+                const f32 merged = (distance + radius + r) * 0.5f;
+                center = center + offset * ((merged - radius) / distance);
+                radius = merged;
+            }
+        };
 
-                const vec3_t scale = transform_system::get_world_scale(world.registry, entity);
-                radius = std::max(mesh->local_radius * std::max({scale.x, scale.y, scale.z}), 0.01f);
+        for (const ecs::entity_t entity : entities)
+        {
+            if (!world.registry.valid(entity) || !world.registry.all_of<transform_t, mesh_renderer_t>(entity))
+            {
+                continue;
+            }
+
+            const mesh_t* mesh = assets::get(world.registry.get<mesh_renderer_t>(entity).mesh);
+            if (!mesh) { continue; }
+
+            vec3_t local_center = mesh->local_center;
+            vec3_t c;
+            glm_mat4_mulv3(world.registry.get<transform_t>(entity).world_mat, local_center, 1.0f, c);
+            const vec3_t scale = transform_system::get_world_scale(world.registry, entity);
+            merge(c, std::max(mesh->local_radius * std::max({scale.x, scale.y, scale.z}), 0.01f));
+        }
+
+        for (const ecs::entity_t entity : entities)
+        {
+            if (any) { break; }
+            if (world.registry.valid(entity) && world.registry.all_of<transform_t>(entity))
+            {
+                merge(transform_system::get_world_position(world.registry, entity), 1.0f);
             }
         }
+        if (!any) { return; }
 
         editor_camera_t& cam = ctx.editor_camera;
         const f32 half_fov = glm_rad(cam.fov_deg) * 0.5f;
         const f32 distance = radius / std::sin(half_fov) * 1.1f;
         cam.position = center - cam.rotation.forward() * distance;
+    }
+
+    void frame_selection(world_t& world, editor_context_t& ctx)
+    {
+        const ecs::entity_t entity = guid_system::find(world.registry, ctx.selection.primary());
+        if (entity != ecs::NULL_ENTITY) { frame_entities(world, ctx, {&entity, 1}); }
     }
 
     void update(world_t& world, editor_context_t& ctx)

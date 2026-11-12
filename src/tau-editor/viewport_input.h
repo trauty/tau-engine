@@ -1,6 +1,9 @@
 #pragma once
 
+#include "tau/ecs_fwd.h"
 #include "tau/math.h"
+
+#include <span>
 
 namespace tau
 {
@@ -25,4 +28,5 @@ namespace tau::editor::viewport_input
     void update(world_t& world, editor_context_t& ctx);
 
     void frame_selection(world_t& world, editor_context_t& ctx);
+    void frame_entities(world_t& world, editor_context_t& ctx, std::span<const ecs::entity_t> entities);
 } // namespace tau::editor::viewport_input

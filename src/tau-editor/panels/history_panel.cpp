@@ -24,9 +24,12 @@ namespace tau::editor::panels
             // click a row: undo/redo up to it
             ImGui::BeginDisabled(ctx.cur_mode != editor_mode_e::EDIT);
 
+            ImGui::BeginDisabled(history::floor() > 0);
             if (ImGui::Selectable("Start", applied == 0)) { jump = 0; }
+            ImGui::EndDisabled();
             if (moved && applied == 0) { ImGui::SetScrollHereY(); }
 
+            const std::size_t floor = history::floor();
             for (std::size_t i = 0; i < history::step_count(); i++)
             {
                 ImGui::PushID(static_cast<i32>(i));
@@ -35,7 +38,13 @@ namespace tau::editor::panels
                 if (undone) { ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)); }
 
                 const std::string label(history::step_label(i));
+                ImGui::BeginDisabled(i + 1 < floor);
                 if (ImGui::Selectable(label.c_str(), i + 1 == applied)) { jump = i + 1; }
+                ImGui::EndDisabled();
+                if (i + 1 < floor && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                {
+                    ImGui::SetTooltip("Close the prefab to go back this far");
+                }
                 if (moved && i + 1 == applied) { ImGui::SetScrollHereY(); }
 
                 if (undone) { ImGui::PopStyleColor(); }

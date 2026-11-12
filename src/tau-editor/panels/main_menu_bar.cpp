@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau-editor/scene_io.h"
 #include "tau/engine.h"
 #include "tau/window.h"
@@ -79,6 +80,12 @@ namespace tau::editor::panels
         void save_all(world_t& world, editor_context_t& ctx)
         {
             history::save_assets();
+
+            if (prefab_stage::is_open())
+            {
+                prefab_stage::save(world);
+                return;
+            }
             if (!ctx.current_scene_path.empty()) { scene_io::save(world, ctx, ctx.current_scene_path); }
             else if (history::is_dirty(history::OPEN_SCENE)) { show_save_dialog(ctx); }
         }
@@ -178,6 +185,8 @@ namespace tau::editor::panels
     {
         ctx.unsaved_action_project = std::move(project);
 
+        if (action != unsaved_action_e::NONE) { prefab_stage::close(world, ctx); }
+
         if (has_unsaved(action)) { ctx.unsaved_action = action; }
         else
         {
@@ -214,7 +223,16 @@ namespace tau::editor::panels
                 {
                     save_all(world, ctx);
                 }
-                if (ImGui::MenuItem("Save Scene As...", nullptr, false, editing)) { show_save_dialog(ctx); }
+                if (ImGui::MenuItem("Save Scene As...", nullptr, false, editing && !prefab_stage::is_open()))
+                {
+                    show_save_dialog(ctx);
+                }
+                if (prefab_stage::is_open() &&
+                    ImGui::MenuItem("Close Prefab", keymap::label(keymap::action_e::CLOSE_PREFAB).c_str(), false,
+                                    editing))
+                {
+                    prefab_stage::close(world, ctx);
+                }
 
                 ImGui::Separator();
 

@@ -5,6 +5,7 @@
 #include "tau-editor/keymap.h"
 #include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/prefab_edit.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
 #include "tau/assets/prefab.h"
 #include "tau/components/prefab.h"
@@ -45,6 +46,7 @@ namespace tau::editor::panels
             REMOVE,
             DUPLICATE,
             RENAME,
+            OPEN_PREFAB,
         };
 
         struct action_t
@@ -147,6 +149,8 @@ namespace tau::editor::panels
             {
                 if (!world.registry.all_of<transform_t>(entity)) { add(entity); }
             }
+
+            std::erase(roots, prefab_stage::root(world));
             return roots;
         }
 
@@ -158,6 +162,8 @@ namespace tau::editor::panels
 
         void create_entity(world_t& world, editor_context_t& ctx, ecs::entity_t parent)
         {
+            if (parent == ecs::NULL_ENTITY) { parent = prefab_stage::root(world); }
+
             const u64_t guid = guid::generate();
             const history::target_t target = history::entity_target(guid);
             history::begin(world, "Create Entity", {&target, 1});
@@ -276,12 +282,14 @@ namespace tau::editor::panels
                               const ecs::entity_t root = prefab_edit::instance_root(world, e);
                               return !world.registry.all_of<transform_t>(e) || (root != ecs::NULL_ENTITY && root != e);
                           });
+            std::erase(moved, prefab_stage::root(world));
             return moved;
         }
 
         bool can_move_under(const world_t& world, const std::vector<ecs::entity_t>& moved, ecs::entity_t parent)
         {
             if (moved.empty()) { return false; }
+            if (parent == ecs::NULL_ENTITY && prefab_stage::is_open()) { return false; }
             return std::none_of(moved.begin(), moved.end(), [&](ecs::entity_t m)
                                 { return parent != ecs::NULL_ENTITY && is_within(world, parent, m); });
         }
@@ -338,6 +346,8 @@ namespace tau::editor::panels
 
         void accept_prefab(ecs::entity_t parent)
         {
+            if (prefab_stage::is_open()) { return; }
+
             const ImGuiPayload* peek = ImGui::GetDragDropPayload();
             if (!peek || !peek->IsDataType(ASSET_PAYLOAD) ||
                 !assets::path_is<prefab_t>(static_cast<const char*>(peek->Data)))
@@ -473,6 +483,14 @@ namespace tau::editor::panels
                     {
                         g.action = {action_kind_e::REMOVE, entity};
                     }
+                    if (prefab_edit::instance_root(world, entity) != ecs::NULL_ENTITY)
+                    {
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Open Prefab", nullptr, false, ctx.cur_mode == editor_mode_e::EDIT))
+                        {
+                            g.action = {action_kind_e::OPEN_PREFAB, entity};
+                        }
+                    }
                     ImGui::EndPopup();
                 }
             }
@@ -530,7 +548,7 @@ namespace tau::editor::panels
                 {
                     drop_t drop;
                     drop.moved = dragged_entities(world, ctx, *static_cast<const u64_t*>(payload->Data));
-                    if (!drop.moved.empty())
+                    if (can_move_under(world, drop.moved, ecs::NULL_ENTITY))
                     {
                         const ImVec2 min = ImGui::GetItemRectMin();
                         ImGui::GetWindowDrawList()->AddLine(min, ImVec2(ImGui::GetItemRectMax().x, min.y),
@@ -562,6 +580,14 @@ namespace tau::editor::panels
             case action_kind_e::RENAME:
                 if (world.registry.valid(action.entity)) { start_rename(world, action.entity); }
                 break;
+            case action_kind_e::OPEN_PREFAB:
+            {
+                const ecs::entity_t root = prefab_edit::instance_root(world, action.entity);
+                if (root == ecs::NULL_ENTITY) { break; }
+                const u64_t source = world.registry.get<prefab_part_t>(action.entity).source;
+                prefab_stage::open(world, ctx, prefab_edit::prefab_path(world, root), source);
+                break;
+            }
             }
         }
     } // namespace

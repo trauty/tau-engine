@@ -6,6 +6,7 @@
 #include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_edit.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
 #include "tau/assets/material.h"
 #include "tau/assets/shader.h"
@@ -945,6 +946,7 @@ namespace tau::editor::panels
         enum class prefab_action_e : u8_t
         {
             NONE,
+            OPEN,
             REVERT,
             APPLY,
             UNPACK,
@@ -954,11 +956,12 @@ namespace tau::editor::panels
         {
             prefab_action_e action = prefab_action_e::NONE;
             u64_t root = 0;
+            u64_t source = 0;
         };
 
         pending_prefab_t pending_prefab;
 
-        void draw_prefab_header(tau::world_t& world, editor_context_t& ctx, ecs::entity_t root)
+        void draw_prefab_header(tau::world_t& world, editor_context_t& ctx, ecs::entity_t root, u64_t source)
         {
             const std::string path = prefab_edit::prefab_path(world, root);
             const prefab_instance_t& instance = world.registry.get<prefab_instance_t>(root);
@@ -977,6 +980,9 @@ namespace tau::editor::panels
                 ctx.inspected_asset = path;
                 ctx.selection.clear();
             }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open")) { pending_prefab = {prefab_action_e::OPEN, root_guid, source}; }
+            if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Edit the prefab on its own, its instances follow"); }
             ImGui::SameLine();
             if (ImGui::SmallButton("Revert")) { pending_prefab = {prefab_action_e::REVERT, root_guid}; }
             if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Back to the prefab, the root keeps its placement"); }
@@ -1004,6 +1010,9 @@ namespace tau::editor::panels
             switch (pending.action)
             {
             case prefab_action_e::NONE: break;
+            case prefab_action_e::OPEN:
+                prefab_stage::open(world, ctx, prefab_edit::prefab_path(world, root), pending.source);
+                break;
             case prefab_action_e::REVERT: prefab_edit::revert(world, ctx, root); break;
             case prefab_action_e::APPLY: prefab_edit::apply(world, ctx, root); break;
             case prefab_action_e::UNPACK: prefab_edit::unpack(world, ctx, root); break;
@@ -1029,7 +1038,8 @@ namespace tau::editor::panels
                 if (prefab_root != ecs::NULL_ENTITY)
                 {
                     overrides = prefab_edit::overrides_of(world, selected_entity);
-                    draw_prefab_header(world, ctx, prefab_root);
+                    draw_prefab_header(world, ctx, prefab_root,
+                                       world.registry.get<prefab_part_t>(selected_entity).source);
                 }
 
                 for (auto [id, type] : tau::reflection::resolve(*world.reflection_ctx))

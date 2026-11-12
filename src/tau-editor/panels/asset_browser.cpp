@@ -8,6 +8,7 @@
 #include "tau-editor/panels/hierarchy.h"
 #include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_edit.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
 #include "tau/assets/texture.h"
 #include "tau/engine.h"
@@ -459,7 +460,12 @@ namespace tau::editor::panels
         }
 
         bool unsaved(const item_t& item)
-        { return !item.is_dir && item.type && history::is_dirty(history::asset_doc(vfs_of(g.root, item.rel))); }
+        {
+            if (item.is_dir || !item.type) { return false; }
+            const std::string vfs = vfs_of(g.root, item.rel);
+            return history::is_dirty(history::asset_doc(vfs)) ||
+                   (prefab_stage::is_dirty() && assets::find(vfs) == prefab_stage::prefab().handle);
+        }
 
         void item_context_menu(const editor_context_t& ctx, const item_t& item)
         {
@@ -550,6 +556,10 @@ namespace tau::editor::panels
                 {
                     ctx.unsaved_action_scene = asset_files::source_path(item.rel).string();
                     request_action(world, ctx, unsaved_action_e::LOAD_SCENE);
+                }
+                else if (item.type && item.type->key == "prefab")
+                {
+                    prefab_stage::open(world, ctx, vfs_of(g.root, item.rel));
                 }
             }
 
@@ -650,6 +660,13 @@ namespace tau::editor::panels
                 break;
             }
             case action_kind_e::REMOVE:
+                for (const std::string& rel : g.selection)
+                {
+                    if (prefab_stage::is_open() && assets::find(vfs_of(g.root, rel)) == prefab_stage::prefab().handle)
+                    {
+                        prefab_stage::close(world, ctx);
+                    }
+                }
                 asset_files::remove(world, g.selection);
                 g.selection.clear();
                 break;

@@ -73,6 +73,9 @@ namespace tau::editor::history
         std::size_t cursor = 0;
         u64_t next_serial = 1;
 
+        doc_t g_entity_doc = OPEN_SCENE;
+        std::optional<std::size_t> g_floor;
+
         std::optional<step_t> open;
         bool open_in_place = false;
         std::vector<pending_t> pending;
@@ -131,6 +134,7 @@ namespace tau::editor::history
             switch (target.doc.kind)
             {
             case doc_kind_e::SCENE:
+            case doc_kind_e::STAGE:
             {
                 const ecs::entity_t entity = guid_system::find(world.registry, target.key);
                 if (entity == ecs::NULL_ENTITY) { return {}; }
@@ -160,6 +164,7 @@ namespace tau::editor::history
                 switch (c.target.doc.kind)
                 {
                 case doc_kind_e::SCENE:
+                case doc_kind_e::STAGE:
                     if (state.empty()) { states.push_back({c.target.key, nullptr}); }
                     else
                     {
@@ -219,7 +224,11 @@ namespace tau::editor::history
 
             steps.resize(cursor);
             steps.push_back(std::move(step));
-            if (steps.size() > MAX_STEPS) { steps.erase(steps.begin()); }
+            if (steps.size() > MAX_STEPS)
+            {
+                steps.erase(steps.begin());
+                if (g_floor && *g_floor > 0) { --*g_floor; }
+            }
             cursor = steps.size();
         }
 
@@ -241,7 +250,27 @@ namespace tau::editor::history
 
     } // namespace
 
-    target_t entity_target(u64_t guid) { return {OPEN_SCENE, guid}; }
+    target_t entity_target(u64_t guid) { return {g_entity_doc, guid}; }
+
+    void set_entity_doc(doc_t doc) { g_entity_doc = doc; }
+    doc_t entity_doc() { return g_entity_doc; }
+
+    void set_floor(bool enabled)
+    {
+        if (enabled) { g_floor = cursor; }
+        else
+        {
+            g_floor.reset();
+        }
+    }
+
+    std::size_t floor() { return g_floor.value_or(0); }
+
+    u64_t doc_state(doc_t doc)
+    {
+        const doc_entry_t* entry = find_doc(doc);
+        return entry ? entry->current : 0;
+    }
 
     void reg_editable(u64_t type_id, capture_fn_t capture, apply_fn_t apply, write_fn_t write)
     { editables[type_id] = {capture, apply, write}; }
@@ -261,6 +290,8 @@ namespace tau::editor::history
     {
         steps.clear();
         cursor = 0;
+        g_entity_doc = OPEN_SCENE;
+        g_floor.reset();
         for (doc_entry_t& entry : docs) { let_go(entry); }
         docs.clear();
         open.reset();
@@ -382,7 +413,7 @@ namespace tau::editor::history
         }
     } // namespace
 
-    bool can_undo() { return cursor > 0; }
+    bool can_undo() { return cursor > floor(); }
     bool can_redo() { return cursor < steps.size(); }
     std::string_view undo_label()
     { return can_undo() ? std::string_view(steps[cursor - 1].label) : std::string_view{}; }
@@ -498,13 +529,16 @@ namespace tau::editor::history
     void drop(doc_t doc)
     {
         std::size_t removed_before_cursor = 0;
+        std::size_t removed_before_floor = 0;
         for (std::size_t i = 0; i < steps.size(); i++)
         {
             std::erase_if(steps[i].changes, [doc](const change_t& c) { return c.target.doc == doc; });
             if (steps[i].changes.empty() && i < cursor) { removed_before_cursor++; }
+            if (steps[i].changes.empty() && g_floor && i < *g_floor) { removed_before_floor++; }
         }
         std::erase_if(steps, [](const step_t& s) { return s.changes.empty(); });
         cursor -= removed_before_cursor;
+        if (g_floor) { *g_floor -= removed_before_floor; }
 
         if (open)
         {

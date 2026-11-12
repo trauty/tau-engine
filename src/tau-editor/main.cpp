@@ -19,6 +19,7 @@
 #include "tau-editor/panels/viewport.h"
 #include "tau-editor/picking.h"
 #include "tau-editor/prefab_edit.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau-editor/project_manager.h"
 #include "tau-editor/scene_io.h"
 #include "tau-editor/settings.h"
@@ -326,9 +327,14 @@ static void update_window_title(const tau::editor_context_t& ctx)
 {
     static std::string current;
 
-    const std::string scene = ctx.current_scene_path.empty()
-                                  ? std::string("Untitled")
-                                  : std::filesystem::path(ctx.current_scene_path).filename().string();
+    std::string scene = ctx.current_scene_path.empty()
+                            ? std::string("Untitled")
+                            : std::filesystem::path(ctx.current_scene_path).filename().string();
+    if (tau::editor::prefab_stage::is_open())
+    {
+        scene = std::filesystem::path(tau::assets::path_of(tau::editor::prefab_stage::prefab())).filename().string() +
+                " in " + scene;
+    }
     const std::string title = scene + (tau::editor::history::any_dirty() ? "*" : "") + " - tau editor";
     if (title == current) { return; }
 
@@ -814,6 +820,7 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
     ctx.reload_pending = false;
     g_replay_after_reload = false;
 
+    tau::editor::prefab_stage::reset();
     tau::editor::history::clear();
     ctx.selection.clear();
     ctx.current_scene_path.clear();
@@ -923,6 +930,7 @@ int main(i32 argc, char** argv)
     tau::editor::material_edit::init(editor_ctx);
     tau::editor::asset_files::init(editor_ctx);
     tau::editor::prefab_edit::init(editor_ctx);
+    tau::editor::prefab_stage::init(editor_ctx);
     // after the transform update, before the overlay
     tau::renderer::register_renderer_feature("EditorColliders"_h, tau::renderer::FEATURE_ORDER_OVERLAY - 1,
                                              [](tau::renderer::rendergraph_t&, tau::ecs::registry_t& reg)

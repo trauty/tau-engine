@@ -1,9 +1,13 @@
 #pragma once
 
+#include "tau/asset.h"
 #include "tau/ecs_fwd.h"
 #include "tau/math.h"
 
+#include <filesystem>
+#include <json/json.hpp>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -11,6 +15,7 @@ namespace tau
 {
     struct world_t;
     struct editor_context_t;
+    struct prefab_t;
 } // namespace tau
 
 // editor prefab ops, each one undo step
@@ -30,6 +35,11 @@ namespace tau::editor::prefab_edit
     void unpack(world_t& world, editor_context_t& ctx, ecs::entity_t root);
 
     bool reload(world_t& world, const std::string& vfs_path);
+
+    nlohmann::json data_of(world_t& world, ecs::entity_t root, const nlohmann::json& prefab_guid);
+    void replace_data(world_t& world, editor_context_t& ctx, asset_t<prefab_t> prefab, nlohmann::json new_data,
+                      std::string_view label);
+    bool write_data(asset_t<prefab_t> prefab, const nlohmann::json& data, std::filesystem::path& out_source);
 
     // per component: fields differing from the prefab, "*" if the prefab lacks it
     using overrides_t = std::unordered_map<std::string, std::unordered_set<std::string>>;

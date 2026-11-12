@@ -23,6 +23,7 @@ namespace tau::editor::keymap
         MOVE_TOOL,
         ROTATE_TOOL,
         SCALE_TOOL,
+        CLOSE_PREFAB,
         COUNT,
     };
 

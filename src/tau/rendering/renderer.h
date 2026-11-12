@@ -104,6 +104,9 @@ namespace tau::renderer
 
     TAU_ENGINE_API void set_view_post_processing(u32_t view_name_hash, bool enabled);
 
+    TAU_ENGINE_API void set_fallback_light(bool enabled, const vec3_t& direction = {0.0f, -1.0f, 0.0f},
+                                           const vec3_t& color = {1.0f, 1.0f, 1.0f}, f32 intensity = 1.0f);
+
     TAU_ENGINE_API void submit_shadow_cascade_view(u32_t name_hash, const mat4_t& view, const mat4_t& projection,
                                                    u32_t atlas_target_hash, const image_desc_t& atlas_desc,
                                                    VkRect2D atlas_rect, f32 split_far, f32 normal_bias_texels = 1.5f,

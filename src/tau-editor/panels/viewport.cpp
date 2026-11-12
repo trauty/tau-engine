@@ -5,6 +5,7 @@
 #include "tau-editor/history.h"
 #include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/prefab_edit.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau-editor/viewport_input.h"
 #include "tau/asset.h"
 #include "tau/assets/material.h"
@@ -18,6 +19,7 @@
 #include "tau/input.h"
 #include "tau/rendering/renderer.h"
 #include "tau/systems/guid.h"
+#include "tau/systems/transform.h"
 
 #include <filesystem>
 #include <string>
@@ -61,6 +63,11 @@ namespace tau::editor::panels
             renderer.mesh = assets::load<mesh_t>(path);
             renderer.material = assets::load<material_t>(DEFAULT_MATERIAL);
 
+            if (const ecs::entity_t root = prefab_stage::root(world); root != ecs::NULL_ENTITY)
+            {
+                transform_system::set_parent_keep_world(world.registry, entity, root, ecs::NULL_ENTITY);
+            }
+
             ctx.selection.set(guid);
             history::end(world);
         }
@@ -73,6 +80,10 @@ namespace tau::editor::panels
         {
             ctx.is_viewport_hovered = ImGui::IsWindowHovered();
             ctx.is_viewport_focused = ImGui::IsWindowFocused();
+
+            prefab_stage::draw_bar(world, ctx);
+
+            if (ImGui::GetMousePos().y < ImGui::GetCursorScreenPos().y) { ctx.is_viewport_hovered = false; }
 
             ImVec2 viewport_size = ImGui::GetContentRegionAvail();
             ImVec2 viewport_pos = ImGui::GetCursorScreenPos();
@@ -100,7 +111,7 @@ namespace tau::editor::panels
                     const char* path =
                         peek && peek->IsDataType(ASSET_PAYLOAD) ? static_cast<const char*>(peek->Data) : "";
                     const bool mesh = assets::path_is<mesh_t>(path);
-                    const bool prefab = assets::path_is<prefab_t>(path);
+                    const bool prefab = assets::path_is<prefab_t>(path) && !prefab_stage::is_open();
                     if (mesh || prefab)
                     {
                         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))

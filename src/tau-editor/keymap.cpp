@@ -25,6 +25,7 @@ namespace tau::editor::keymap
              {"move_tool", "Move Tool", ImGuiKey_W},
              {"rotate_tool", "Rotate Tool", ImGuiKey_E},
              {"scale_tool", "Scale Tool", ImGuiKey_R},
+             {"close_prefab", "Close Prefab", 0},
              }
         };
 

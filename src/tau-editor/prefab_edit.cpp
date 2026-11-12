@@ -4,6 +4,7 @@
 #include "tau-editor/asset_files.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
 #include "tau/assets/prefab.h"
 #include "tau/components/prefab.h"
@@ -164,6 +165,42 @@ namespace tau::editor::prefab_edit
             return roots;
         }
 
+        // instances other than skip follow new_data, their guids go to the step
+        std::vector<resync_t> resync_instances(world_t& world, asset_handle_t prefab, ecs::entity_t skip,
+                                               const nlohmann::json& old_data, const nlohmann::json& new_data,
+                                               std::vector<u64_t>& guids)
+        {
+            std::vector<resync_t> out;
+            for (const ecs::entity_t other : instances_of(world, prefab))
+            {
+                if (other == skip) { continue; }
+
+                out.push_back(resync(world, other, old_data, new_data));
+                guids.insert(guids.end(), out.back().old_parts.begin(), out.back().old_parts.end());
+                for (const nlohmann::json& state : out.back().states) { guids.push_back(guid_of(state["id"])); }
+            }
+            return out;
+        }
+
+        void zero_root_position(nlohmann::json& data)
+        {
+            nlohmann::json& entities = data["entities"];
+            if (entities.empty()) { return; }
+
+            nlohmann::json& transform = entities[0]["components"][TRANSFORM_KEY];
+            if (transform.is_object() && transform.contains("local_position"))
+            {
+                transform["local_position"]["v"] = {0.0, 0.0, 0.0};
+            }
+        }
+
+        bool blocked_in_stage(const char* what)
+        {
+            if (!prefab_stage::is_open()) { return false; }
+            TAU_LOG_WARN("PREFAB", "{} is not possible while a prefab is open, prefabs cannot hold prefabs yet", what);
+            return true;
+        }
+
         std::filesystem::path source_of_vfs(const std::string& vfs)
         {
             constexpr std::string_view game = "game://assets/";
@@ -191,25 +228,78 @@ namespace tau::editor::prefab_edit
         bool write(asset_handle_t handle, std::filesystem::path& out_source)
         {
             const prefab_t* prefab = assets::get(asset_t<prefab_t>{handle});
-            const std::string vfs = assets::path_of(handle);
-            out_source = source_of_vfs(vfs);
-            if (!prefab || out_source.empty())
+            if (!prefab)
             {
-                TAU_LOG_ERROR("PREFAB", "Cannot save {}", vfs);
+                TAU_LOG_ERROR("PREFAB", "Cannot save {}, it is not loaded", assets::path_of(handle));
                 return false;
             }
-
-            std::ofstream file(out_source);
-            if (!file.is_open())
-            {
-                TAU_LOG_ERROR("PREFAB", "Cannot write {}", out_source.string());
-                return false;
-            }
-            file << prefab->data.dump(4) << '\n';
-            TAU_LOG_INFO("PREFAB", "Prefab saved to {}", out_source.string());
-            return true;
+            return write_data(asset_t<prefab_t>{handle}, prefab->data, out_source);
         }
     } // namespace
+
+    bool write_data(asset_t<prefab_t> prefab, const nlohmann::json& data, std::filesystem::path& out_source)
+    {
+        const std::string vfs = assets::path_of(prefab);
+        out_source = source_of_vfs(vfs);
+        if (out_source.empty())
+        {
+            TAU_LOG_ERROR("PREFAB", "Cannot save {}", vfs);
+            return false;
+        }
+
+        std::ofstream file(out_source);
+        if (!file.is_open())
+        {
+            TAU_LOG_ERROR("PREFAB", "Cannot write {}", out_source.string());
+            return false;
+        }
+        file << data.dump(4) << '\n';
+        TAU_LOG_INFO("PREFAB", "Prefab saved to {}", out_source.string());
+        return true;
+    }
+
+    nlohmann::json data_of(world_t& world, ecs::entity_t root, const nlohmann::json& prefab_guid)
+    {
+        std::vector<ecs::entity_t> entities;
+        append_subtree(world, root, entities);
+        for (const ecs::entity_t entity : world.registry.view<ecs::entity_t>())
+        {
+            if (entity != root && !world.registry.all_of<transform_t>(entity)) { entities.push_back(entity); }
+        }
+
+        // guids are the prefab's own already
+        std::unordered_map<u64_t, u64_t> same;
+        for (const ecs::entity_t entity : entities)
+        {
+            const u64_t guid = guid_system::ensure(world.registry, entity);
+            same[guid] = guid;
+        }
+
+        return {
+            {"guid",     prefab_guid                              },
+            {"entities", to_prefab_entities(world, entities, same)},
+        };
+    }
+
+    void replace_data(world_t& world, editor_context_t& ctx, asset_t<prefab_t> handle, nlohmann::json new_data,
+                      std::string_view label)
+    {
+        prefab_t* prefab = assets::get(handle);
+        if (!prefab) { return; }
+
+        std::vector<u64_t> guids;
+        const std::vector<resync_t> others =
+            resync_instances(world, handle, ecs::NULL_ENTITY, prefab->data, new_data, guids);
+
+        std::vector<history::target_t> targets = entity_targets(guids);
+        targets.push_back(history::asset_target(get_type_id<prefab_t>(), handle));
+        history::begin(world, label, targets);
+
+        prefab->data = std::move(new_data);
+        for (const resync_t& other : others) { apply_states(world, other.states, other.old_parts); }
+
+        history::end(world);
+    }
 
     void init(editor_context_t& ctx)
     {
@@ -220,7 +310,7 @@ namespace tau::editor::prefab_edit
     std::string create(world_t& world, editor_context_t& ctx, ecs::entity_t root, const std::string& dir)
     {
         ecs::registry_t& reg = world.registry;
-        if (!reg.valid(root)) { return {}; }
+        if (!reg.valid(root) || blocked_in_stage("Making a prefab")) { return {}; }
 
         std::vector<ecs::entity_t> entities;
         append_subtree(world, root, entities);
@@ -235,10 +325,12 @@ namespace tau::editor::prefab_edit
         }
 
         const std::string name = name_of(world, root);
-        const nlohmann::json data = {
+        nlohmann::json data = {
             {"guid", guid::to_string(guid::generate())},
             {"entities", to_prefab_entities(world, entities, to_source)},
         };
+        // placement belongs to the instance, the prefab opens and spawns at the origin
+        zero_root_position(data);
         const std::string rel = asset_files::unique_path(dir, name, ".prefab");
 
         const u64_t file_entry = asset_files::reserve_entry();
@@ -266,6 +358,8 @@ namespace tau::editor::prefab_edit
     ecs::entity_t instantiate(world_t& world, editor_context_t& ctx, const std::string& prefab_path,
                               ecs::entity_t parent, const vec3_t* position)
     {
+        if (blocked_in_stage("Placing a prefab")) { return ecs::NULL_ENTITY; }
+
         const asset_t<prefab_t> handle = assets::load<prefab_t>(prefab_path);
         const prefab_t* prefab = assets::get(handle);
         if (!prefab)
@@ -379,15 +473,7 @@ namespace tau::editor::prefab_edit
             new_data["entities"][0]["components"][TRANSFORM_KEY] = old_root[TRANSFORM_KEY];
         }
 
-        std::vector<resync_t> others;
-        for (const ecs::entity_t other : instances_of(world, handle))
-        {
-            if (other == root) { continue; }
-
-            others.push_back(resync(world, other, old_data, new_data));
-            guids.insert(guids.end(), others.back().old_parts.begin(), others.back().old_parts.end());
-            for (const nlohmann::json& state : others.back().states) { guids.push_back(guid_of(state["id"])); }
-        }
+        const std::vector<resync_t> others = resync_instances(world, handle, root, old_data, new_data, guids);
 
         std::vector<history::target_t> targets = entity_targets(guids);
         targets.push_back(history::asset_target(get_type_id<prefab_t>(), handle));

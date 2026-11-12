@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "tau-editor/keymap.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau-editor/settings.h"
 #include "tau/ecs_fwd.h"
 #include "tau/rendering/renderer_types.h"
@@ -75,7 +76,13 @@ namespace tau::editor::panels
 
         if (ctx.cur_mode == editor_mode_e::EDIT)
         {
+            ImGui::BeginDisabled(prefab_stage::is_open());
             if (ImGui::Button("Play")) { ctx.cur_mode = editor_mode_e::PLAY; }
+            ImGui::EndDisabled();
+            if (prefab_stage::is_open() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip("Go back to the scene to play it");
+            }
         }
         else if (ctx.cur_mode == editor_mode_e::PLAY)
         {

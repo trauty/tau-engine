@@ -1643,6 +1643,22 @@ namespace tau::renderer
         if (ctx.instance) { vkDestroyInstance(ctx.instance, nullptr); }
     }
 
+    namespace
+    {
+        struct fallback_light_t
+        {
+            bool enabled = false;
+            vec3_t direction = {0.0f, -1.0f, 0.0f};
+            vec3_t color = {1.0f, 1.0f, 1.0f};
+            f32 intensity = 1.0f;
+        };
+
+        fallback_light_t fallback_light;
+    } // namespace
+
+    void set_fallback_light(bool enabled, const vec3_t& direction, const vec3_t& color, f32 intensity)
+    { fallback_light = {enabled, direction, color, intensity}; }
+
     // walks the light components into the frame's mapped gpu buffers and returns the globals block describing them
     // the cascade caster goes first so it lands at index 0, the only directional light the shadow path looks at
     static global_data_t upload_lights(ecs::registry_t& reg, per_frame_t& frame_data,
@@ -1678,6 +1694,14 @@ namespace tau::renderer
             if (entity == cascade_light) { continue; }
 
             upload_dir_light(light, transform);
+        }
+
+        if (dir_count == 0 && fallback_light.enabled)
+        {
+            gpu_directional_light_t& gpu_light = frame_data.mapped_dir_lights[dir_count];
+            set_vec4(gpu_light.direction_intensity, fallback_light.direction, fallback_light.intensity);
+            set_vec4(gpu_light.color, fallback_light.color, 0.0f);
+            dir_count++;
         }
 
         u32_t point_count = 0;

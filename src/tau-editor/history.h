@@ -24,6 +24,8 @@ namespace tau::editor::history
         ASSET,
         // id 0, keys: asset_files entries (stable through moves)
         FILES,
+        // id: the open prefab's guid, keys: entity guids
+        STAGE,
     };
 
     struct doc_t
@@ -46,6 +48,13 @@ namespace tau::editor::history
     };
 
     target_t entity_target(u64_t guid);
+    void set_entity_doc(doc_t doc);
+    doc_t entity_doc();
+
+    void set_floor(bool enabled);
+    std::size_t floor();
+
+    u64_t doc_state(doc_t doc);
 
     using capture_fn_t = std::vector<u8_t> (*)(asset_handle_t handle);
     using apply_fn_t = bool (*)(asset_handle_t handle, std::span<const u8_t> state);

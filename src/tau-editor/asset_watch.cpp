@@ -3,6 +3,7 @@
 #include "tau-editor/asset_cook.h"
 #include "tau-editor/history.h"
 #include "tau-editor/prefab_edit.h"
+#include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
 #include "tau/assets/prefab.h"
 #include "tau/engine.h"
@@ -265,6 +266,8 @@ namespace tau::editor::asset_watch
                                  vfs_name);
                     continue;
                 }
+
+                if (prefab_stage::on_disk_change(world, vfs_name)) { continue; }
 
                 const bool is_prefab = tau::assets::path_is<tau::prefab_t>(vfs_name);
                 if (is_prefab ? prefab_edit::reload(world, vfs_name) : tau::assets::reload(vfs_name))
