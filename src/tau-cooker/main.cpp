@@ -8,6 +8,7 @@
 #include "tau/asset_sources.h"
 #include "tau/asset_types.h"
 #include "tau/log.h"
+#include "tau/vfs.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -212,7 +213,7 @@ int main(i32 argc, char** argv)
 
     std::filesystem::create_directories(output_dir + "/shaders");
 
-    std::string vfs_prefix = name_space + "://assets/";
+    std::string vfs_prefix = tau::vfs::asset_prefix(name_space);
     std::vector<std::pair<std::string, tau::asset_guid_t>> guid_map;
     bool any_failed = false;
     std::unordered_set<std::string> expected_outputs;
@@ -289,12 +290,11 @@ int main(i32 argc, char** argv)
     // "ns://assets/rel" to the source: this run's own namespace in the input dirs, others in the include dirs
     const auto resolve_source = [&](const std::string& vfs_path) -> std::filesystem::path
     {
-        constexpr std::string_view marker = "://assets/";
-        const std::size_t at = vfs_path.find(marker);
-        if (at == std::string::npos) { return {}; }
+        const std::optional<tau::vfs::asset_path_parts_t> parts = tau::vfs::split_asset_path(vfs_path);
+        if (!parts) { return {}; }
 
-        const std::string rel = vfs_path.substr(at + marker.size());
-        const std::vector<std::string>& dirs = vfs_path.substr(0, at) == name_space ? input_dirs : include_dirs;
+        const std::string rel(parts->rel);
+        const std::vector<std::string>& dirs = parts->ns == name_space ? input_dirs : include_dirs;
         for (const std::string& dir : dirs)
         {
             const std::filesystem::path candidate = std::filesystem::path(dir) / rel;
@@ -331,7 +331,7 @@ int main(i32 argc, char** argv)
                        // a missing file hashes to 0 and its appearance forces exactly one more cook
                        return {tau::cooker::texture::cook_texture(in, out),
                                true,
-                               {std::filesystem::path(in), std::filesystem::path(in + ".meta")}};
+                               {std::filesystem::path(in), std::filesystem::path(tau::asset_sources::meta_path(in))}};
                    }}},
     };
 

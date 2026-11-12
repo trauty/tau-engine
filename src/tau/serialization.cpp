@@ -11,6 +11,7 @@
 #include "tau/ecs_fwd.h"
 #include "tau/engine.h"
 #include "tau/guid.h"
+#include "tau/guid_json.h"
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/math.h"
@@ -161,11 +162,6 @@ namespace tau::serialization
             }
         };
 
-        nlohmann::json guid_json(u64_t guid)
-        { return guid == 0 ? nlohmann::json(nullptr) : nlohmann::json(tau::guid::to_string(guid)); }
-
-        u64_t guid_from_json(const nlohmann::json& value)
-        { return value.is_string() ? tau::guid::from_string(value.get<std::string>()) : 0; }
 
         nlohmann::json encode_fields(tau::world_t& world, tau::reflection::type_t type,
                                      tau::reflection::any_t& instance, const entity_refs_t& refs);
@@ -204,7 +200,7 @@ namespace tau::serialization
             // before the enum check, entities are an enum
             if (type == tau::reflection::resolve<tau::ecs::entity_t>(ctx))
             {
-                return tagged(scene_value_type_e::ENTITY, guid_json(refs.encode(value.cast<tau::ecs::entity_t>())));
+                return tagged(scene_value_type_e::ENTITY, guid::to_json(refs.encode(value.cast<tau::ecs::entity_t>())));
             }
 
             if (type.is_enum())
@@ -351,7 +347,7 @@ namespace tau::serialization
                 if (v.is_number_integer() && v.get<i64_t>() >= 0) { prop.u = v.get<u32_t>() + 1; }
                 else
                 {
-                    prop.ref = guid_from_json(v);
+                    prop.ref = guid::from_json(v);
                 }
                 return true;
             case scene_value_type_e::STRUCT:
@@ -470,12 +466,12 @@ namespace tau::serialization
             }
 
             nlohmann::json entity_json;
-            entity_json["id"] = guid_json(tau::guid_system::of(world.registry, entity));
+            entity_json["id"] = guid::to_json(tau::guid_system::of(world.registry, entity));
 
             const transform_t* transform = world.registry.try_get<transform_t>(entity);
             if (transform && transform->get_parent() != tau::ecs::NULL_ENTITY)
             {
-                entity_json["parent"] = guid_json(tau::guid_system::of(world.registry, transform->get_parent()));
+                entity_json["parent"] = guid::to_json(tau::guid_system::of(world.registry, transform->get_parent()));
             }
 
             entity_json["components"] = nlohmann::json::object();
@@ -522,11 +518,11 @@ namespace tau::serialization
         scene_entity_t parse_entity(const nlohmann::json& entity_json)
         {
             scene_entity_t out_entity;
-            out_entity.id = guid_from_json(entity_json.value("id", nlohmann::json{}));
+            out_entity.id = guid::from_json(entity_json.value("id", nlohmann::json{}));
 
             const nlohmann::json parent = entity_json.value("parent", nlohmann::json{});
             out_entity.parent = (parent.is_number_integer() && parent.get<i64_t>() >= 0) ? parent.get<u64_t>() + 1
-                                                                                         : guid_from_json(parent);
+                                                                                         : guid::from_json(parent);
 
             const nlohmann::json components = entity_json.value("components", nlohmann::json::object());
             for (const auto& [type_key, props_json] : components.items())
@@ -548,8 +544,8 @@ namespace tau::serialization
 
             if (const auto part = entity_json.find("prefab_part"); part != entity_json.end() && part->is_object())
             {
-                out_entity.prefab_instance = guid_from_json(part->value("instance", nlohmann::json{}));
-                out_entity.prefab_source = guid_from_json(part->value("source", nlohmann::json{}));
+                out_entity.prefab_instance = guid::from_json(part->value("instance", nlohmann::json{}));
+                out_entity.prefab_source = guid::from_json(part->value("source", nlohmann::json{}));
             }
             if (const auto ref = entity_json.find("prefab"); ref != entity_json.end() && ref->is_object())
             {
@@ -558,7 +554,7 @@ namespace tau::serialization
                 out_entity.prefab_path = ref->value("p", std::string{});
                 for (const nlohmann::json& source : entity_json.value("removed", nlohmann::json::array()))
                 {
-                    out_entity.prefab_removed.push_back(guid_from_json(source));
+                    out_entity.prefab_removed.push_back(guid::from_json(source));
                 }
                 if (entity_json.contains("unresolved"))
                 {
@@ -575,12 +571,12 @@ namespace tau::serialization
         const entity_refs_t refs{.reg = &world.registry};
 
         nlohmann::json entity_json;
-        entity_json["id"] = guid_json(tau::guid_system::ensure(world.registry, entity));
+        entity_json["id"] = guid::to_json(tau::guid_system::ensure(world.registry, entity));
 
         if (const transform_t* transform = world.registry.try_get<transform_t>(entity))
         {
-            entity_json["parent"] = guid_json(refs.encode(transform->get_parent()));
-            entity_json["next"] = guid_json(refs.encode(transform->get_next_sibling()));
+            entity_json["parent"] = guid::to_json(refs.encode(transform->get_parent()));
+            entity_json["next"] = guid::to_json(refs.encode(transform->get_next_sibling()));
         }
 
         entity_json["components"] = encode_components(world, entity, refs);
@@ -589,8 +585,8 @@ namespace tau::serialization
         if (const prefab_part_t* part = world.registry.try_get<prefab_part_t>(entity))
         {
             entity_json["prefab_part"] = {
-                {"instance", guid_json(part->instance)},
-                {"source",   guid_json(part->source)  }
+                {"instance", guid::to_json(part->instance)},
+                {"source",   guid::to_json(part->source)  }
             };
         }
         if (const prefab_instance_t* instance = world.registry.try_get<prefab_instance_t>(entity))
@@ -606,7 +602,7 @@ namespace tau::serialization
             }
 
             nlohmann::json removed = nlohmann::json::array();
-            for (const u64_t source : instance->removed) { removed.push_back(guid_json(source)); }
+            for (const u64_t source : instance->removed) { removed.push_back(guid::to_json(source)); }
             entity_json["removed"] = std::move(removed);
         }
         return entity_json;
@@ -994,9 +990,9 @@ namespace tau::serialization
             const transform_t* transform = reg.try_get<transform_t>(entity);
             if (!transform) { return; }
 
-            tau::ecs::entity_t parent = refs.decode(guid_from_json(s.state->value("parent", nlohmann::json{})));
+            tau::ecs::entity_t parent = refs.decode(guid::from_json(s.state->value("parent", nlohmann::json{})));
             if (parent != tau::ecs::NULL_ENTITY && !reg.all_of<transform_t>(parent)) { parent = tau::ecs::NULL_ENTITY; }
-            const tau::ecs::entity_t next = refs.decode(guid_from_json(s.state->value("next", nlohmann::json{})));
+            const tau::ecs::entity_t next = refs.decode(guid::from_json(s.state->value("next", nlohmann::json{})));
 
             if (transform->get_parent() == parent && transform->get_next_sibling() == next) { return; }
             tau::transform_system::set_parent(reg, entity, parent, next);
@@ -1018,7 +1014,7 @@ namespace tau::serialization
             bool progressed = false;
             for (auto it = unplaced.begin(); it != unplaced.end();)
             {
-                const u64_t next = guid_from_json((*it)->state->value("next", nlohmann::json{}));
+                const u64_t next = guid::from_json((*it)->state->value("next", nlohmann::json{}));
                 if (!stuck && next != 0 && unplaced_guids.contains(next))
                 {
                     ++it;
@@ -1054,8 +1050,8 @@ namespace tau::serialization
     {
         void remap_guid(nlohmann::json& value, const std::unordered_map<u64_t, u64_t>& new_guids)
         {
-            const auto it = new_guids.find(guid_from_json(value));
-            if (it != new_guids.end()) { value = guid_json(it->second); }
+            const auto it = new_guids.find(guid::from_json(value));
+            if (it != new_guids.end()) { value = guid::to_json(it->second); }
         }
 
     } // namespace
@@ -1098,7 +1094,7 @@ namespace tau::serialization
             // copied instance is new, part without its root is plain
             if (state.contains("prefab_part"))
             {
-                if (new_guids.contains(guid_from_json(state["prefab_part"].value("instance", nlohmann::json{}))))
+                if (new_guids.contains(guid::from_json(state["prefab_part"].value("instance", nlohmann::json{}))))
                 {
                     remap_guid(state["prefab_part"]["instance"], new_guids);
                 }
@@ -1108,7 +1104,7 @@ namespace tau::serialization
                 }
             }
 
-            const u64_t guid = guid_from_json(state["id"]);
+            const u64_t guid = guid::from_json(state["id"]);
             states.push_back(std::move(state));
             batch.push_back({guid, &states.back()});
         }

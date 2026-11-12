@@ -10,8 +10,10 @@
 #include "tau/guid.h"
 #include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/vfs.h"
 
 #include <fstream>
+#include <optional>
 #include <json/json.hpp>
 #include <unordered_map>
 
@@ -21,7 +23,6 @@ namespace tau::editor::asset_files
 {
     namespace
     {
-        constexpr std::string_view VFS_PREFIX = "game://assets/";
 
         editor_context_t* g_ctx = nullptr;
 
@@ -112,12 +113,12 @@ namespace tau::editor::asset_files
         void write_guid_map()
         {
             const fs::path map = fs::path(g_ctx->project_cooked_dir) / "guid_map.json";
-            asset_sources::write_guid_map(map.generic_string(), assets::locations(VFS_PREFIX), VFS_PREFIX);
+            asset_sources::write_guid_map(map.generic_string(), assets::locations(vfs::asset_prefix(vfs::GAME_NS)), vfs::asset_prefix(vfs::GAME_NS));
         }
 
         void forget_assets(const std::string& rel)
         {
-            const std::string key = std::string(VFS_PREFIX) + rel;
+            const std::string key = vfs_path(rel);
             for (const auto& [path, guid] : assets::locations(key))
             {
                 if (path == key || path.starts_with(key + "/")) { assets::remove_location(path); }
@@ -135,7 +136,7 @@ namespace tau::editor::asset_files
                 const std::string rel = fs::relative(file, source_root(), ec).generic_string();
                 if (ec) { return; }
 
-                const std::string key = std::string(VFS_PREFIX) + rel;
+                const std::string key = vfs_path(rel);
                 assets::set_location(key, asset_sources::find_or_create_guid(file.generic_string()));
                 asset_watch::ignore_own_write(file);
             };
@@ -169,7 +170,7 @@ namespace tau::editor::asset_files
                 }
             }
 
-            const std::string inspected_key = std::string(VFS_PREFIX);
+            const std::string inspected_key = vfs::asset_prefix(vfs::GAME_NS);
             if (g_ctx->inspected_asset.starts_with(inspected_key))
             {
                 const std::string rel = g_ctx->inspected_asset.substr(inspected_key.size());
@@ -205,7 +206,10 @@ namespace tau::editor::asset_files
             forget_assets(from);
 
             if (!move_path(src_from, src_to)) { return false; }
-            if (!is_dir) { move_path(src_from.string() + ".meta", src_to.string() + ".meta"); }
+            if (!is_dir)
+            {
+                move_path(asset_sources::meta_path(src_from.string()), asset_sources::meta_path(src_to.string()));
+            }
             move_path(cooked_from, cooked_to);
 
             entries[entry] = to;
@@ -286,7 +290,22 @@ namespace tau::editor::asset_files
     }
 
     fs::path source_path(const std::string& rel) { return source_root() / rel; }
-    std::string vfs_path(const std::string& rel) { return std::string(VFS_PREFIX) + rel; }
+    std::string vfs_path(const std::string& rel) { return vfs::asset_path(vfs::GAME_NS, rel); }
+
+    fs::path source_of(std::string_view vfs_path)
+    {
+        const std::optional<vfs::asset_path_parts_t> parts = vfs::split_asset_path(vfs_path);
+        if (!parts) { return {}; }
+        if (parts->ns == vfs::GAME_NS) { return source_path(std::string(parts->rel)); }
+        if (parts->ns == vfs::ENGINE_NS) { return asset_cook::engine_assets_dir() / parts->rel; }
+        return {};
+    }
+
+    std::string rel_of(std::string_view vfs_path)
+    {
+        const std::optional<vfs::asset_path_parts_t> parts = vfs::split_asset_path(vfs_path);
+        return parts && parts->ns == vfs::GAME_NS ? std::string(parts->rel) : std::string{};
+    }
 
     std::vector<u8_t> capture(u64_t entry)
     {
@@ -453,9 +472,10 @@ namespace tau::editor::asset_files
             }
             else if (type)
             {
-                std::ofstream(source_path(copy).string() + ".meta") << nlohmann::json{
-                    {"guid", guid::to_string(guid::generate())}
-                }.dump(2);
+                // import settings come along
+                nlohmann::json meta = asset_sources::read_meta(source_path(rel).string());
+                meta["guid"] = guid::to_string(guid::generate());
+                asset_sources::write_meta(source_path(copy).string(), meta);
             }
 
             if (const fs::path cooked = cooked_of(rel, false); !cooked.empty())

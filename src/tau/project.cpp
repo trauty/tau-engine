@@ -121,11 +121,11 @@ namespace tau
         void mount(const project_t& project, bool engine_assets)
         {
             const std::filesystem::path& cooked = project.cooked_assets_dir;
-            if (engine_assets) { vfs::mount("engine://assets/", (cooked / "engine").generic_string() + "/"); }
-            vfs::mount("game://assets/", (cooked / "game").generic_string() + "/");
+            if (engine_assets) { vfs::mount(vfs::asset_prefix(vfs::ENGINE_NS), (cooked / "engine").generic_string() + "/"); }
+            vfs::mount(vfs::asset_prefix(vfs::GAME_NS), (cooked / "game").generic_string() + "/");
 
             // stale game:// entries from another project
-            for (const auto& [path, guid] : assets::locations("game://")) { assets::remove_location(path); }
+            for (const auto& [path, guid] : assets::locations(vfs::asset_prefix(vfs::GAME_NS))) { assets::remove_location(path); }
             assets::read_guid_map((cooked / "guid_map.json").generic_string());
         }
 
@@ -135,7 +135,7 @@ namespace tau
 
             const asset_guid_t guid = assets::parse_guid(ref);
             const std::string by_guid = guid != 0 ? assets::path_of(asset_handle_t{guid}) : std::string{};
-            return !by_guid.empty() ? by_guid : "game://assets/" + std::string(ref);
+            return !by_guid.empty() ? by_guid : vfs::asset_path(vfs::GAME_NS, ref);
         }
     } // namespace project
 

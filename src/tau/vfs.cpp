@@ -44,14 +44,14 @@ namespace tau::vfs
             if (fs::exists(exe_dir / "assets" / "engine"))
             {
                 cooked_root_dir = (exe_dir / "assets").generic_string();
-                mount("engine://assets/", (exe_dir / "assets" / "engine").generic_string() + "/");
-                mount("game://assets/", (exe_dir / "assets" / "game").generic_string() + "/");
+                mount(asset_prefix(ENGINE_NS), (exe_dir / "assets" / "engine").generic_string() + "/");
+                mount(asset_prefix(GAME_NS), (exe_dir / "assets" / "game").generic_string() + "/");
             }
             else
             {
                 const fs::path engine_assets = exe_dir.parent_path() / "share" / "tau" / "engine-assets";
                 cooked_root_dir = engine_assets.generic_string();
-                mount("engine://assets/", (engine_assets / "engine").generic_string() + "/");
+                mount(asset_prefix(ENGINE_NS), (engine_assets / "engine").generic_string() + "/");
             }
         }
     }
@@ -71,6 +71,19 @@ namespace tau::vfs
 
         return {virtual_path.substr(0, proto + 3), virtual_path.substr(proto + 3)};
     }
+
+    std::optional<asset_path_parts_t> split_asset_path(std::string_view virtual_path)
+    {
+        constexpr std::string_view marker = "://assets/";
+        const std::size_t at = virtual_path.find(marker);
+        if (at == std::string_view::npos || at == 0) { return std::nullopt; }
+
+        return asset_path_parts_t{virtual_path.substr(0, at), virtual_path.substr(at + marker.size())};
+    }
+
+    std::string asset_path(std::string_view ns, std::string_view rel) { return asset_prefix(ns) + std::string(rel); }
+
+    std::string asset_prefix(std::string_view ns) { return std::string(ns) + "://assets/"; }
 
     void mount(const std::string& alias, const std::string& physical_path) { mounts[alias] = physical_path; }
 

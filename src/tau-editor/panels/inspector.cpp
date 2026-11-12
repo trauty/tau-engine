@@ -9,6 +9,7 @@
 #include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
 #include "tau/assets/material.h"
+#include "tau/assets/scene.h"
 #include "tau/assets/shader.h"
 #include "tau/assets/texture.h"
 #include "tau/components/prefab.h"
@@ -20,12 +21,14 @@
 #include "tau/log.h"
 #include "tau/reflection.h"
 #include "tau/systems/guid.h"
+#include "tau/vfs.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -304,26 +307,16 @@ namespace tau::editor::panels
 
         std::string asset_folder_label(std::string_view path)
         {
-            std::string_view rest = path;
-            std::string protocol;
-
-            const std::size_t proto = rest.find("://");
-            if (proto != std::string_view::npos)
-            {
-                protocol = std::string(rest.substr(0, proto));
-                rest = rest.substr(proto + 3);
-            }
-
-            constexpr std::string_view assets_prefix = "assets/";
-            if (rest.substr(0, assets_prefix.size()) == assets_prefix) { rest = rest.substr(assets_prefix.size()); }
+            const std::optional<vfs::asset_path_parts_t> parts = vfs::split_asset_path(path);
+            const std::string_view rest = parts ? parts->rel : path;
 
             const std::size_t slash = rest.find_last_of('/');
             const std::string_view folder =
                 (slash == std::string_view::npos) ? std::string_view{} : rest.substr(0, slash);
 
-            if (protocol.empty()) { return std::string(folder); }
-            if (folder.empty()) { return protocol; }
-            return protocol + ": " + std::string(folder);
+            if (!parts) { return std::string(folder); }
+            if (folder.empty()) { return std::string(parts->ns); }
+            return std::string(parts->ns) + ": " + std::string(folder);
         }
 
         struct asset_picker_t
@@ -934,12 +927,11 @@ namespace tau::editor::panels
                                  ImVec2(width, width * static_cast<f32>(tex->height) / static_cast<f32>(tex->width)));
                 }
             }
-            else if (type->key == "scene" && path.starts_with("game://assets/"))
+            else if (type->id == tau::get_type_id<scene_t>() && !asset_files::rel_of(path).empty())
             {
                 if (ImGui::Button("Open Scene"))
                 {
-                    ctx.unsaved_action_scene =
-                        asset_files::source_path(path.substr(std::strlen("game://assets/"))).string();
+                    ctx.unsaved_action_scene = asset_files::source_of(path).string();
                     request_action(world, ctx, unsaved_action_e::LOAD_SCENE);
                 }
             }

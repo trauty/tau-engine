@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <span>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,10 @@ namespace tau::editor::asset_files
 
     std::filesystem::path source_path(const std::string& rel);
     std::string vfs_path(const std::string& rel);
+    // game:// and engine:// asset paths to their source file, empty for anything else
+    std::filesystem::path source_of(std::string_view vfs_path);
+    // project-relative path of a game:// asset path, empty for anything else
+    std::string rel_of(std::string_view vfs_path);
 
     std::vector<u8_t> capture(u64_t entry);
     bool apply(world_t& world, u64_t entry, std::span<const u8_t> state);

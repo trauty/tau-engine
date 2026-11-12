@@ -5,9 +5,11 @@
 #include "tau-editor/keymap.h"
 #include "tau-editor/prefab_stage.h"
 #include "tau-editor/scene_io.h"
+#include "tau/vfs.h"
 #include "tau/engine.h"
 #include "tau/window.h"
 
+#include <optional>
 #include <SDL3/SDL_dialog.h>
 #include <filesystem>
 #include <string>
@@ -135,7 +137,8 @@ namespace tau::editor::panels
                 else if (doc.kind == history::doc_kind_e::ASSET && affects_assets(action))
                 {
                     const std::string path = history::asset_path(doc);
-                    (path.starts_with("engine://") ? engine_assets : project_assets).push_back(path);
+                    const std::optional<vfs::asset_path_parts_t> parts = vfs::split_asset_path(path);
+                    (parts && parts->ns == vfs::ENGINE_NS ? engine_assets : project_assets).push_back(path);
                 }
             }
 

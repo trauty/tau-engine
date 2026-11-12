@@ -3,7 +3,9 @@
 #include "tau/defines.h"
 
 #include <SDL3/SDL_iostream.h>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tau::vfs
@@ -25,6 +27,22 @@ namespace tau::vfs
     };
 
     TAU_ENGINE_API path_parts_t split_protocol(std::string_view virtual_path);
+
+    // asset paths: "<ns>://assets/<rel>", ns is "game" or "engine" (the cooker takes any)
+    inline constexpr std::string_view GAME_NS = "game";
+    inline constexpr std::string_view ENGINE_NS = "engine";
+
+    struct asset_path_parts_t
+    {
+        std::string_view ns;
+        std::string_view rel;
+    };
+
+    // null unless an asset path
+    TAU_ENGINE_API std::optional<asset_path_parts_t> split_asset_path(std::string_view virtual_path);
+    TAU_ENGINE_API std::string asset_path(std::string_view ns, std::string_view rel);
+    // "<ns>://assets/", the prefix every asset path of ns starts with
+    TAU_ENGINE_API std::string asset_prefix(std::string_view ns);
 
     TAU_ENGINE_API std::string resolve(std::string_view virtual_path);
 

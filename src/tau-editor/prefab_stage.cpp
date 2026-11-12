@@ -11,6 +11,7 @@
 #include "tau/asset.h"
 #include "tau/assets/prefab.h"
 #include "tau/guid.h"
+#include "tau/guid_json.h"
 #include "tau/log.h"
 #include "tau/prefab.h"
 #include "tau/rendering/renderer.h"
@@ -48,8 +49,6 @@ namespace tau::editor::prefab_stage
 
         history::doc_t doc() { return {history::doc_kind_e::STAGE, g.prefab.guid()}; }
 
-        u64_t guid_of(const nlohmann::json& value)
-        { return value.is_string() ? guid::from_string(value.get<std::string>()) : 0; }
 
         std::string file_name() { return std::filesystem::path(assets::path_of(g.prefab)).filename().string(); }
 
@@ -69,11 +68,11 @@ namespace tau::editor::prefab_stage
             std::vector<serialization::entity_state_t> batch;
             for (const nlohmann::json& entity : expanded["entities"])
             {
-                batch.push_back({guid_of(entity["id"]), &entity});
+                batch.push_back({guid::from_json(entity["id"]), &entity});
             }
             serialization::apply_entities(world, batch);
 
-            g.root = guid_of(data["entities"][0]["id"]);
+            g.root = guid::from_json(data["entities"][0]["id"]);
         }
 
         void frame(world_t& world, editor_context_t& ctx)

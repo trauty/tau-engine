@@ -4,6 +4,7 @@
 #include "tau-editor/history.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
+#include "tau/vfs.h"
 #include "tau/asset.h"
 #include "tau/assets/prefab.h"
 #include "tau/engine.h"
@@ -217,7 +218,7 @@ namespace tau::editor::asset_watch
 
                 for (const fs::path& source : cooked)
                 {
-                    const std::string name = vfs_name_for(source, engine_root, "engine://assets/");
+                    const std::string name = vfs_name_for(source, engine_root, tau::vfs::asset_prefix(tau::vfs::ENGINE_NS));
                     if (!name.empty()) { outcome.reload.push_back(name); }
                 }
             }
@@ -233,7 +234,7 @@ namespace tau::editor::asset_watch
 
                 for (const fs::path& source : cooked)
                 {
-                    const std::string name = vfs_name_for(source, game_root, "game://assets/");
+                    const std::string name = vfs_name_for(source, game_root, tau::vfs::asset_prefix(tau::vfs::GAME_NS));
                     if (!name.empty()) { outcome.reload.push_back(name); }
                 }
             }
@@ -290,7 +291,7 @@ namespace tau::editor::asset_watch
     {
         stop();
 
-        auto add_root = [&](const fs::path& dir, const char* prefix, bool is_engine)
+        auto add_root = [&](const fs::path& dir, const std::string& prefix, bool is_engine)
         {
             root_t root{dir, prefix, is_engine, make_backend()};
             if (!root.backend->start(dir))
@@ -303,8 +304,8 @@ namespace tau::editor::asset_watch
             g_state.roots.push_back(std::move(root));
         };
 
-        add_root(game_root, "game://assets/", false);
-        if (!engine_root.empty()) { add_root(engine_root, "engine://assets/", true); }
+        add_root(game_root, tau::vfs::asset_prefix(tau::vfs::GAME_NS), false);
+        if (!engine_root.empty()) { add_root(engine_root, tau::vfs::asset_prefix(tau::vfs::ENGINE_NS), true); }
 
         g_state.running = !g_state.roots.empty();
         g_state.last_poll = clock_t::now();

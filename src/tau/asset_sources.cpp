@@ -27,12 +27,6 @@ namespace tau::asset_sources
             return it != object.end() && it->is_string() ? assets::parse_guid(it->get<std::string>()) : 0;
         }
 
-        asset_guid_t guid_in_meta(const std::string& meta_path)
-        {
-            nlohmann::json meta;
-            return read_json_object(meta_path, meta) ? guid_field(meta) : 0;
-        }
-
         // the text with a guid member inserted first, so hand written files keep key order,
         // compact arrays and line endings. empty when the text is not an object
         std::string with_guid_inserted(const std::string& text, const std::string& guid)
@@ -65,25 +59,20 @@ namespace tau::asset_sources
 
         asset_guid_t find_or_create_meta_guid(const std::string& source_path)
         {
-            const std::string meta_path = source_path + ".meta";
-
-            nlohmann::json meta;
-            if (!read_json_object(meta_path, meta)) { meta = nlohmann::json::object(); }
+            nlohmann::json meta = read_meta(source_path);
             if (const asset_guid_t guid = guid_field(meta)) { return guid; }
 
             const asset_guid_t guid = guid::generate();
             meta["guid"] = guid::to_string(guid);
+            write_meta(source_path, meta);
 
-            std::ofstream file(meta_path);
-            file << meta.dump(2);
-
-            TAU_LOG_INFO("ASSET", "Created {} for guid {}", meta_path, guid::to_string(guid));
+            TAU_LOG_INFO("ASSET", "Created {} for guid {}", meta_path(source_path), guid::to_string(guid));
             return guid;
         }
 
         asset_guid_t find_or_create_source_guid(const std::string& source_path)
         {
-            const std::string meta_path = source_path + ".meta";
+            const std::string meta = meta_path(source_path);
 
             nlohmann::json doc;
             if (!read_json_object(source_path, doc))
@@ -95,7 +84,7 @@ namespace tau::asset_sources
             asset_guid_t guid = guid_field(doc);
             if (guid == 0)
             {
-                guid = guid_in_meta(meta_path);
+                guid = guid_field(read_meta(source_path));
                 const bool moved = guid != 0;
                 if (!moved) { guid = guid::generate(); }
 
@@ -127,14 +116,35 @@ namespace tau::asset_sources
             }
 
             std::error_code ec;
-            if (std::filesystem::remove(meta_path, ec))
+            if (std::filesystem::remove(meta, ec))
             {
-                TAU_LOG_INFO("ASSET", "Removed {}, the guid lives in the file", meta_path);
+                TAU_LOG_INFO("ASSET", "Removed {}, the guid lives in the file", meta);
             }
 
             return guid;
         }
     } // namespace
+
+    std::string meta_path(std::string_view source_path) { return std::string(source_path) + ".meta"; }
+
+    nlohmann::json read_meta(std::string_view source_path)
+    {
+        nlohmann::json meta;
+        return read_json_object(meta_path(source_path), meta) ? meta : nlohmann::json::object();
+    }
+
+    bool write_meta(std::string_view source_path, const nlohmann::json& meta)
+    {
+        const std::string path = meta_path(source_path);
+        std::ofstream file(path, std::ios::trunc);
+        file << meta.dump(4) << '\n';
+        if (!file)
+        {
+            TAU_LOG_ERROR("ASSET", "Could not write {}", path);
+            return false;
+        }
+        return true;
+    }
 
     asset_guid_t find_or_create_guid(const std::string& source_path)
     {
@@ -150,7 +160,7 @@ namespace tau::asset_sources
             if (const asset_guid_t inside = guid_field(doc)) { return inside; }
         }
 
-        const asset_guid_t sidecar = guid_in_meta(source_path + ".meta");
+        const asset_guid_t sidecar = guid_field(read_meta(source_path));
         return sidecar != 0 ? sidecar : guid::generate();
     }
 

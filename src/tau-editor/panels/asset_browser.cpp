@@ -9,6 +9,7 @@
 #include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
+#include "tau/vfs.h"
 #include "tau/asset.h"
 #include "tau/assets/texture.h"
 #include "tau/engine.h"
@@ -112,7 +113,7 @@ namespace tau::editor::panels
         { return root == root_e::GAME ? fs::path(ctx.project_assets_dir) : asset_cook::engine_assets_dir(); }
 
         std::string vfs_of(root_e root, const std::string& rel)
-        { return (root == root_e::GAME ? "game://assets/" : "engine://assets/") + rel; }
+        { return vfs::asset_path(root == root_e::GAME ? vfs::GAME_NS : vfs::ENGINE_NS, rel); }
 
         std::string join(const std::string& dir, const std::string& name)
         { return dir.empty() ? name : dir + "/" + name; }
@@ -304,10 +305,9 @@ namespace tau::editor::panels
 
         std::vector<std::string> dragged_rels(const std::string& vfs)
         {
-            const std::string prefix = "game://assets/";
-            if (!vfs.starts_with(prefix)) { return {}; }
+            const std::string rel = asset_files::rel_of(vfs);
+            if (rel.empty()) { return {}; }
 
-            const std::string rel = vfs.substr(prefix.size());
             if (std::find(g.selection.begin(), g.selection.end(), rel) != g.selection.end()) { return g.selection; }
             return {rel};
         }
@@ -318,7 +318,7 @@ namespace tau::editor::panels
 
             const ImGuiPayload* peek = ImGui::GetDragDropPayload();
             if (peek && peek->IsDataType(ASSET_PAYLOAD) &&
-                std::string_view(static_cast<const char*>(peek->Data)).starts_with("game://assets/"))
+                !asset_files::rel_of(static_cast<const char*>(peek->Data)).empty())
             {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))
                 {

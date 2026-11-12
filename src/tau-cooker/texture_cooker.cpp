@@ -1,5 +1,6 @@
 #include "texture_cooker.h"
 
+#include "tau/asset_sources.h"
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/rendering/vulkan.h"
@@ -28,15 +29,7 @@ namespace tau::cooker::texture
     {
         TAU_LOG_INFO("TEXTURE_COOKER", "Cooking texture: {} -> {}", input_path, output_path);
 
-        std::string meta_path = input_path + ".meta";
-        nlohmann::json meta;
-
-        if (std::filesystem::exists(meta_path))
-        {
-            std::ifstream file(meta_path);
-            meta = nlohmann::json::parse(file, nullptr, false);
-            if (meta.is_discarded()) { meta = nlohmann::json::object(); }
-        }
+        nlohmann::json meta = tau::asset_sources::read_meta(input_path);
 
         if (!meta.contains("type") || !meta.contains("srgb"))
         {
@@ -50,9 +43,8 @@ namespace tau::cooker::texture
             if (!meta.contains("type")) { meta["type"] = is_normal ? "normal" : (is_data ? "data" : "color"); }
             if (!meta.contains("srgb")) { meta["srgb"] = (!is_normal && !is_data); }
 
-            std::ofstream file(meta_path);
-            file << meta.dump(4);
-            TAU_LOG_INFO("TEXTURE_COOKER", "Updated metadata: {}", meta_path);
+            tau::asset_sources::write_meta(input_path, meta);
+            TAU_LOG_INFO("TEXTURE_COOKER", "Updated metadata: {}", tau::asset_sources::meta_path(input_path));
         }
 
         std::string tex_type = meta.value("type", "color");

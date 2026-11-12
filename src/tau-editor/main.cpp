@@ -26,6 +26,7 @@
 #include "tau-editor/systems/camera.h"
 #include "tau-editor/viewport_input.h"
 #include "tau/asset.h"
+#include "tau/assets/scene.h"
 #include "tau/engine.h"
 #include "tau/game.h"
 #include "tau/game_library.h"
@@ -845,24 +846,17 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
 
     if (!project.startup_scene.empty())
     {
-        std::string rel = tau::project::scene_path(project.startup_scene);
-        const std::string prefix = "game://assets/";
-        if (rel.rfind(prefix, 0) == 0) { rel = rel.substr(prefix.size()); }
+        std::filesystem::path rel = tau::editor::asset_files::rel_of(tau::project::scene_path(project.startup_scene));
 
-        if (const tau::asset_type_t* scene_type = tau::assets::type_by_key("scene"))
+        // a startup scene named by its cooked file opens its source
+        const tau::asset_type_t* scene_type = tau::assets::type_by_id(tau::get_type_id<tau::scene_t>());
+        if (scene_type && rel.extension() == scene_type->cooked_extension)
         {
-            const std::string cooked_ext(scene_type->cooked_extension);
-            const std::string source_ext(scene_type->source_extensions.front());
-
-            if (rel.size() > cooked_ext.size() &&
-                rel.compare(rel.size() - cooked_ext.size(), cooked_ext.size(), cooked_ext) == 0)
-            {
-                rel.replace(rel.size() - cooked_ext.size(), cooked_ext.size(), source_ext);
-            }
+            rel.replace_extension(std::string(scene_type->source_extensions.front()));
         }
-        std::filesystem::path scene_src = project.assets_dir / rel;
+        std::filesystem::path scene_src = rel.empty() ? std::filesystem::path{} : project.assets_dir / rel;
 
-        if (std::filesystem::exists(scene_src))
+        if (!scene_src.empty() && std::filesystem::is_regular_file(scene_src))
         {
             tau::editor::scene_io::load(tau::engine::get_active_world(), ctx, scene_src.string());
         }
