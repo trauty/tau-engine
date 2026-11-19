@@ -1,6 +1,7 @@
 #include "asset_browser.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "tau-editor/asset_cook.h"
 #include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
@@ -315,10 +316,9 @@ namespace tau::editor::panels
             return {rel};
         }
 
-        void folder_drop_target(const editor_context_t& ctx, const std::string& dir)
+        // call between Begin/EndDragDropTarget
+        void accept_drops(const std::string& dir)
         {
-            if (!editable(ctx) || !ImGui::BeginDragDropTarget()) { return; }
-
             const ImGuiPayload* peek = ImGui::GetDragDropPayload();
             if (peek && peek->IsDataType(ASSET_PAYLOAD) &&
                 !asset_files::rel_of(static_cast<const char*>(peek->Data)).empty())
@@ -333,6 +333,24 @@ namespace tau::editor::panels
             {
                 g.action = {action_kind_e::MAKE_PREFAB, dir, {}, *static_cast<const u64_t*>(payload->Data)};
             }
+        }
+
+        void folder_drop_target(const editor_context_t& ctx, const std::string& dir)
+        {
+            if (!editable(ctx) || !ImGui::BeginDragDropTarget()) { return; }
+            accept_drops(dir);
+            ImGui::EndDragDropTarget();
+        }
+
+        // whole grid, folder tiles get prio as smaller targets
+        void grid_drop_target(const editor_context_t& ctx)
+        {
+            ImGuiWindow* window = ImGui::GetCurrentWindow();
+            if (!editable(ctx) || !ImGui::BeginDragDropTargetCustom(window->InnerRect, window->GetID("##grid_drop")))
+            {
+                return;
+            }
+            accept_drops(g.dir);
             ImGui::EndDragDropTarget();
         }
 
@@ -627,12 +645,12 @@ namespace tau::editor::panels
             const ImVec2 rest = ImGui::GetContentRegionAvail();
             ImGui::InvisibleButton("##empty", ImVec2(std::max(rest.x, 1.0f), std::max(rest.y, 24.0f)));
             if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) { g.selection.clear(); }
-            if (g.root == root_e::GAME && g.search[0] == '\0') { folder_drop_target(ctx, g.dir); }
             if (ImGui::BeginPopupContextItem("##empty_menu"))
             {
                 new_menu_items(ctx);
                 ImGui::EndPopup();
             }
+            if (g.root == root_e::GAME && g.search[0] == '\0') { grid_drop_target(ctx); }
         }
 
         void run_action(world_t& world, editor_context_t& ctx)
