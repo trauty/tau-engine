@@ -445,9 +445,6 @@ namespace
     }
 } // namespace
 
-
-
-
 void update_editor_ui(tau::editor_context_t& ctx)
 {
     if (!ctx.project_loaded)

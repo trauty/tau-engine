@@ -1,11 +1,13 @@
 #include "scene.h"
 
-#include "tau/hash.h"
 #include "tau/assets/scene_format.h"
+#include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/serialization.h"
 #include "tau/vfs.h"
 
 #include <SDL3/SDL_iostream.h>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -150,3 +152,85 @@ namespace tau
         return scene;
     }
 } // namespace tau
+
+namespace tau::serialization
+{
+    namespace
+    {
+        template <typename T>
+        void write_pod(std::ofstream& out, const T& v)
+        { out.write(reinterpret_cast<const char*>(&v), sizeof(T)); }
+
+        void write_str(std::ofstream& out, const std::string& s)
+        {
+            u32_t len = static_cast<u32_t>(s.size());
+            write_pod(out, len);
+            out.write(s.data(), s.size());
+        }
+
+        void write_property(std::ofstream& out, const scene_property_t& prop)
+        {
+            write_pod(out, prop.prop_hash);
+            write_pod(out, static_cast<u8_t>(prop.type));
+
+            if (const u32_t size = pod_size(pod_layout(prop.type)); size > 0)
+            {
+                out.write(reinterpret_cast<const char*>(prop.pod.data()), size);
+                return;
+            }
+
+            switch (prop.type)
+            {
+            case scene_value_type_e::STRING: write_str(out, prop.str); break;
+            case scene_value_type_e::ASSET_REF:
+                write_pod(out, prop.asset_type);
+                write_str(out, prop.str);
+                write_pod(out, prop.guid);
+                break;
+            case scene_value_type_e::ASSET_REF_LIST:
+                write_pod(out, prop.asset_type);
+                write_pod(out, static_cast<u32_t>(prop.strs.size()));
+                for (std::size_t i = 0; i < prop.strs.size(); i++)
+                {
+                    write_str(out, prop.strs[i]);
+                    write_pod(out, i < prop.guids.size() ? prop.guids[i] : asset_guid_t{0});
+                }
+                break;
+            case scene_value_type_e::ENTITY: write_pod(out, prop.ref); break;
+            case scene_value_type_e::STRUCT:
+            case scene_value_type_e::LIST:
+                write_pod(out, static_cast<u32_t>(prop.children.size()));
+                for (const scene_property_t& child : prop.children) { write_property(out, child); }
+                break;
+            default: break;
+            }
+        }
+    } // namespace
+
+    void write_scene_binary(const scene_t& scene, const std::string& output_path)
+    {
+        std::ofstream out(output_path, std::ios::binary);
+        if (!out.is_open())
+        {
+            TAU_LOG_ERROR("SCENE", "Failed to open output for scene: {}", output_path);
+            return;
+        }
+
+        scene_header_t header;
+        header.entity_count = static_cast<u32_t>(scene.entities.size());
+        write_pod(out, header);
+
+        for (const scene_entity_t& entity : scene.entities)
+        {
+            write_pod(out, entity.id);
+            write_pod(out, entity.parent);
+            write_pod(out, static_cast<u32_t>(entity.components.size()));
+            for (const scene_component_t& comp : entity.components)
+            {
+                write_pod(out, comp.type_hash);
+                write_pod(out, static_cast<u32_t>(comp.properties.size()));
+                for (const scene_property_t& prop : comp.properties) { write_property(out, prop); }
+            }
+        }
+    }
+} // namespace tau::serialization

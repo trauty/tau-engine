@@ -43,20 +43,25 @@ namespace tau
         std::string source_json;
     };
 
+    struct scene_prefab_t
+    {
+        u64_t instance = 0;
+        u64_t source = 0;
+
+        bool root = false;
+        asset_guid_t guid = 0;
+        std::string path;
+        std::vector<u64_t> removed;
+        std::string unresolved;
+    };
+
     struct scene_entity_t
     {
         u64_t id = 0;
         u64_t parent = 0;
         std::vector<scene_component_t> components;
 
-        // prefab instances, expanded in cooked scenes
-        u64_t prefab_instance = 0;
-        u64_t prefab_source = 0;
-        bool prefab_root = false;
-        asset_guid_t prefab_guid = 0;
-        std::string prefab_path;
-        std::vector<u64_t> prefab_removed;
-        std::string prefab_unresolved;
+        scene_prefab_t prefab;
     };
 
     struct scene_t
