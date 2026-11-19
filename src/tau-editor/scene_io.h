@@ -17,4 +17,6 @@ namespace tau::editor::scene_io
     void clear(world_t& world, editor_context_t& ctx);
 
     void set_path(editor_context_t& ctx, const std::string& path);
+
+    void report_unknown_keys(const world_t& world, const editor_context_t& ctx);
 } // namespace tau::editor::scene_io

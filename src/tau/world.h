@@ -1,15 +1,13 @@
 #pragma once
 
 #include "tau/ecs.h"
+#include "tau/reflection_fwd.h"
 
 #include <string>
 #include <vector>
 
-namespace entt { class meta_ctx; }
-
 namespace tau
 {
-    namespace reflection { using ctx_t = entt::meta_ctx; }
     namespace physics::detail { struct state_t; }
 
     struct world_t;

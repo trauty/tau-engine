@@ -242,6 +242,7 @@ static std::vector<tau::ecs::entity_t> start_game_library(tau::editor_context_t&
     if (scene) { created = tau::serialization::deserialize_scene(world, *scene); }
 
     tau::game::run_hooks(tau::game::hook_e::LOAD, world);
+    tau::editor::scene_io::report_unknown_keys(world, ctx);
 
     if (lib.editor_init)
     {
@@ -443,6 +444,7 @@ namespace
                                       "? Its engine version changes in the project file.";
     }
 } // namespace
+
 
 
 

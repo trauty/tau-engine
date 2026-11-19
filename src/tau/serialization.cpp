@@ -25,6 +25,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -859,8 +860,8 @@ namespace tau::serialization
                     if (unknown) { unknown->push_back(key); }
                     if (first_warning(owner + "." + key))
                     {
-                        TAU_LOG_WARN("SCENE", "Unknown field '{}' on '{}', {}", key, owner,
-                                     unknown ? "kept as saved" : "value dropped");
+                        TAU_LOG_WARN("SCENE", "Unknown field '{}' on '{}', {}. Renamed? stable_id{{\"{}\"}} loads it",
+                                     key, owner, unknown ? "kept as saved" : "value dropped", key);
                     }
                     continue;
                 }
@@ -1418,5 +1419,46 @@ namespace tau::serialization
         to_destroy.insert(to_destroy.end(), view.begin(), view.end());
 
         world.registry.destroy(to_destroy.begin(), to_destroy.end());
+    }
+
+    namespace
+    {
+        void unknown_fields(const tau::reflection::type_t& type, const std::vector<scene_property_t>& props,
+                            const std::string& component, const std::string& prefix, std::vector<unknown_key_t>& out)
+        {
+            for (const scene_property_t& prop : props)
+            {
+                const std::string key = prefix + describe_key(prop.prop_name, prop.prop_hash);
+                const tau::reflection::data_t data = type.data(prop.prop_hash);
+                if (!data) { out.push_back({component, key}); }
+                else if (prop.type == scene_value_type_e::STRUCT)
+                {
+                    unknown_fields(data.type(), prop.children, component, key + ".", out);
+                }
+            }
+        }
+    } // namespace
+
+    std::vector<unknown_key_t> unknown_keys(const tau::world_t& world, const scene_t& scene)
+    {
+        std::vector<unknown_key_t> out;
+        for (const scene_entity_t& entity : scene.entities)
+        {
+            for (const scene_component_t& comp : entity.components)
+            {
+                const std::string component = describe_key(comp.type_name, comp.type_hash);
+                const tau::reflection::type_t type = tau::reflection::resolve(*world.reflection_ctx, comp.type_hash);
+                if (!type) { out.push_back({component, {}}); }
+                else
+                {
+                    unknown_fields(type, comp.properties, component, {}, out);
+                }
+            }
+        }
+
+        std::sort(out.begin(), out.end(), [](const unknown_key_t& a, const unknown_key_t& b)
+                  { return std::tie(a.component, a.field) < std::tie(b.component, b.field); });
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;
     }
 } // namespace tau::serialization

@@ -46,7 +46,11 @@ int main(int argc, char* argv[])
     tau::game_library_t game_lib;
     if (have_project)
     {
-        if (!tau::game_library::open(project.lib_path.string(), game_lib)) { return -1; }
+        if (!tau::game_library::open(project.lib_path.string(), game_lib))
+        {
+            tau::engine::shutdown();
+            return -1;
+        }
     }
     else
     {

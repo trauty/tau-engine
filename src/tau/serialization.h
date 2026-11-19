@@ -49,4 +49,14 @@ namespace tau::serialization
     TAU_ENGINE_API nlohmann::json asset_ref(asset_handle_t handle);
 
     TAU_ENGINE_API void collect_asset_refs(tau::world_t& world, std::vector<asset_handle_t>& out);
+
+    struct unknown_key_t
+    {
+        std::string component;
+        std::string field;
+
+        bool operator==(const unknown_key_t&) const = default;
+    };
+
+    TAU_ENGINE_API std::vector<unknown_key_t> unknown_keys(const tau::world_t& world, const scene_t& scene);
 } // namespace tau::serialization

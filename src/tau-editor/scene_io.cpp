@@ -7,14 +7,23 @@
 #include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
 #include "tau/asset_sources.h"
+#include "tau/assets/prefab.h"
+#include "tau/assets/scene.h"
 #include "tau/log.h"
+#include "tau/prefab.h"
 #include "tau/serialization.h"
 #include "tau/window.h"
 #include "tau/world.h"
 
 #include <SDL3/SDL_dialog.h>
+#include <algorithm>
+#include <filesystem>
+#include <format>
 #include <fstream>
 #include <json/json.hpp>
+#include <map>
+#include <utility>
+#include <vector>
 
 namespace tau::editor::scene_io
 {
@@ -170,5 +179,65 @@ namespace tau::editor::scene_io
         history::drop(history::OPEN_SCENE);
 
         TAU_LOG_INFO("EDITOR", "New scene created");
+    }
+
+    void report_unknown_keys(const world_t& world, const editor_context_t& ctx)
+    {
+        namespace fs = std::filesystem;
+        if (ctx.project_assets_dir.empty()) { return; }
+
+        std::vector<std::string_view> extensions;
+        for (const u64_t type_id : {get_type_id<scene_t>(), get_type_id<prefab_t>()})
+        {
+            if (const asset_type_t* type = assets::type_by_id(type_id))
+            {
+                extensions.insert(extensions.end(), type->source_extensions.begin(), type->source_extensions.end());
+            }
+        }
+
+        const fs::path root = ctx.project_assets_dir;
+        const prefab::lookup_t lookup = prefab::asset_lookup();
+        std::map<std::pair<std::string, std::string>, std::vector<std::string>> files_of;
+
+        std::error_code ec;
+        for (const fs::directory_entry& entry : fs::recursive_directory_iterator(root, ec))
+        {
+            const std::string ext = entry.path().extension().string();
+            if (!entry.is_regular_file(ec) || std::find(extensions.begin(), extensions.end(), ext) == extensions.end())
+            {
+                continue;
+            }
+
+            std::ifstream file(entry.path());
+            const nlohmann::json json = nlohmann::json::parse(file, nullptr, false);
+            if (json.is_discarded()) { continue; }
+
+            const scene_t scene = serialization::scene_from_json(prefab::expand(json, lookup));
+            const std::string rel = entry.path().lexically_relative(root).generic_string();
+            for (const serialization::unknown_key_t& key : serialization::unknown_keys(world, scene))
+            {
+                files_of[{key.component, key.field}].push_back(rel);
+            }
+        }
+
+        for (const auto& [key, files] : files_of)
+        {
+            std::string where = files.front();
+            for (std::size_t i = 1; i < std::min<std::size_t>(files.size(), 3); i++) { where += ", " + files[i]; }
+            if (files.size() > 3) { where += std::format(" and {} more", files.size() - 3); }
+
+            if (key.second.empty())
+            {
+                TAU_LOG_WARN("SCENE", "Saved component '{}' matches no registered type ({}). Renamed or removed?",
+                             key.first, where);
+            }
+            else
+            {
+                TAU_LOG_WARN("SCENE",
+                             "Saved field '{}' on '{}' matches no registered field ({}). Renamed? "
+                             "stable_id{{\"{}\"}} on the new field loads the saved values",
+                             key.second, key.first, where, key.second);
+            }
+        }
     }
 } // namespace tau::editor::scene_io
