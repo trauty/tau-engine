@@ -3,6 +3,7 @@
 #include "imgui_backend.h"
 #include "imgui_internal.h"
 #include "tau-editor/asset_cook.h"
+#include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
 #include "tau-editor/asset_watch.h"
 #include "tau-editor/editor_context.h"
@@ -652,8 +653,7 @@ void update_editor_ui(tau::editor_context_t& ctx)
             // before the bottom split so it spans full height
             ImGuiID dock_inspector =
                 ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, side_ratio, nullptr, &dock_main);
-            ImGuiID dock_bottom =
-                ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.28f, nullptr, &dock_main);
+            ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.28f, nullptr, &dock_main);
             // ratio of the width left after the inspector
             ImGuiID dock_hierarchy = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left,
                                                                  side_ratio / (1.0f - side_ratio), nullptr, &dock_main);
@@ -921,6 +921,7 @@ int main(i32 argc, char** argv)
     tau::editor::picking::init(editor_ctx);
     tau::editor::handles::init(editor_ctx);
     tau::editor::history::init(editor_ctx);
+    tau::editor::asset_editors::register_builtin(editor_ctx);
     tau::editor::material_edit::init(editor_ctx);
     tau::editor::asset_files::init(editor_ctx);
     tau::editor::prefab_edit::init(editor_ctx);
@@ -960,7 +961,6 @@ int main(i32 argc, char** argv)
     // a running build or cook would hold up the exit, so stop it
     g_build_cancel.cancel();
     g_cook_cancel.cancel();
-
 
     vkDeviceWaitIdle(tau::renderer::ctx.device);
 

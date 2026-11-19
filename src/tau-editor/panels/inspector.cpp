@@ -1,12 +1,14 @@
 #include "inspector.h"
 
 #include "imgui.h"
+#include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
 #include "tau-editor/history.h"
 #include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
+#include "tau-editor/widgets.h"
 #include "tau/asset.h"
 #include "tau/assets/material.h"
 #include "tau/assets/scene.h"
@@ -37,8 +39,6 @@ namespace tau::editor::panels
 {
     namespace
     {
-        char asset_path_input[1024] = {0};
-
         // radians to quat to radians is not stable
         struct degree_edit_t
         {
@@ -47,236 +47,6 @@ namespace tau::editor::panels
         };
 
         degree_edit_t active_degree_edit;
-
-        std::vector<std::string> split_enum_labels(const std::string& csv)
-        {
-            std::vector<std::string> labels;
-            std::size_t start = 0;
-
-            while (start <= csv.size())
-            {
-                const std::size_t comma = csv.find(',', start);
-                const std::size_t end = (comma == std::string::npos) ? csv.size() : comma;
-
-                std::string label = csv.substr(start, end - start);
-                const std::size_t first = label.find_first_not_of(" \t");
-                const std::size_t last = label.find_last_not_of(" \t");
-                if (first != std::string::npos) { labels.push_back(label.substr(first, last - first + 1)); }
-
-                if (comma == std::string::npos) { break; }
-                start = comma + 1;
-            }
-
-            return labels;
-        }
-
-        constexpr const char* SAMPLER_LABELS[] = {"Linear Repeat", "Linear Clamp", "Nearest Repeat", "Nearest Clamp"};
-
-        void draw_member_tooltip(const shader_member_t& member)
-        {
-            if (member.tooltip.empty() || !ImGui::IsItemHovered()) { return; }
-            ImGui::SetTooltip("%s", member.tooltip.c_str());
-        }
-
-        bool draw_asset_slot(tau::world_t& world, const char* label, u64_t asset_type_hash, asset_handle_t handle,
-                             asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove = nullptr);
-
-        bool draw_material_properties(tau::world_t& world, asset_handle_t handle)
-        {
-            material_t* mat = assets::get(asset_t<material_t>{handle});
-            if (!mat) { return false; }
-
-            const shader_t* shader = assets::get(mat->shader);
-            if (!shader || mat->data.empty()) { return false; }
-
-            std::vector<const shader_member_t*> ordered;
-            ordered.reserve(shader->module.members.size());
-            for (const auto& [hash, member] : shader->module.members) { ordered.push_back(&member); }
-            std::sort(ordered.begin(), ordered.end(),
-                      [](const shader_member_t* a, const shader_member_t* b) { return a->offset < b->offset; });
-
-            bool changed = false;
-            u32_t hidden_count = 0;
-
-            for (const shader_member_t* member : ordered)
-            {
-                if (member->offset + member->size > mat->data.size()) { continue; }
-
-                if (member->edit == shader_member_edit_e::HIDDEN)
-                {
-                    hidden_count++;
-                    continue;
-                }
-
-                const u32_t name_hash = tau::hash_string(member->name);
-                const char* label = member->name.empty() ? "(unnamed)" : member->name.c_str();
-                void* slot = mat->data.data() + member->offset;
-                bool member_changed = false;
-
-                ImGui::PushID(static_cast<i32>(member->offset));
-
-                switch (member->edit)
-                {
-                case shader_member_edit_e::TEXTURE:
-                {
-                    const asset_t<texture_t>* bound = mat->textures.find(name_hash);
-                    const asset_handle_t cur = bound ? bound->handle : asset_handle_t{};
-
-                    asset_handle_t picked = cur;
-                    if (draw_asset_slot(world, label, tau::get_type_id<tau::texture_t>(), cur, picked,
-                                        "##mattex_" + std::to_string(member->offset)))
-                    {
-                        mat->set_texture(name_hash, asset_t<texture_t>{picked});
-                        member_changed = true;
-                    }
-                    break;
-                }
-                case shader_member_edit_e::SAMPLER:
-                {
-                    i32 cur = static_cast<i32>(*static_cast<u32_t*>(slot));
-                    if (cur < 0 || cur >= IM_ARRAYSIZE(SAMPLER_LABELS)) { cur = 0; }
-
-                    if (ImGui::Combo(label, &cur, SAMPLER_LABELS, IM_ARRAYSIZE(SAMPLER_LABELS)))
-                    {
-                        *static_cast<u32_t*>(slot) = static_cast<u32_t>(cur);
-                        member_changed = true;
-                    }
-                    draw_member_tooltip(*member);
-                    break;
-                }
-                case shader_member_edit_e::ENUM:
-                {
-                    const std::vector<std::string> labels = split_enum_labels(member->enum_names);
-
-                    std::vector<const char*> items;
-                    items.reserve(labels.size());
-                    for (const std::string& l : labels) { items.push_back(l.c_str()); }
-
-                    i32 cur = (member->type == shader_member_type_e::INT)
-                                  ? *static_cast<i32*>(slot)
-                                  : static_cast<i32>(*static_cast<u32_t*>(slot));
-
-                    if (items.empty() || cur < 0 || cur >= static_cast<i32>(items.size()))
-                    {
-                        ImGui::Text("%s", label);
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("%d (no label)", cur);
-                        break;
-                    }
-
-                    if (ImGui::Combo(label, &cur, items.data(), static_cast<i32>(items.size())))
-                    {
-                        if (member->type == shader_member_type_e::INT) { *static_cast<i32*>(slot) = cur; }
-                        else
-                        {
-                            *static_cast<u32_t*>(slot) = static_cast<u32_t>(cur);
-                        }
-                        member_changed = true;
-                    }
-                    draw_member_tooltip(*member);
-                    break;
-                }
-                case shader_member_edit_e::COLOR:
-                {
-                    if (member->type == shader_member_type_e::FLOAT4)
-                    {
-                        member_changed = ImGui::ColorEdit4(label, static_cast<f32*>(slot));
-                    }
-                    else
-                    {
-                        member_changed = ImGui::ColorEdit3(label, static_cast<f32*>(slot));
-                    }
-                    draw_member_tooltip(*member);
-                    break;
-                }
-                default:
-                {
-                    const bool ranged = member->has_range();
-
-                    switch (member->type)
-                    {
-                    case shader_member_type_e::FLOAT:
-                        member_changed = ranged ? ImGui::SliderFloat(label, static_cast<f32*>(slot), member->range_min,
-                                                                     member->range_max)
-                                                : ImGui::DragFloat(label, static_cast<f32*>(slot), 0.01f);
-                        break;
-                    case shader_member_type_e::FLOAT2:
-                        member_changed = ranged ? ImGui::SliderFloat2(label, static_cast<f32*>(slot), member->range_min,
-                                                                      member->range_max)
-                                                : ImGui::DragFloat2(label, static_cast<f32*>(slot), 0.01f);
-                        break;
-                    case shader_member_type_e::FLOAT3:
-                        member_changed = ranged ? ImGui::SliderFloat3(label, static_cast<f32*>(slot), member->range_min,
-                                                                      member->range_max)
-                                                : ImGui::DragFloat3(label, static_cast<f32*>(slot), 0.01f);
-                        break;
-                    case shader_member_type_e::FLOAT4:
-                        member_changed = ranged ? ImGui::SliderFloat4(label, static_cast<f32*>(slot), member->range_min,
-                                                                      member->range_max)
-                                                : ImGui::DragFloat4(label, static_cast<f32*>(slot), 0.01f);
-                        break;
-                    case shader_member_type_e::INT:
-                        member_changed = ranged ? ImGui::SliderInt(label, static_cast<i32*>(slot),
-                                                                   static_cast<i32>(member->range_min),
-                                                                   static_cast<i32>(member->range_max))
-                                                : ImGui::DragInt(label, static_cast<i32*>(slot));
-                        break;
-                    case shader_member_type_e::UINT:
-                    {
-                        i32 as_int = static_cast<i32>(*static_cast<u32_t*>(slot));
-                        const i32 lo = ranged ? static_cast<i32>(member->range_min) : 0;
-                        const i32 hi = ranged ? static_cast<i32>(member->range_max) : INT_MAX;
-
-                        if (ranged ? ImGui::SliderInt(label, &as_int, lo, hi)
-                                   : ImGui::DragInt(label, &as_int, 1.0f, lo, hi))
-                        {
-                            *static_cast<u32_t*>(slot) = static_cast<u32_t>(as_int < 0 ? 0 : as_int);
-                            member_changed = true;
-                        }
-                        break;
-                    }
-                    case shader_member_type_e::BOOL:
-                    {
-                        bool as_bool = *static_cast<u32_t*>(slot) != 0u;
-                        if (ImGui::Checkbox(label, &as_bool))
-                        {
-                            *static_cast<u32_t*>(slot) = as_bool ? 1u : 0u;
-                            member_changed = true;
-                        }
-                        break;
-                    }
-                    default: ImGui::TextDisabled("%s (%u bytes, unsupported type)", label, member->size); break;
-                    }
-
-                    draw_member_tooltip(*member);
-                    break;
-                }
-                }
-
-                ImGui::PopID();
-
-                if (member_changed)
-                {
-                    changed = true;
-
-                    if (std::find(mat->authored_properties.begin(), mat->authored_properties.end(), name_hash) ==
-                        mat->authored_properties.end())
-                    {
-                        mat->authored_properties.push_back(name_hash);
-                    }
-                }
-            }
-
-            if (hidden_count > 0)
-            {
-                ImGui::TextDisabled("%u engine-bound %s hidden", hidden_count,
-                                    hidden_count == 1 ? "property" : "properties");
-            }
-
-            if (changed) { mat->dirty_frames = tau::renderer::MAX_FRAMES_IN_FLIGHT; }
-
-            return changed;
-        }
 
         i32 string_resize_cb(ImGuiInputTextCallbackData* data)
         {
@@ -297,204 +67,6 @@ namespace tau::editor::panels
 
             out = converted.cast<i32>();
             return true;
-        }
-
-        std::string_view asset_file_name(std::string_view path)
-        {
-            const std::size_t slash = path.find_last_of('/');
-            return (slash == std::string_view::npos) ? path : path.substr(slash + 1);
-        }
-
-        std::string asset_folder_label(std::string_view path)
-        {
-            const std::optional<vfs::asset_path_parts_t> parts = vfs::split_asset_path(path);
-            const std::string_view rest = parts ? parts->rel : path;
-
-            const std::size_t slash = rest.find_last_of('/');
-            const std::string_view folder =
-                (slash == std::string_view::npos) ? std::string_view{} : rest.substr(0, slash);
-
-            if (!parts) { return std::string(folder); }
-            if (folder.empty()) { return std::string(parts->ns); }
-            return std::string(parts->ns) + ": " + std::string(folder);
-        }
-
-        struct asset_picker_t
-        {
-            std::string open_id;
-            char search[128] = {0};
-            std::vector<std::string> candidates;
-        };
-
-        asset_picker_t asset_picker;
-
-        void open_asset_picker(const std::string& popup_id, u64_t asset_type_hash)
-        {
-            asset_picker.open_id = popup_id;
-            asset_picker.search[0] = '\0';
-            asset_picker.candidates.clear();
-
-            for (auto& [path, guid] : assets::locations())
-            {
-                if (assets::path_is(path, asset_type_hash)) { asset_picker.candidates.push_back(std::move(path)); }
-            }
-        }
-
-        bool contains_ci(std::string_view haystack, std::string_view needle)
-        {
-            if (needle.empty()) { return true; }
-            if (needle.size() > haystack.size()) { return false; }
-
-            for (std::size_t i = 0; i + needle.size() <= haystack.size(); i++)
-            {
-                std::size_t j = 0;
-                while (j < needle.size() && std::tolower(static_cast<unsigned char>(haystack[i + j])) ==
-                                                std::tolower(static_cast<unsigned char>(needle[j])))
-                {
-                    j++;
-                }
-                if (j == needle.size()) { return true; }
-            }
-            return false;
-        }
-
-        constexpr f32 PICKER_WIDTH = 340.0f;
-        constexpr f32 FOLDER_COLUMN = 190.0f;
-
-        bool draw_asset_picker(u64_t asset_type_hash, std::string& out_path)
-        {
-            const asset_type_t* type = assets::type_by_id(asset_type_hash);
-            ImGui::TextDisabled("%s", type ? std::string(type->display_name).c_str() : "Unknown");
-
-            ImGui::SetNextItemWidth(PICKER_WIDTH);
-            if (ImGui::IsWindowAppearing()) { ImGui::SetKeyboardFocusHere(); }
-            ImGui::InputTextWithHint("##search", "search", asset_picker.search, sizeof(asset_picker.search));
-
-            if (ImGui::Button("Clear"))
-            {
-                out_path.clear();
-                return true;
-            }
-
-            ImGui::Separator();
-
-            if (asset_picker.candidates.empty())
-            {
-                ImGui::TextDisabled("no cooked assets of this type");
-                return false;
-            }
-
-            bool chose = false;
-            ImGui::BeginChild("##asset_list", ImVec2(PICKER_WIDTH, 220.0f), ImGuiChildFlags_None);
-
-            for (const std::string& path : asset_picker.candidates)
-            {
-                if (!contains_ci(path, asset_picker.search)) { continue; }
-
-                const std::string_view name = asset_file_name(path);
-                const std::string row_label = std::string(name) + "##" + path;
-
-                if (ImGui::Selectable(row_label.c_str()))
-                {
-                    out_path = path;
-                    chose = true;
-                }
-
-                if (ImGui::IsItemHovered()) { ImGui::SetTooltip("%s", path.c_str()); }
-
-                const std::string folder = asset_folder_label(path);
-                if (!folder.empty())
-                {
-                    ImGui::SameLine(FOLDER_COLUMN);
-                    ImGui::TextDisabled("%s", folder.c_str());
-                }
-            }
-
-            ImGui::EndChild();
-            return chose;
-        }
-
-        bool asset_unsaved(asset_handle_t handle)
-        { return handle.is_valid() && history::is_dirty({history::doc_kind_e::ASSET, handle.guid}); }
-
-        bool draw_asset_slot(tau::world_t& world, const char* label, u64_t asset_type_hash, asset_handle_t handle,
-                             asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove)
-        {
-            bool modified = false;
-            const std::string cur_path = assets::path_of(handle);
-
-            ImGui::Text("%s", label);
-            ImGui::SameLine();
-
-            const f32 remove_width = out_remove ? (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x) : 0.0f;
-            const f32 field_width = std::max(ImGui::GetContentRegionAvail().x - remove_width, 60.0f);
-
-            std::string name = cur_path.empty() ? "None" : std::string(asset_file_name(cur_path));
-            if (asset_unsaved(handle)) { name += "*"; }
-
-            if (ImGui::Button((name + popup_id).c_str(), ImVec2(field_width, 0.0f)))
-            {
-                open_asset_picker(popup_id, asset_type_hash);
-                ImGui::OpenPopup(popup_id.c_str());
-            }
-
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("%s", cur_path.empty() ? "nothing assigned, click to pick" : cur_path.c_str());
-            }
-
-            if (ImGui::BeginDragDropTarget())
-            {
-                const ImGuiPayload* peek = ImGui::GetDragDropPayload();
-                if (peek && peek->IsDataType(ASSET_PAYLOAD) &&
-                    assets::path_is(static_cast<const char*>(peek->Data), asset_type_hash))
-                {
-                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))
-                    {
-                        out_handle = assets::load(asset_type_hash, static_cast<const char*>(payload->Data));
-                        modified = true;
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            if (out_remove)
-            {
-                ImGui::SameLine();
-                if (ImGui::Button(("x" + popup_id).c_str(), ImVec2(ImGui::GetFrameHeight(), 0.0f)))
-                {
-                    *out_remove = true;
-                }
-            }
-
-            if (ImGui::BeginPopup(popup_id.c_str()))
-            {
-                std::string picked;
-                if (draw_asset_picker(asset_type_hash, picked))
-                {
-                    out_handle = picked.empty() ? asset_handle_t{} : assets::load(asset_type_hash, picked);
-                    modified = true;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
-
-            if (asset_type_hash == tau::get_type_id<tau::material_t>() && handle.is_valid())
-            {
-                ImGui::PushID(popup_id.c_str());
-                ImGui::Indent();
-                if (ImGui::TreeNode("Properties"))
-                {
-                    const history::target_t target = history::asset_target(asset_type_hash, handle);
-                    history::watch(world, target);
-                    if (draw_material_properties(world, handle)) { history::edited(world, target, "Edit Material"); }
-                    ImGui::TreePop();
-                }
-                ImGui::Unindent();
-                ImGui::PopID();
-            }
-
-            return modified;
         }
 
         bool draw_asset_list(tau::world_t& world, tau::reflection::data_t& data, tau::reflection::any_t& instance,
@@ -524,8 +96,8 @@ namespace tau::editor::panels
                 bool remove = false;
                 asset_handle_t new_handle = list[i];
 
-                if (draw_asset_slot(world, row_label.c_str(), prop.asset_type_hash, list[i], new_handle, row_id,
-                                    &remove))
+                if (widgets::asset_slot(world, row_label.c_str(), prop.asset_type_hash, list[i], new_handle, row_id,
+                                        &remove))
                 {
                     list[i] = new_handle;
                     modified = true;
@@ -841,8 +413,8 @@ namespace tau::editor::panels
                     const asset_handle_t handle = tau::reflection::asset_of(field_value);
                     asset_handle_t new_handle = handle;
 
-                    if (draw_asset_slot(world, label, prop->asset_type_hash, handle, new_handle,
-                                        "##asset_" + std::to_string(id)))
+                    if (widgets::asset_slot(world, label, prop->asset_type_hash, handle, new_handle,
+                                            "##asset_" + std::to_string(id)))
                     {
                         data.set(instance, new_handle);
                         was_modified = true;
@@ -881,11 +453,12 @@ namespace tau::editor::panels
             const asset_type_t* type = assets::type_by_path(path);
             if (!type) { return; }
 
+            const asset_editors::asset_editor_t* editor = asset_editors::of(type->id);
             if (inspected.path != path)
             {
                 release_inspected();
                 inspected.path = path;
-                if (type->id == tau::get_type_id<material_t>() || type->id == tau::get_type_id<texture_t>())
+                if (editor && editor->load_when_inspected)
                 {
                     inspected.handle = assets::pin(assets::load(type->id, path));
                 }
@@ -893,7 +466,7 @@ namespace tau::editor::panels
 
             const history::doc_t doc = {history::doc_kind_e::ASSET, inspected.handle.guid};
             const bool unsaved = inspected.handle.is_valid() && history::is_dirty(doc);
-            ImGui::TextUnformatted((std::string(asset_file_name(path)) + (unsaved ? "*" : "")).c_str());
+            ImGui::TextUnformatted((std::string(widgets::asset_file_name(path)) + (unsaved ? "*" : "")).c_str());
             if (ImGui::BeginPopupContextItem("##asset_menu"))
             {
                 const bool editing = ctx.cur_mode == editor_mode_e::EDIT;
@@ -906,36 +479,9 @@ namespace tau::editor::panels
             ImGui::TextDisabled("GUID %s", guid != 0 ? assets::guid_text(guid).c_str() : "none yet");
             ImGui::Separator();
 
-            if (type->id == tau::get_type_id<material_t>())
-            {
-                const history::target_t target = history::asset_target(type->id, inspected.handle);
-                history::watch(world, target);
-                if (draw_material_properties(world, inspected.handle))
-                {
-                    history::edited(world, target, "Edit Material");
-                }
-            }
-            else if (const texture_t* tex = type->id == tau::get_type_id<texture_t>()
-                                                ? assets::get(asset_t<texture_t>{inspected.handle})
-                                                : nullptr)
-            {
-                ImGui::Text("%d x %d", tex->width, tex->height);
-                const f32 width = std::min(ImGui::GetContentRegionAvail().x, 512.0f);
-                if (tex->width > 0)
-                {
-                    ImGui::Image((ImTextureID)(intptr_t)tex->bindless_id,
-                                 ImVec2(width, width * static_cast<f32>(tex->height) / static_cast<f32>(tex->width)));
-                }
-            }
-            else if (type->id == tau::get_type_id<scene_t>() && !asset_files::rel_of(path).empty())
-            {
-                if (ImGui::Button("Open Scene"))
-                {
-                    ctx.unsaved_action_scene = asset_files::source_of(path).string();
-                    request_action(world, ctx, unsaved_action_e::LOAD_SCENE);
-                }
-            }
+            if (editor && editor->draw_inspector) { editor->draw_inspector(world, ctx, path, inspected.handle); }
         }
+
         enum class prefab_action_e : u8_t
         {
             NONE,
@@ -958,12 +504,13 @@ namespace tau::editor::panels
         {
             const std::string path = prefab_edit::prefab_path(world, root);
             const prefab_instance_t& instance = world.registry.get<prefab_instance_t>(root);
-            const bool unsaved = asset_unsaved(instance.prefab);
+            const bool unsaved = widgets::asset_unsaved(instance.prefab);
 
             ImGui::TextColored(PREFAB_COLOR, "Prefab");
             ImGui::SameLine();
-            ImGui::TextUnformatted(path.empty() ? "missing"
-                                                : (std::string(asset_file_name(path)) + (unsaved ? "*" : "")).c_str());
+            ImGui::TextUnformatted(path.empty()
+                                       ? "missing"
+                                       : (std::string(widgets::asset_file_name(path)) + (unsaved ? "*" : "")).c_str());
             if (ImGui::IsItemHovered() && !path.empty()) { ImGui::SetTooltip("%s", path.c_str()); }
 
             const u64_t root_guid = guid_system::of(world.registry, root);
@@ -1098,7 +645,8 @@ namespace tau::editor::panels
                     }
                 }
 
-                if (const unresolved_components_t* kept = world.registry.try_get<unresolved_components_t>(selected_entity))
+                if (const unresolved_components_t* kept =
+                        world.registry.try_get<unresolved_components_t>(selected_entity))
                 {
                     const nlohmann::json saved = nlohmann::json::parse(kept->json, nullptr, false);
                     if (saved.is_object())

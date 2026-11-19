@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "tau-editor/asset_cook.h"
+#include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
@@ -9,11 +10,12 @@
 #include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
-#include "tau/vfs.h"
 #include "tau/asset.h"
 #include "tau/assets/texture.h"
 #include "tau/engine.h"
+#include "tau/rendering/renderer_constants.h"
 #include "tau/systems/guid.h"
+#include "tau/vfs.h"
 
 #include <SDL3/SDL_misc.h>
 #include <algorithm>
@@ -57,8 +59,7 @@ namespace tau::editor::panels
         {
             NONE,
             NEW_FOLDER,
-            NEW_MATERIAL,
-            NEW_SCENE,
+            NEW_ASSET,
             RENAME,
             DUPLICATE,
             REMOVE,
@@ -72,6 +73,8 @@ namespace tau::editor::panels
             std::string rel;
             std::vector<std::string> rels;
             u64_t entity = 0;
+            // NEW_ASSET
+            u64_t type_id = 0;
         };
 
         struct state_t
@@ -100,7 +103,7 @@ namespace tau::editor::panels
             char search[128] = {};
             f32 tile = 76.0f;
 
-            std::unordered_map<std::string, asset_t<texture_t>> thumbs;
+            std::unordered_map<std::string, asset_handle_t> thumbs;
 
             action_t action;
         };
@@ -386,8 +389,14 @@ namespace tau::editor::panels
         {
             const bool can = editable(ctx);
             if (ImGui::MenuItem("Folder", nullptr, false, can)) { g.action = {action_kind_e::NEW_FOLDER}; }
-            if (ImGui::MenuItem("Material", nullptr, false, can)) { g.action = {action_kind_e::NEW_MATERIAL}; }
-            if (ImGui::MenuItem("Scene", nullptr, false, can)) { g.action = {action_kind_e::NEW_SCENE}; }
+            for (const asset_editors::asset_editor_t& editor : asset_editors::all())
+            {
+                if (editor.create && ImGui::MenuItem(editor.create_label, nullptr, false, can))
+                {
+                    g.action = {action_kind_e::NEW_ASSET};
+                    g.action.type_id = editor.type_id;
+                }
+            }
         }
 
         ImU32 type_color(const item_t& item)
@@ -395,14 +404,8 @@ namespace tau::editor::panels
             if (item.is_dir) { return IM_COL32(200, 170, 90, 255); }
             if (!item.type) { return IM_COL32(110, 110, 110, 255); }
 
-            const std::string_view key = item.type->key;
-            if (key == "texture") { return IM_COL32(90, 150, 210, 255); }
-            if (key == "mesh") { return IM_COL32(120, 190, 110, 255); }
-            if (key == "material") { return IM_COL32(210, 120, 80, 255); }
-            if (key == "scene") { return IM_COL32(170, 110, 200, 255); }
-            if (key == "shader") { return IM_COL32(200, 200, 90, 255); }
-            if (key == "prefab") { return IM_COL32(90, 180, 230, 255); }
-            return IM_COL32(150, 150, 150, 255);
+            const asset_editors::asset_editor_t* editor = asset_editors::of(item.type->id);
+            return editor ? editor->color : IM_COL32(150, 150, 150, 255);
         }
 
         std::string type_label(const item_t& item)
@@ -426,15 +429,16 @@ namespace tau::editor::panels
 
         void draw_icon(ImDrawList* draw, const item_t& item, ImVec2 min, ImVec2 max)
         {
-            if (item.type && item.type->key == "texture")
+            const asset_editors::asset_editor_t* editor = item.type ? asset_editors::of(item.type->id) : nullptr;
+            if (editor && editor->preview_load && editor->preview_image)
             {
                 const std::string vfs = vfs_of(g.root, item.rel);
                 auto [it, inserted] = g.thumbs.try_emplace(vfs);
-                if (inserted) { it->second = assets::pin(assets::load_async<texture_t>(vfs)); }
+                if (inserted) { it->second = assets::pin(editor->preview_load(vfs)); }
 
-                if (const texture_t* tex = assets::get(it->second); tex && tex->width > 0)
+                if (const u32_t image = editor->preview_image(it->second); image != renderer::BINDLESS_NULL_HANDLE)
                 {
-                    draw->AddImage((ImTextureID)(intptr_t)tex->bindless_id, min, max);
+                    draw->AddImage((ImTextureID)(intptr_t)image, min, max);
                     return;
                 }
             }
@@ -463,8 +467,8 @@ namespace tau::editor::panels
         {
             if (item.is_dir || !item.type) { return false; }
             const std::string vfs = vfs_of(g.root, item.rel);
-            return history::is_dirty(history::asset_doc(vfs)) ||
-                   (prefab_stage::is_dirty() && assets::find(vfs) == prefab_stage::prefab().handle);
+            const asset_editors::asset_editor_t* editor = asset_editors::of(item.type->id);
+            return history::is_dirty(history::asset_doc(vfs)) || (editor && editor->unsaved && editor->unsaved(vfs));
         }
 
         void item_context_menu(const editor_context_t& ctx, const item_t& item)
@@ -552,14 +556,11 @@ namespace tau::editor::panels
             if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
                 if (item.is_dir) { navigate(g.root, item.rel); }
-                else if (item.type && item.type->key == "scene" && g.root == root_e::GAME)
+                else if (const asset_editors::asset_editor_t* editor =
+                             item.type ? asset_editors::of(item.type->id) : nullptr;
+                         editor && editor->open)
                 {
-                    ctx.unsaved_action_scene = asset_files::source_path(item.rel).string();
-                    request_action(world, ctx, unsaved_action_e::LOAD_SCENE);
-                }
-                else if (item.type && item.type->key == "prefab")
-                {
-                    prefab_stage::open(world, ctx, vfs_of(g.root, item.rel));
+                    editor->open(world, ctx, vfs_of(g.root, item.rel));
                 }
             }
 
@@ -644,8 +645,12 @@ namespace tau::editor::panels
             {
             case action_kind_e::NONE: return;
             case action_kind_e::NEW_FOLDER: made = asset_files::create_folder(world, g.dir); break;
-            case action_kind_e::NEW_MATERIAL: made = asset_files::create_material(world, g.dir); break;
-            case action_kind_e::NEW_SCENE: made = asset_files::create_scene(world, g.dir); break;
+            case action_kind_e::NEW_ASSET:
+                if (const asset_editors::asset_editor_t* editor = asset_editors::of(action.type_id))
+                {
+                    made = editor->create(world, g.dir);
+                }
+                break;
             case action_kind_e::RENAME:
                 if (action.rels.empty()) { start_rename(action.rel); }
                 else

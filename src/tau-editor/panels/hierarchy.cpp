@@ -1,6 +1,7 @@
 #include "hierarchy.h"
 
 #include "imgui.h"
+#include "tau-editor/asset_editors.h"
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
 #include "tau-editor/panels/asset_browser.h"
@@ -81,7 +82,7 @@ namespace tau::editor::panels
             // applied after drawing, the tree must not change mid loop
             action_t action;
             std::optional<drop_t> drop;
-            std::optional<std::pair<std::string, ecs::entity_t>> prefab_drop;
+            std::optional<std::pair<std::string, ecs::entity_t>> asset_drop;
         };
 
         state_t g;
@@ -344,25 +345,24 @@ namespace tau::editor::panels
             g.anchor = guid;
         }
 
-        void accept_prefab(ecs::entity_t parent)
+        void accept_asset(ecs::entity_t parent)
         {
             const ImGuiPayload* peek = ImGui::GetDragDropPayload();
-            if (!peek || !peek->IsDataType(ASSET_PAYLOAD) ||
-                !assets::path_is<prefab_t>(static_cast<const char*>(peek->Data)))
-            {
-                return;
-            }
+            if (!peek || !peek->IsDataType(ASSET_PAYLOAD)) { return; }
+
+            const asset_editors::asset_editor_t* editor = asset_editors::of_path(static_cast<const char*>(peek->Data));
+            if (!editor || !editor->drop_on_entity) { return; }
 
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))
             {
-                g.prefab_drop = std::make_pair(std::string(static_cast<const char*>(payload->Data)), parent);
+                g.asset_drop = std::make_pair(std::string(static_cast<const char*>(payload->Data)), parent);
             }
         }
 
         void draw_drop_target(world_t& world, const editor_context_t& ctx, ecs::entity_t entity)
         {
             if (!ImGui::BeginDragDropTarget()) { return; }
-            accept_prefab(entity);
+            accept_asset(entity);
 
             const ImVec2 min = ImGui::GetItemRectMin();
             const ImVec2 max = ImGui::GetItemRectMax();
@@ -538,7 +538,7 @@ namespace tau::editor::panels
 
             if (ImGui::BeginDragDropTarget())
             {
-                accept_prefab(ecs::NULL_ENTITY);
+                accept_asset(ecs::NULL_ENTITY);
 
                 constexpr ImGuiDragDropFlags flags =
                     ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
@@ -645,10 +645,13 @@ namespace tau::editor::panels
                 }
             }
 
-            if (g.prefab_drop)
+            if (g.asset_drop)
             {
-                prefab_edit::instantiate(world, ctx, g.prefab_drop->first, g.prefab_drop->second, nullptr);
-                g.prefab_drop.reset();
+                if (const asset_editors::asset_editor_t* editor = asset_editors::of_path(g.asset_drop->first))
+                {
+                    editor->drop_on_entity(world, ctx, g.asset_drop->first, g.asset_drop->second);
+                }
+                g.asset_drop.reset();
             }
             if (g.drop)
             {

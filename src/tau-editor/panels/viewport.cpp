@@ -1,6 +1,7 @@
 #include "viewport.h"
 
 #include "imgui.h"
+#include "tau-editor/asset_editors.h"
 #include "tau-editor/handle_math.h"
 #include "tau-editor/history.h"
 #include "tau-editor/panels/asset_browser.h"
@@ -28,7 +29,6 @@ namespace tau::editor::panels
 {
     namespace
     {
-        constexpr const char* DEFAULT_MATERIAL = "engine://assets/materials/default.mat";
         constexpr f32 MAX_GROUND_DISTANCE = 500.0f;
 
         vec3_t drop_point(const editor_context_t& ctx, vec2_t pixel)
@@ -45,32 +45,6 @@ namespace tau::editor::panels
             return at;
         }
 
-        void place_mesh(world_t& world, editor_context_t& ctx, const std::string& path, vec2_t pixel)
-        {
-            const vec3_t at = drop_point(ctx, pixel);
-
-            const u64_t guid = guid::generate();
-            const history::target_t target = history::entity_target(guid);
-            const std::string name = std::filesystem::path(path).stem().string();
-            history::begin(world, "Create " + name, {&target, 1});
-
-            const ecs::entity_t entity = world.registry.create();
-            guid_system::assign(world.registry, entity, guid);
-            world.registry.emplace<tag_t>(entity, name);
-            world.registry.emplace<transform_t>(entity).local_position = at;
-
-            mesh_renderer_t& renderer = world.registry.emplace<mesh_renderer_t>(entity);
-            renderer.mesh = assets::load<mesh_t>(path);
-            renderer.material = assets::load<material_t>(DEFAULT_MATERIAL);
-
-            if (const ecs::entity_t root = prefab_stage::root(world); root != ecs::NULL_ENTITY)
-            {
-                transform_system::set_parent_keep_world(world.registry, entity, root, ecs::NULL_ENTITY);
-            }
-
-            ctx.selection.set(guid);
-            history::end(world);
-        }
     } // namespace
 
     void draw_viewport(world_t& world, editor_context_t& ctx)
@@ -110,21 +84,15 @@ namespace tau::editor::panels
                     const ImGuiPayload* peek = ImGui::GetDragDropPayload();
                     const char* path =
                         peek && peek->IsDataType(ASSET_PAYLOAD) ? static_cast<const char*>(peek->Data) : "";
-                    const bool mesh = assets::path_is<mesh_t>(path);
-                    const bool prefab = assets::path_is<prefab_t>(path);
-                    if (mesh || prefab)
+                    const asset_editors::asset_editor_t* editor = asset_editors::of_path(path);
+                    if (editor && editor->drop_in_viewport)
                     {
                         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))
                         {
                             const ImVec2 mouse = ImGui::GetMousePos();
                             const vec2_t pixel = {mouse.x - viewport_pos.x, mouse.y - viewport_pos.y};
-                            const std::string dropped = static_cast<const char*>(payload->Data);
-                            if (mesh) { place_mesh(world, ctx, dropped, pixel); }
-                            else
-                            {
-                                const vec3_t at = drop_point(ctx, pixel);
-                                prefab_edit::instantiate(world, ctx, dropped, ecs::NULL_ENTITY, &at);
-                            }
+                            editor->drop_in_viewport(world, ctx, static_cast<const char*>(payload->Data),
+                                                     drop_point(ctx, pixel));
                         }
                     }
                     ImGui::EndDragDropTarget();

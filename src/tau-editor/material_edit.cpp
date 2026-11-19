@@ -1,8 +1,12 @@
 #include "material_edit.h"
 
+#include "imgui.h"
+#include "tau-editor/asset_editors.h"
+#include "tau-editor/asset_files.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
 #include "tau-editor/project_manager.h"
+#include "tau-editor/widgets.h"
 #include "tau/asset.h"
 #include "tau/asset_sources.h"
 #include "tau/assets/material.h"
@@ -10,14 +14,18 @@
 #include "tau/assets/texture.h"
 #include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/vfs.h"
 
+#include <algorithm>
+#include <climits>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <json/json.hpp>
 #include <string>
+#include <vector>
 
 namespace tau::editor::material_edit
 {
@@ -254,11 +262,259 @@ namespace tau::editor::material_edit
             out_source = target;
             return true;
         }
+        std::vector<std::string> split_enum_labels(const std::string& csv)
+        {
+            std::vector<std::string> labels;
+            std::size_t start = 0;
+
+            while (start <= csv.size())
+            {
+                const std::size_t comma = csv.find(',', start);
+                const std::size_t end = (comma == std::string::npos) ? csv.size() : comma;
+
+                std::string label = csv.substr(start, end - start);
+                const std::size_t first = label.find_first_not_of(" \t");
+                const std::size_t last = label.find_last_not_of(" \t");
+                if (first != std::string::npos) { labels.push_back(label.substr(first, last - first + 1)); }
+
+                if (comma == std::string::npos) { break; }
+                start = comma + 1;
+            }
+
+            return labels;
+        }
+
+        constexpr const char* SAMPLER_LABELS[] = {"Linear Repeat", "Linear Clamp", "Nearest Repeat", "Nearest Clamp"};
+
+        void draw_member_tooltip(const shader_member_t& member)
+        {
+            if (member.tooltip.empty() || !ImGui::IsItemHovered()) { return; }
+            ImGui::SetTooltip("%s", member.tooltip.c_str());
+        }
+
+        bool draw_properties(world_t& world, asset_handle_t handle)
+        {
+            material_t* mat = assets::get(asset_t<material_t>{handle});
+            if (!mat) { return false; }
+
+            const shader_t* shader = assets::get(mat->shader);
+            if (!shader || mat->data.empty()) { return false; }
+
+            std::vector<const shader_member_t*> ordered;
+            ordered.reserve(shader->module.members.size());
+            for (const auto& [hash, member] : shader->module.members) { ordered.push_back(&member); }
+            std::sort(ordered.begin(), ordered.end(),
+                      [](const shader_member_t* a, const shader_member_t* b) { return a->offset < b->offset; });
+
+            bool changed = false;
+            u32_t hidden_count = 0;
+
+            for (const shader_member_t* member : ordered)
+            {
+                if (member->offset + member->size > mat->data.size()) { continue; }
+
+                if (member->edit == shader_member_edit_e::HIDDEN)
+                {
+                    hidden_count++;
+                    continue;
+                }
+
+                const u32_t name_hash = tau::hash_string(member->name);
+                const char* label = member->name.empty() ? "(unnamed)" : member->name.c_str();
+                void* slot = mat->data.data() + member->offset;
+                bool member_changed = false;
+
+                ImGui::PushID(static_cast<i32>(member->offset));
+
+                switch (member->edit)
+                {
+                case shader_member_edit_e::TEXTURE:
+                {
+                    const asset_t<texture_t>* bound = mat->textures.find(name_hash);
+                    const asset_handle_t cur = bound ? bound->handle : asset_handle_t{};
+
+                    asset_handle_t picked = cur;
+                    if (widgets::asset_slot(world, label, tau::get_type_id<tau::texture_t>(), cur, picked,
+                                            "##mattex_" + std::to_string(member->offset)))
+                    {
+                        mat->set_texture(name_hash, asset_t<texture_t>{picked});
+                        member_changed = true;
+                    }
+                    break;
+                }
+                case shader_member_edit_e::SAMPLER:
+                {
+                    i32 cur = static_cast<i32>(*static_cast<u32_t*>(slot));
+                    if (cur < 0 || cur >= IM_ARRAYSIZE(SAMPLER_LABELS)) { cur = 0; }
+
+                    if (ImGui::Combo(label, &cur, SAMPLER_LABELS, IM_ARRAYSIZE(SAMPLER_LABELS)))
+                    {
+                        *static_cast<u32_t*>(slot) = static_cast<u32_t>(cur);
+                        member_changed = true;
+                    }
+                    draw_member_tooltip(*member);
+                    break;
+                }
+                case shader_member_edit_e::ENUM:
+                {
+                    const std::vector<std::string> labels = split_enum_labels(member->enum_names);
+
+                    std::vector<const char*> items;
+                    items.reserve(labels.size());
+                    for (const std::string& l : labels) { items.push_back(l.c_str()); }
+
+                    i32 cur = (member->type == shader_member_type_e::INT)
+                                  ? *static_cast<i32*>(slot)
+                                  : static_cast<i32>(*static_cast<u32_t*>(slot));
+
+                    if (items.empty() || cur < 0 || cur >= static_cast<i32>(items.size()))
+                    {
+                        ImGui::Text("%s", label);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("%d (no label)", cur);
+                        break;
+                    }
+
+                    if (ImGui::Combo(label, &cur, items.data(), static_cast<i32>(items.size())))
+                    {
+                        if (member->type == shader_member_type_e::INT) { *static_cast<i32*>(slot) = cur; }
+                        else
+                        {
+                            *static_cast<u32_t*>(slot) = static_cast<u32_t>(cur);
+                        }
+                        member_changed = true;
+                    }
+                    draw_member_tooltip(*member);
+                    break;
+                }
+                case shader_member_edit_e::COLOR:
+                {
+                    if (member->type == shader_member_type_e::FLOAT4)
+                    {
+                        member_changed = ImGui::ColorEdit4(label, static_cast<f32*>(slot));
+                    }
+                    else
+                    {
+                        member_changed = ImGui::ColorEdit3(label, static_cast<f32*>(slot));
+                    }
+                    draw_member_tooltip(*member);
+                    break;
+                }
+                default:
+                {
+                    const bool ranged = member->has_range();
+
+                    switch (member->type)
+                    {
+                    case shader_member_type_e::FLOAT:
+                        member_changed = ranged ? ImGui::SliderFloat(label, static_cast<f32*>(slot), member->range_min,
+                                                                     member->range_max)
+                                                : ImGui::DragFloat(label, static_cast<f32*>(slot), 0.01f);
+                        break;
+                    case shader_member_type_e::FLOAT2:
+                        member_changed = ranged ? ImGui::SliderFloat2(label, static_cast<f32*>(slot), member->range_min,
+                                                                      member->range_max)
+                                                : ImGui::DragFloat2(label, static_cast<f32*>(slot), 0.01f);
+                        break;
+                    case shader_member_type_e::FLOAT3:
+                        member_changed = ranged ? ImGui::SliderFloat3(label, static_cast<f32*>(slot), member->range_min,
+                                                                      member->range_max)
+                                                : ImGui::DragFloat3(label, static_cast<f32*>(slot), 0.01f);
+                        break;
+                    case shader_member_type_e::FLOAT4:
+                        member_changed = ranged ? ImGui::SliderFloat4(label, static_cast<f32*>(slot), member->range_min,
+                                                                      member->range_max)
+                                                : ImGui::DragFloat4(label, static_cast<f32*>(slot), 0.01f);
+                        break;
+                    case shader_member_type_e::INT:
+                        member_changed = ranged ? ImGui::SliderInt(label, static_cast<i32*>(slot),
+                                                                   static_cast<i32>(member->range_min),
+                                                                   static_cast<i32>(member->range_max))
+                                                : ImGui::DragInt(label, static_cast<i32*>(slot));
+                        break;
+                    case shader_member_type_e::UINT:
+                    {
+                        i32 as_int = static_cast<i32>(*static_cast<u32_t*>(slot));
+                        const i32 lo = ranged ? static_cast<i32>(member->range_min) : 0;
+                        const i32 hi = ranged ? static_cast<i32>(member->range_max) : INT_MAX;
+
+                        if (ranged ? ImGui::SliderInt(label, &as_int, lo, hi)
+                                   : ImGui::DragInt(label, &as_int, 1.0f, lo, hi))
+                        {
+                            *static_cast<u32_t*>(slot) = static_cast<u32_t>(as_int < 0 ? 0 : as_int);
+                            member_changed = true;
+                        }
+                        break;
+                    }
+                    case shader_member_type_e::BOOL:
+                    {
+                        bool as_bool = *static_cast<u32_t*>(slot) != 0u;
+                        if (ImGui::Checkbox(label, &as_bool))
+                        {
+                            *static_cast<u32_t*>(slot) = as_bool ? 1u : 0u;
+                            member_changed = true;
+                        }
+                        break;
+                    }
+                    default: ImGui::TextDisabled("%s (%u bytes, unsupported type)", label, member->size); break;
+                    }
+
+                    draw_member_tooltip(*member);
+                    break;
+                }
+                }
+
+                ImGui::PopID();
+
+                if (member_changed)
+                {
+                    changed = true;
+
+                    if (std::find(mat->authored_properties.begin(), mat->authored_properties.end(), name_hash) ==
+                        mat->authored_properties.end())
+                    {
+                        mat->authored_properties.push_back(name_hash);
+                    }
+                }
+            }
+
+            if (hidden_count > 0)
+            {
+                ImGui::TextDisabled("%u engine-bound %s hidden", hidden_count,
+                                    hidden_count == 1 ? "property" : "properties");
+            }
+
+            if (changed) { mat->dirty_frames = tau::renderer::MAX_FRAMES_IN_FLIGHT; }
+
+            return changed;
+        }
+
+        bool edit_properties(world_t& world, asset_handle_t handle)
+        {
+            const history::target_t target = history::asset_target(get_type_id<material_t>(), handle);
+            history::watch(world, target);
+            const bool changed = draw_properties(world, handle);
+            if (changed) { history::edited(world, target, "Edit Material"); }
+            return changed;
+        }
+
+        void draw_inspector(world_t& world, editor_context_t&, const std::string&, asset_handle_t handle)
+        { edit_properties(world, handle); }
     } // namespace
 
     void init(editor_context_t& ctx)
     {
         g_ctx = &ctx;
         history::reg_editable(get_type_id<material_t>(), &capture, &apply, &write);
+
+        asset_editors::add({
+            .type_id = get_type_id<material_t>(),
+            .color = IM_COL32(210, 120, 80, 255),
+            .create_label = "Material",
+            .create = &asset_files::create_material,
+            .load_when_inspected = true,
+            .draw_inspector = &draw_inspector,
+            .draw_inline = &edit_properties,
+        });
     }
 } // namespace tau::editor::material_edit

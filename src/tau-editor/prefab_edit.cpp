@@ -1,6 +1,8 @@
 #include "prefab_edit.h"
 
+#include "imgui.h"
 #include "tau-editor/asset_cook.h"
+#include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
@@ -32,9 +34,6 @@ namespace tau::editor::prefab_edit
     namespace
     {
         constexpr const char* TRANSFORM_KEY = "transform_t";
-
-        editor_context_t* g_ctx = nullptr;
-
 
         std::string name_of(const world_t& world, ecs::entity_t entity)
         {
@@ -133,11 +132,13 @@ namespace tau::editor::prefab_edit
                 auto [it, inserted] = outers.try_emplace(instance);
                 if (!inserted) { return it->second; }
 
-                const nlohmann::json* flat =
-                    prefab::lookup_asset(lookup, reg.get<prefab_instance_t>(root).prefab);
+                const nlohmann::json* flat = prefab::lookup_asset(lookup, reg.get<prefab_instance_t>(root).prefab);
                 if (flat && flat->contains("entities"))
                 {
-                    for (const nlohmann::json& e : (*flat)["entities"]) { it->second.by_source[guid::from_json(e["id"])] = &e; }
+                    for (const nlohmann::json& e : (*flat)["entities"])
+                    {
+                        it->second.by_source[guid::from_json(e["id"])] = &e;
+                    }
                 }
                 for (auto [entity, part] : reg.view<prefab_part_t>().each())
                 {
@@ -200,7 +201,7 @@ namespace tau::editor::prefab_edit
                 states[0]["next"] = nullptr;
             }
             return {
-                {"guid",     guid                              },
+                {"guid", guid},
                 {"entities", prefab::collapse(states, lookup)},
             };
         }
@@ -282,7 +283,10 @@ namespace tau::editor::prefab_edit
                 {
                     out.push_back(resync(world, root, *old_flat, *new_flat));
                     guids.insert(guids.end(), out.back().old_parts.begin(), out.back().old_parts.end());
-                    for (const nlohmann::json& state : out.back().states) { guids.push_back(guid::from_json(state["id"])); }
+                    for (const nlohmann::json& state : out.back().states)
+                    {
+                        guids.push_back(guid::from_json(state["id"]));
+                    }
                 }
             }
             return out;
@@ -392,8 +396,22 @@ namespace tau::editor::prefab_edit
 
     void init(editor_context_t& ctx)
     {
-        g_ctx = &ctx;
         history::reg_editable(get_type_id<prefab_t>(), &capture, &apply_data, &write);
+
+        asset_editors::add({
+            .type_id = get_type_id<prefab_t>(),
+            .color = IM_COL32(90, 180, 230, 255),
+            .open = [](world_t& world, editor_context_t& ctx, const std::string& vfs)
+            { prefab_stage::open(world, ctx, vfs); },
+            .drop_in_viewport = [](world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3_t& at)
+            { instantiate(world, ctx, vfs, ecs::NULL_ENTITY, &at); },
+            .drop_on_entity = [](world_t& world, editor_context_t& ctx, const std::string& vfs, ecs::entity_t parent)
+            { instantiate(world, ctx, vfs, parent, nullptr); },
+            .reload = &reload,
+            // the open prefabs edits live in the stage until it closes
+            .unsaved = [](const std::string& vfs)
+            { return prefab_stage::is_dirty() && assets::find(vfs) == prefab_stage::prefab().handle; },
+        });
     }
 
     std::string create(world_t& world, editor_context_t& ctx, ecs::entity_t root, const std::string& dir)
@@ -471,7 +489,10 @@ namespace tau::editor::prefab_edit
         }
 
         nlohmann::json entry = prefab::new_instance(*flat, serialization::asset_ref(handle));
-        if (parent != ecs::NULL_ENTITY) { entry["parent"] = guid::to_json(guid_system::ensure(world.registry, parent)); }
+        if (parent != ecs::NULL_ENTITY)
+        {
+            entry["parent"] = guid::to_json(guid_system::ensure(world.registry, parent));
+        }
         const std::vector<nlohmann::json> states = prefab::expand_instance(entry, flat);
 
         std::vector<u64_t> guids;
@@ -569,8 +590,8 @@ namespace tau::editor::prefab_edit
             const prefab_instance_t* inner = reg.try_get<prefab_instance_t>(entity);
             if (entity != root && inner && inner->prefab.is_valid() && holds(inner->prefab, handle))
             {
-                TAU_LOG_ERROR("PREFAB", "Cannot apply to {}, the {} inside would make it hold itself",
-                              stem_of(handle), stem_of(inner->prefab));
+                TAU_LOG_ERROR("PREFAB", "Cannot apply to {}, the {} inside would make it hold itself", stem_of(handle),
+                              stem_of(inner->prefab));
                 return;
             }
         }
@@ -635,8 +656,7 @@ namespace tau::editor::prefab_edit
         }
 
         // one level: nested instances come back as instances
-        const std::vector<nlohmann::json> states =
-            standalone_states(world, parts, same, root, prefab::asset_lookup());
+        const std::vector<nlohmann::json> states = standalone_states(world, parts, same, root, prefab::asset_lookup());
 
         history::begin(world, "Unpack " + name_of(world, root), entity_targets(guids));
         apply_states(world, states, {});
@@ -670,8 +690,7 @@ namespace tau::editor::prefab_edit
         if (root == ecs::NULL_ENTITY) { return out; }
 
         const prefab::lookup_t lookup = prefab::asset_lookup();
-        const nlohmann::json* flat =
-            prefab::lookup_asset(lookup, world.registry.get<prefab_instance_t>(root).prefab);
+        const nlohmann::json* flat = prefab::lookup_asset(lookup, world.registry.get<prefab_instance_t>(root).prefab);
         if (!flat) { return out; }
 
         const u64_t instance = guid_system::of(world.registry, root);

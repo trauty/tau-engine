@@ -1,16 +1,17 @@
 #include "tau-editor/asset_watch.h"
 
 #include "tau-editor/asset_cook.h"
+#include "tau-editor/asset_editors.h"
 #include "tau-editor/history.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
-#include "tau/vfs.h"
 #include "tau/asset.h"
 #include "tau/assets/prefab.h"
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/rendering/renderer.h"
+#include "tau/vfs.h"
 
 #include <algorithm>
 #include <chrono>
@@ -218,7 +219,8 @@ namespace tau::editor::asset_watch
 
                 for (const fs::path& source : cooked)
                 {
-                    const std::string name = vfs_name_for(source, engine_root, tau::vfs::asset_prefix(tau::vfs::ENGINE_NS));
+                    const std::string name =
+                        vfs_name_for(source, engine_root, tau::vfs::asset_prefix(tau::vfs::ENGINE_NS));
                     if (!name.empty()) { outcome.reload.push_back(name); }
                 }
             }
@@ -270,8 +272,8 @@ namespace tau::editor::asset_watch
 
                 if (prefab_stage::on_disk_change(world, vfs_name)) { continue; }
 
-                const bool is_prefab = tau::assets::path_is<tau::prefab_t>(vfs_name);
-                if (is_prefab ? prefab_edit::reload(world, vfs_name) : tau::assets::reload(vfs_name))
+                const asset_editors::asset_editor_t* editor = asset_editors::of_path(vfs_name);
+                if (editor && editor->reload ? editor->reload(world, vfs_name) : tau::assets::reload(vfs_name))
                 {
                     // renderer may warn again if it goes missing later
                     tau::renderer::forget_missing_asset_reports();
