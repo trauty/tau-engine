@@ -400,12 +400,12 @@ namespace tau::editor::history
     namespace
     {
         // saved even if the cook fails
-        bool save_docs(std::span<const doc_t> docs)
+        bool save_docs(std::span<const doc_t> to_save)
         {
             bool ok = true;
             std::vector<std::filesystem::path> sources;
 
-            for (const doc_t doc : docs)
+            for (const doc_t doc : to_save)
             {
                 asset_handle_t handle;
                 const editable_t* editable = editable_of(doc, handle);
@@ -514,9 +514,9 @@ namespace tau::editor::history
 
     bool save_assets()
     {
-        std::vector<doc_t> docs = dirty_docs();
-        std::erase_if(docs, [](doc_t doc) { return doc.kind != doc_kind_e::ASSET; });
-        return save_docs(docs);
+        std::vector<doc_t> dirty = dirty_docs();
+        std::erase_if(dirty, [](doc_t doc) { return doc.kind != doc_kind_e::ASSET; });
+        return save_docs(dirty);
     }
 
     bool revert_asset(doc_t doc)

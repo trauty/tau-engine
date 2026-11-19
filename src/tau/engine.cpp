@@ -150,10 +150,7 @@ namespace tau::engine
                 switch (event.type)
                 {
                 case SDL_EVENT_QUIT: is_running = false; break;
-                case SDL_EVENT_WINDOW_RESIZED:
-                    tau::renderer::on_window_resized(static_cast<u32_t>(event.window.data1),
-                                                     static_cast<u32_t>(event.window.data2));
-                    break;
+                case SDL_EVENT_WINDOW_RESIZED: tau::renderer::on_window_resized(); break;
 
                 case SDL_EVENT_WILL_ENTER_BACKGROUND:
                 case SDL_EVENT_DID_ENTER_BACKGROUND: is_suspended = true; break;

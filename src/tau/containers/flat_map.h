@@ -159,7 +159,7 @@ namespace tau
             }
 
             return INVALID;
-        };
+        }
 
         u32_t find_or_insert_slot(u32_t key)
         {

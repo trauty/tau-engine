@@ -730,14 +730,14 @@ namespace tau::editor::imgui
 
         renderer::register_renderer_feature(
             "ImGui"_h, renderer::FEATURE_ORDER_UI,
-            [](renderer::rendergraph_t& graph, ecs::registry_t& reg)
+            [](renderer::rendergraph_t& graph, ecs::registry_t&)
             {
                 renderer::rg_pass_t& pass = graph.add_pass("ImGuiPass"_h, "ImGuiPass");
 
                 pass.color_writes = {graph.get_resource("Swapchain"_h)};
                 pass.texture_reads.push_back(graph.get_resource("FinalOutput"_h));
 
-                pass.execute_callback = [](VkCommandBuffer cmd, ecs::registry_t& reg)
+                pass.execute_callback = [](VkCommandBuffer cmd, ecs::registry_t&)
                 {
                     if (!ctx.draw_data || ctx.draw_data->CmdListsCount == 0) { return; }
 

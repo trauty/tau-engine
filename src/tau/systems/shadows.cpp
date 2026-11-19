@@ -338,7 +338,7 @@ namespace tau::shadow_system
             }
         }
 
-        for (const auto& [key, position] : caster_positions)
+        for (auto [key, position] : caster_positions)
         {
             if (current.find(key) == nullptr) { out_moved.push_back({position, position}); }
         }

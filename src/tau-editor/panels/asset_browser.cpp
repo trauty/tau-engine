@@ -253,7 +253,7 @@ namespace tau::editor::panels
             ctx.selection.clear();
         }
 
-        void on_press(editor_context_t& ctx, const std::string& rel, bool selected)
+        void on_press(const std::string& rel, bool selected)
         {
             const ImGuiIO& io = ImGui::GetIO();
             g.dragged = false;
@@ -563,7 +563,7 @@ namespace tau::editor::panels
                                               : "Not an asset");
             }
 
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) { on_press(ctx, item.rel, selected); }
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) { on_press(item.rel, selected); }
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !selected)
             {
                 g.selection = {item.rel};
@@ -698,7 +698,7 @@ namespace tau::editor::panels
                 const ecs::entity_t entity = guid_system::find(world.registry, action.entity);
                 if (entity != ecs::NULL_ENTITY)
                 {
-                    const std::string made_prefab = prefab_edit::create(world, ctx, entity, action.rel);
+                    const std::string made_prefab = prefab_edit::create(world, entity, action.rel);
                     relist(ctx);
                     if (!made_prefab.empty()) { g.selection = {made_prefab}; }
                 }

@@ -5,7 +5,6 @@
 #include "tau-editor/asset_files.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
-#include "tau-editor/project_manager.h"
 #include "tau-editor/widgets.h"
 #include "tau/asset.h"
 #include "tau/asset_sources.h"
@@ -16,7 +15,6 @@
 #include "tau/log.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_constants.h"
-#include "tau/vfs.h"
 
 #include <algorithm>
 #include <climits>
@@ -31,39 +29,6 @@ namespace tau::editor::material_edit
 {
     namespace
     {
-        editor_context_t* g_ctx = nullptr;
-
-        std::filesystem::path engine_source_root()
-        {
-            const std::filesystem::path engine = project_manager::engine_dir();
-            if (engine.empty()) { return {}; }
-
-            const std::filesystem::path installed = engine / "share" / "tau" / "engine-assets-src";
-            return std::filesystem::is_directory(installed) ? installed : engine / "assets";
-        }
-
-        std::filesystem::path resolve_source_path(const std::string& virtual_path)
-        {
-            const vfs::path_parts_t parts = vfs::split_protocol(virtual_path);
-            if (parts.protocol.empty()) { return {}; }
-
-            const std::string protocol(parts.protocol.substr(0, parts.protocol.size() - 3));
-            std::string rel(parts.rest);
-
-            constexpr std::string_view assets_prefix = "assets/";
-            if (rel.rfind(assets_prefix, 0) == 0) { rel.erase(0, assets_prefix.size()); }
-
-            std::filesystem::path root;
-            if (protocol == "engine") { root = engine_source_root(); }
-            else if (protocol == "game" && g_ctx && !g_ctx->project_assets_dir.empty())
-            {
-                root = g_ctx->project_assets_dir;
-            }
-            if (root.empty()) { return {}; }
-
-            return root / rel;
-        }
-
         // float as double gains digits (0.9f -> 0.8999999761581421), churns diffs
         f64 tidy(f32 value) { return std::round(static_cast<f64>(value) * 1e6) / 1e6; }
 
@@ -85,7 +50,7 @@ namespace tau::editor::material_edit
             nlohmann::json members = nlohmann::json::object();
             nlohmann::json textures = nlohmann::json::object();
 
-            for (const auto& [name_hash, member] : shader->module.members)
+            for (auto [name_hash, member] : shader->module.members)
             {
                 if (member.edit == shader_member_edit_e::HIDDEN) { continue; }
 
@@ -104,9 +69,9 @@ namespace tau::editor::material_edit
 
             const nlohmann::json state = {
                 {"shader",   assets::path_of(mat->shader)},
-                {"members",  std::move(members)      },
-                {"textures", std::move(textures)     },
-                {"authored", mat->authored_properties},
+                {"members",  std::move(members)          },
+                {"textures", std::move(textures)         },
+                {"authored", mat->authored_properties    },
             };
             return nlohmann::json::to_cbor(state);
         }
@@ -130,7 +95,7 @@ namespace tau::editor::material_edit
             const nlohmann::json& members = state["members"];
             const nlohmann::json& textures = state["textures"];
 
-            for (const auto& [name_hash, member] : shader->module.members)
+            for (auto [name_hash, member] : shader->module.members)
             {
                 if (member.edit == shader_member_edit_e::HIDDEN) { continue; }
 
@@ -169,7 +134,7 @@ namespace tau::editor::material_edit
             }
 
             const std::string virtual_path = assets::path_of(handle);
-            const std::filesystem::path target = resolve_source_path(virtual_path);
+            const std::filesystem::path target = asset_files::source_of(virtual_path);
             if (target.empty())
             {
                 TAU_LOG_ERROR("EDITOR", "Cannot map '{}' to a source file", virtual_path);
@@ -305,9 +270,9 @@ namespace tau::editor::material_edit
             material_t* mat = assets::get(asset_t<material_t>{handle});
             if (!mat) { return false; }
 
-            asset_handle_t picked = mat->shader;
-            if (widgets::asset_slot(world, "Shader", get_type_id<shader_t>(), mat->shader, picked, "##shader") &&
-                picked != mat->shader.handle && mat->set_shader(asset_t<shader_t>{picked}))
+            asset_handle_t picked_shader = mat->shader;
+            if (widgets::asset_slot(world, "Shader", get_type_id<shader_t>(), mat->shader, picked_shader, "##shader") &&
+                picked_shader != mat->shader.handle && mat->set_shader(asset_t<shader_t>{picked_shader}))
             {
                 return true;
             }
@@ -317,7 +282,7 @@ namespace tau::editor::material_edit
 
             std::vector<const shader_member_t*> ordered;
             ordered.reserve(shader->module.members.size());
-            for (const auto& [hash, member] : shader->module.members) { ordered.push_back(&member); }
+            for (auto [hash, member] : shader->module.members) { ordered.push_back(&member); }
             std::sort(ordered.begin(), ordered.end(),
                       [](const shader_member_t* a, const shader_member_t* b) { return a->offset < b->offset; });
 
@@ -517,9 +482,8 @@ namespace tau::editor::material_edit
         { edit_properties(world, handle); }
     } // namespace
 
-    void init(editor_context_t& ctx)
+    void init(editor_context_t&)
     {
-        g_ctx = &ctx;
         history::reg_editable(get_type_id<material_t>(), &capture, &apply, &write);
 
         asset_editors::add({

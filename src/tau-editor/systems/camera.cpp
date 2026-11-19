@@ -55,4 +55,4 @@ namespace tau::editor::camera_system
             cam.rotation = q_yaw * q_pitch;
         }
     }
-}; // namespace tau::editor::camera_system
+} // namespace tau::editor::camera_system

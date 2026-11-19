@@ -236,14 +236,14 @@ namespace tau::input
 
     void remove_listener(listener_id_t id)
     {
-        for (auto [action_id, listeners] : listeners)
+        for (auto [action_id, action_listeners] : listeners)
         {
-            auto iter = std::remove_if(listeners.begin(), listeners.end(),
+            auto iter = std::remove_if(action_listeners.begin(), action_listeners.end(),
                                        [id](const action_listener_t& listener) { return listener.id == id; });
 
-            if (iter != listeners.end())
+            if (iter != action_listeners.end())
             {
-                listeners.erase(iter, listeners.end());
+                action_listeners.erase(iter, action_listeners.end());
                 return;
             }
         }

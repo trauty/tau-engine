@@ -66,7 +66,7 @@ namespace tau
 
         if (sets[cur_frame].empty())
         {
-            for (const auto& [set_id, layout] : program->custom_layouts)
+            for (auto [set_id, layout] : program->custom_layouts)
             {
                 VkDescriptorSetAllocateInfo alloc_info = {
                     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -166,7 +166,7 @@ namespace tau
         VkPipelineBindPoint bind_point =
             program->is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
 
-        for (const auto& [set_id, set] : sets[cur_frame])
+        for (auto [set_id, set] : sets[cur_frame])
         {
             vkCmdBindDescriptorSets(cmd, bind_point, program->pipeline_layout, set_id, 1, &set, 0, nullptr);
         }

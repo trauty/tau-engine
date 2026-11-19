@@ -67,9 +67,9 @@ namespace tau::renderer
         bool image_acquired = false;
         u32_t acquired_index = 0;
 
-        std::optional<VkExtent2D> pending_resize;
+        bool pending_resize = false;
         // resize waits until the held image is presented
-        std::optional<VkExtent2D> deferred_resize;
+        bool deferred_resize = false;
 
         const std::vector<const char*> validation_layers = {"VK_LAYER_KHRONOS_validation"};
 #ifdef TAU_ENABLE_PROFILING
@@ -349,7 +349,7 @@ namespace tau::renderer
         pass.color_writes = writes;
         pass.depth_stencil = depth;
 
-        pass.execute_callback = [view_name_hash, mesh_pass, depth_only](VkCommandBuffer cmd, ecs::registry_t& reg)
+        pass.execute_callback = [view_name_hash, mesh_pass, depth_only](VkCommandBuffer cmd, ecs::registry_t&)
         {
             per_frame_t& fd = ctx.per_frame_objects[ctx.cur_frame];
             if (fd.object_counter == 0) { return; }
@@ -591,7 +591,7 @@ namespace tau::renderer
         const rg_resource_id input_res = reads.empty() ? RG_NULL_ID : reads.front();
 
         pass.execute_callback = [&graph, material, on_execute, input_res, view_name_hash,
-                                 depth_tex_res](VkCommandBuffer cmd, ecs::registry_t& reg)
+                                 depth_tex_res](VkCommandBuffer cmd, ecs::registry_t&)
         {
             if (!material || !material->shader.is_valid()) { return; }
 
@@ -652,7 +652,7 @@ namespace tau::renderer
         pass.storage_writes = writes;
 
         pass.execute_callback = [&graph, material, dispatch_x, dispatch_y, dispatch_z, on_execute,
-                                 view_name_hash](VkCommandBuffer cmd, ecs::registry_t& reg)
+                                 view_name_hash](VkCommandBuffer cmd, ecs::registry_t&)
         {
             if (!material || !material->shader.is_valid()) { return; }
 
@@ -830,7 +830,7 @@ namespace tau::renderer
         rg_pass_t& pass = graph.add_pass("DepthReduce"_h, "DepthReduce");
         pass.texture_reads = {depth};
 
-        pass.execute_callback = [&graph, depth, view_name_hash, extent](VkCommandBuffer cmd, ecs::registry_t& reg)
+        pass.execute_callback = [&graph, depth, view_name_hash, extent](VkCommandBuffer cmd, ecs::registry_t&)
         {
             per_frame_t& fd = ctx.per_frame_objects[ctx.cur_frame];
 
@@ -1119,21 +1119,9 @@ namespace tau::renderer
             VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
         bool enable_validation = config.enable_validation && detail::check_validation_support();
 
-        VkValidationFeatureEnableEXT enable_validation_features[] = {
-            VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
-        };
-
-        VkValidationFeaturesEXT validation_features = {
-            .sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
-            .pNext = nullptr,
-            .enabledValidationFeatureCount = 1,
-            .pEnabledValidationFeatures = enable_validation_features,
-        };
-
         if (enable_validation)
         {
             instance_exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-            instance_exts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
 
             debug_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
                                                 VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
@@ -1144,8 +1132,6 @@ namespace tau::renderer
             debug_create_info.pfnUserCallback = detail::debug_callback;
 
             for (const char* layer : validation_layers) { ctx.active_layers.push_back(layer); }
-
-            // validation_features.pNext = &debug_create_info;
         }
 
         VkApplicationInfo app_info = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -1284,7 +1270,6 @@ namespace tau::renderer
             .dynamicRendering = VK_TRUE,
         };
 
-        VkPhysicalDeviceFeatures2 device_features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         device_features_check.pNext = &vk13_features;
         device_features_check.features.samplerAnisotropy = VK_TRUE;
         device_features_check.features.multiDrawIndirect = VK_TRUE;
@@ -1480,7 +1465,8 @@ namespace tau::renderer
         };
 
         VkDeviceSize min_alignment = ctx.properties.limits.minUniformBufferOffsetAlignment;
-        ctx.global_data_aligned_size = (sizeof(global_data_t) + min_alignment - 1) & ~(min_alignment - 1);
+        ctx.global_data_aligned_size =
+            static_cast<u32_t>((sizeof(global_data_t) + min_alignment - 1) & ~(min_alignment - 1));
 
         void* mapped_global_data;
         create_mapped_buffer(ctx.global_data_aligned_size * MAX_FRAMES_IN_FLIGHT * MAX_VIEWS_PER_FRAME,
@@ -2009,10 +1995,7 @@ namespace tau::renderer
         const VkResult res = vkQueuePresentKHR(ctx.present_queue, &present_info);
 
         if (res == VK_ERROR_SURFACE_LOST_KHR) { recreate_surface(); }
-        else if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR)
-        {
-            resize(ctx.swapchain.extent.width, ctx.swapchain.extent.height);
-        }
+        else if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR) { resize(); }
     }
 
     // resources uploaded on the transfer queue need their ownership acquired on the graphics queue before sampling
@@ -2061,6 +2044,21 @@ namespace tau::renderer
         return pre_rot;
     }
 
+    static void create_device_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer,
+                                     VmaAllocation& alloc)
+    {
+        VkBufferCreateInfo buf_info = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
+        VmaAllocationCreateInfo alloc_info = {
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        };
+
+        VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, nullptr));
+    }
+
     void render(ecs::registry_t& reg)
     {
         ZoneScoped;
@@ -2079,12 +2077,12 @@ namespace tau::renderer
 
         if (pending_resize)
         {
-            if (image_acquired) { deferred_resize = pending_resize; }
+            if (image_acquired) { deferred_resize = true; }
             else
             {
-                resize(pending_resize->width, pending_resize->height);
+                resize();
             }
-            pending_resize.reset();
+            pending_resize = false;
         }
 
         // each entry waits on the timeline its value came from: see deletion_clock_e
@@ -2109,7 +2107,7 @@ namespace tau::renderer
             }
             else if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR)
             {
-                resize(ctx.swapchain.extent.width, ctx.swapchain.extent.height);
+                resize();
                 return;
             }
             else if (res != VK_SUCCESS)
@@ -2179,7 +2177,7 @@ namespace tau::renderer
 
         const u32_t cur_object_id = build_draw_list(reg, frame_data);
         frame_globals.object_count = cur_object_id;
-        frame_globals.active_pipeline_count = frame_data.active_pipelines.size();
+        frame_globals.active_pipeline_count = static_cast<u32_t>(frame_data.active_pipelines.size());
 
         if (frame_views.size() > MAX_VIEWS_PER_FRAME)
         {
@@ -2187,21 +2185,6 @@ namespace tau::renderer
                           MAX_VIEWS_PER_FRAME);
             abort();
         }
-
-        auto create_device_buffer =
-            [](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VmaAllocation& alloc)
-        {
-            VkBufferCreateInfo buf_info = {
-                .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                .size = size,
-                .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            };
-            VmaAllocationCreateInfo alloc_info = {
-                .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-            };
-
-            VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, nullptr));
-        };
 
         shader_t* culling_shader = assets::get(ctx.culling_shader);
         shader_t* cluster_shader = assets::get(ctx.cluster_shader);
@@ -2802,12 +2785,12 @@ namespace tau::renderer
 
         if (deferred_resize)
         {
-            resize(deferred_resize->width, deferred_resize->height);
-            deferred_resize.reset();
+            resize();
+            deferred_resize = false;
         }
     }
 
-    void on_window_resized(u32_t width, u32_t height) { pending_resize = VkExtent2D{width, height}; }
+    void on_window_resized() { pending_resize = true; }
 
     VkFormat find_depth_format()
     {
@@ -2974,7 +2957,7 @@ namespace tau::renderer
         vkCmdPipelineBarrier2(cmd, &dep_info);
     }
 
-    bool resize(const u32_t width, const u32_t height)
+    bool resize()
     {
         if (ctx.surface == VK_NULL_HANDLE) { return false; }
 
@@ -3290,21 +3273,6 @@ namespace tau::renderer
             VmaAllocationInfo vma_alloc_info;
             VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, &vma_alloc_info));
             mapped_mem = vma_alloc_info.pMappedData;
-        };
-
-        auto create_device_buffer =
-            [](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VmaAllocation& alloc)
-        {
-            VkBufferCreateInfo buf_info = {
-                .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                .size = size,
-                .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            };
-            VmaAllocationCreateInfo alloc_info = {
-                .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
-            };
-
-            VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, nullptr));
         };
 
         create_mapped_buffer(sizeof(object_data_t) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,

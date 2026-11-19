@@ -31,7 +31,7 @@ namespace tau::editor::panels
         }
     } // namespace
 
-    void draw_toolbar(world_t& world, editor_context_t& ctx)
+    void draw_toolbar(world_t&, editor_context_t& ctx)
     {
         ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 32.0f), ImVec2(FLT_MAX, 32.0f));
 

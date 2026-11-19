@@ -131,7 +131,7 @@ namespace tau
 
         std::string scene_path(std::string_view ref)
         {
-            if (ref.empty() || ref.find("://") != std::string_view::npos) { return std::string(ref); }
+            if (ref.empty() || !vfs::split_protocol(ref).protocol.empty()) { return std::string(ref); }
 
             const asset_guid_t guid = assets::parse_guid(ref);
             const std::string by_guid = guid != 0 ? assets::path_of(asset_handle_t{guid}) : std::string{};

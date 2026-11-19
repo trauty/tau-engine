@@ -13,7 +13,7 @@
 #include <unordered_set>
 #include <vector>
 #define XXH_INLINE_ALL
-#include "xxhash.h"
+#include <xxhash.h>
 
 namespace tau::cooker
 {

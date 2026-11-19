@@ -390,7 +390,6 @@ namespace tau::editor::panels
             return false;
         }
 
-
         constexpr ImVec4 PREFAB_COLOR = {0.45f, 0.72f, 1.0f, 1.0f};
 
         void mark_override()
@@ -553,7 +552,7 @@ namespace tau::editor::panels
             ImGui::Separator();
         }
 
-        void run_prefab_action(tau::world_t& world, editor_context_t& ctx)
+        void run_prefab_action(tau::world_t& world)
         {
             const pending_prefab_t pending = pending_prefab;
             pending_prefab = {};
@@ -564,9 +563,9 @@ namespace tau::editor::panels
             switch (pending.action)
             {
             case prefab_action_e::NONE: break;
-            case prefab_action_e::REVERT: prefab_edit::revert(world, ctx, root); break;
-            case prefab_action_e::APPLY: prefab_edit::apply(world, ctx, root); break;
-            case prefab_action_e::UNPACK: prefab_edit::unpack(world, ctx, root); break;
+            case prefab_action_e::REVERT: prefab_edit::revert(world, root); break;
+            case prefab_action_e::APPLY: prefab_edit::apply(world, root); break;
+            case prefab_action_e::UNPACK: prefab_edit::unpack(world, root); break;
             }
         }
     } // namespace
@@ -608,8 +607,8 @@ namespace tau::editor::panels
                             ImGui::PushID(static_cast<i32>(id));
 
                             // vs prefab: missing component or differing fields
-                            const auto changed_fields =
-                                overrides.find(tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias())));
+                            const auto changed_fields = overrides.find(
+                                tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias())));
                             const bool added =
                                 changed_fields != overrides.end() && changed_fields->second.contains("*");
                             if (changed_fields != overrides.end()) { mark_override(); }
@@ -670,8 +669,7 @@ namespace tau::editor::panels
                         {
                             for (const auto& [field, value] : fields.items())
                             {
-                                ImGui::TextDisabled("%s.%s: no such field, kept as saved", key.c_str(),
-                                                    field.c_str());
+                                ImGui::TextDisabled("%s.%s: no such field, kept as saved", key.c_str(), field.c_str());
                             }
                         }
                     }
@@ -718,6 +716,6 @@ namespace tau::editor::panels
         if (ctx.inspected_asset.empty() && !inspected.path.empty()) { release_inspected(); }
 
         ImGui::End();
-        run_prefab_action(world, ctx);
+        run_prefab_action(world);
     }
 } // namespace tau::editor::panels

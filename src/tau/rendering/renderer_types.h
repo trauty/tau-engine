@@ -495,7 +495,7 @@ namespace tau::renderer
         asset_t<mesh_t> fallback_mesh;
         asset_t<material_t> fallback_material;
 
-        VkDeviceSize global_data_aligned_size = 0;
+        u32_t global_data_aligned_size = 0;
         VkBuffer global_data_buffer = VK_NULL_HANDLE;
         VmaAllocation global_data_alloc = VK_NULL_HANDLE;
         u8* global_data_mapped = nullptr;

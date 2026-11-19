@@ -18,6 +18,12 @@ option("profiling")
     add_defines("TRACY_ENABLE")
 option_end()
 
+local function tau_warnings()
+    set_warnings("allextra")
+    add_cxxflags("-Wno-missing-field-initializers", "-Wshadow", "-Wimplicit-fallthrough", "-Wshorten-64-to-32",
+                 "-Wrange-loop-bind-reference", "-Wextra-semi", {tools = {"clang", "clang_cl"}})
+end
+
 local function vendor_platdir()
     return is_plat("windows") and "windows" or "linux"
 end
@@ -25,7 +31,7 @@ end
 target("tau-interface")
     set_kind("headeronly")
 
-    add_includedirs("include", {public = true})
+    add_sysincludedirs("include", {public = true})
     add_includedirs("src", {public = true})
 
     add_defines("CGLM_FORCE_LEFT_HANDED", "VK_NO_PROTOTYPES", "CGLM_FORCE_DEPTH_ZERO_TO_ONE", {public = true})
@@ -51,6 +57,7 @@ target(is_static and "tau-engine-static" or "tau-engine")
     end
 
     add_rules("tau.common", "tau.engine_stamp")
+    tau_warnings()
     if not is_static then
         add_rules("tau.reexports")
     end
@@ -58,7 +65,7 @@ target(is_static and "tau-engine-static" or "tau-engine")
     add_defines("TAU_ENGINE_EXPORT", "CGLM_FORCE_LEFT_HANDED")
     add_deps("tau-interface")
 
-    add_includedirs("lib/JoltPhysics")
+    add_sysincludedirs("lib/JoltPhysics")
     add_defines("JPH_OBJECT_LAYER_BITS=16", "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER", "JPH_OBJECT_STREAM")
     if not is_mode("debug") then
         add_defines("JPH_NO_DEBUG")
@@ -66,7 +73,7 @@ target(is_static and "tau-engine-static" or "tau-engine")
     add_undefines("JPH_FLOATING_POINT_EXCEPTIONS_ENABLED")
 
     if has_config("profiling") then
-        add_includedirs("lib/tracy", {public = true})
+        add_sysincludedirs("lib/tracy", {public = true})
         add_files("lib/tracy/TracyClient.cpp", {warnings = "none"})
     end
 
@@ -100,8 +107,8 @@ target(is_static and "tau-engine-static" or "tau-engine")
                      "cfgmgr32", "kernel32", {public = true})
     end
 
-    add_includedirs("include", {public = true})
-    add_includedirs("include/imgui", {public = true})
+    add_sysincludedirs("include", {public = true})
+    add_sysincludedirs("include/imgui", {public = true})
     add_includedirs("src", {public = true})
 
     if not is_static then
@@ -149,6 +156,7 @@ end
 target("tau-runtime")
     set_kind("binary")
     add_rules("tau.common")
+    tau_warnings()
     add_deps("tau-engine", "tau-assets")
 
     if is_plat("windows") then
@@ -166,6 +174,7 @@ target_end()
 target("tau-cooker")
     set_kind("binary")
     add_rules("tau.common", {march = false})
+    tau_warnings()
     add_deps("tau-engine")
 
     add_files("src/tau-cooker/**.cpp")
@@ -178,7 +187,7 @@ target("tau-cooker")
     add_files("lib/stb/*.cpp", {warnings = "none"})
     add_files("lib/meshoptimizer/*.cpp", {warnings = "none"})
 
-    add_includedirs("include/slang")
+    add_sysincludedirs("include/slang")
 
     local slang_libdir = path.join(os.scriptdir(), "lib", "slang", vendor_platdir())
     add_linkdirs(slang_libdir)
@@ -213,6 +222,7 @@ target_end()
 target("tau-editor")
     set_kind("binary")
     add_rules("tau.common")
+    tau_warnings()
     add_deps("tau-engine", "tau-assets")
 
     add_files("lib/volk/volk.c", {warnings = "none"})

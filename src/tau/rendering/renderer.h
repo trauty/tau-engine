@@ -67,8 +67,8 @@ namespace tau::renderer
     void init_per_frame(per_frame_t& frame_data);
     void shutdown_per_frame(per_frame_t& frame_data);
 
-    bool resize(const u32_t width, const u32_t height);
-    void on_window_resized(u32_t width, u32_t height);
+    bool resize();
+    void on_window_resized();
     void init_swapchain();
     VkResult acquire_next_image(u32_t* image);
     VkFormat find_depth_format();

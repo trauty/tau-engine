@@ -375,8 +375,7 @@ namespace tau::editor::prefab_edit
         return prefab_data(states, prefab_guid, lookup);
     }
 
-    void replace_data(world_t& world, editor_context_t& ctx, asset_t<prefab_t> handle, nlohmann::json new_data,
-                      std::string_view label)
+    void replace_data(world_t& world, asset_t<prefab_t> handle, nlohmann::json new_data, std::string_view label)
     {
         prefab_t* prefab = assets::get(handle);
         if (!prefab) { return; }
@@ -395,7 +394,7 @@ namespace tau::editor::prefab_edit
         history::end(world);
     }
 
-    void init(editor_context_t& ctx)
+    void init(editor_context_t&)
     {
         history::reg_editable(get_type_id<prefab_t>(), &capture, &apply_data, &write);
 
@@ -415,7 +414,7 @@ namespace tau::editor::prefab_edit
         });
     }
 
-    std::string create(world_t& world, editor_context_t& ctx, ecs::entity_t root, const std::string& dir)
+    std::string create(world_t& world, ecs::entity_t root, const std::string& dir)
     {
         ecs::registry_t& reg = world.registry;
         if (!reg.valid(root)) { return {}; }
@@ -534,7 +533,7 @@ namespace tau::editor::prefab_edit
         return instance ? assets::path_of(instance->prefab) : std::string{};
     }
 
-    void revert(world_t& world, editor_context_t& ctx, ecs::entity_t root)
+    void revert(world_t& world, ecs::entity_t root)
     {
         const prefab_instance_t* instance = world.registry.try_get<prefab_instance_t>(root);
         const prefab::lookup_t lookup = prefab::asset_lookup();
@@ -566,7 +565,7 @@ namespace tau::editor::prefab_edit
         history::end(world);
     }
 
-    void apply(world_t& world, editor_context_t& ctx, ecs::entity_t root)
+    void apply(world_t& world, ecs::entity_t root)
     {
         ecs::registry_t& reg = world.registry;
         prefab_instance_t* instance = reg.try_get<prefab_instance_t>(root);
@@ -643,7 +642,7 @@ namespace tau::editor::prefab_edit
         history::end(world);
     }
 
-    void unpack(world_t& world, editor_context_t& ctx, ecs::entity_t root)
+    void unpack(world_t& world, ecs::entity_t root)
     {
         const std::vector<ecs::entity_t> parts = parts_of(world, guid_system::of(world.registry, root));
 

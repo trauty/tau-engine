@@ -204,7 +204,7 @@ namespace tau::editor::prefab_stage
 
         if (!data.is_null())
         {
-            prefab_edit::replace_data(world, ctx, handle, data, "Edit Prefab " + name);
+            prefab_edit::replace_data(world, handle, data, "Edit Prefab " + name);
             if (written == data) { history::mark_saved({history::doc_kind_e::ASSET, handle.guid()}); }
         }
     }

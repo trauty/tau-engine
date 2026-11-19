@@ -39,7 +39,7 @@ namespace tau
         std::string join_member_names(const shader_t& shader)
         {
             std::string out;
-            for (const auto& [hash, member] : shader.module.members)
+            for (auto [hash, member] : shader.module.members)
             {
                 if (!out.empty()) { out += ", "; }
                 out += member.name.empty() ? "?" : member.name;
@@ -119,10 +119,10 @@ namespace tau
 
         if (heap_offset[cur_frame] == renderer::BINDLESS_NULL_HANDLE)
         {
-            heap_offset[cur_frame] = renderer::res_system.material_heap.allocate(data.size());
+            heap_offset[cur_frame] = renderer::res_system.material_heap.allocate(static_cast<u32_t>(data.size()));
         }
 
-        renderer::res_system.material_heap.update(heap_offset[cur_frame], data.data(), data.size());
+        renderer::res_system.material_heap.update(heap_offset[cur_frame], data.data(), static_cast<u32_t>(data.size()));
 
         if (last_synced_frame != cur_frame)
         {
@@ -166,7 +166,7 @@ namespace tau
         authored_properties = std::move(kept);
 
         std::vector<u32_t> bound;
-        for (const auto& [hash, texture] : textures) { bound.push_back(hash); }
+        for (auto [hash, texture] : textures) { bound.push_back(hash); }
         for (const u32_t hash : bound)
         {
             const shader_member_t* member = next->module.members.find(hash);
@@ -187,7 +187,7 @@ namespace tau
         {
             if (heap_offset[i] != renderer::BINDLESS_NULL_HANDLE)
             {
-                renderer::res_system.material_heap.free(heap_offset[i], data.size());
+                renderer::res_system.material_heap.free(heap_offset[i], static_cast<u32_t>(data.size()));
                 heap_offset[i] = renderer::BINDLESS_NULL_HANDLE;
             }
         }

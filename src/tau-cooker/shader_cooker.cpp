@@ -9,7 +9,7 @@
 #include "tau/rendering/shader_shared.h"
 
 #define XXH_INLINE_ALL
-#include "xxhash.h"
+#include <xxhash.h>
 
 #include <algorithm>
 #include <cctype>
@@ -395,53 +395,75 @@ namespace tau::cooker::shader
 // Slang and C++ field names are identical, so one token gives both sides
 #define TAU_FIELD(cpp_type, field)                                                                                     \
     layout_field_t                                                                                                     \
-    {                                                                                                                  \
-        #field, static_cast<u32_t>(offsetof(cpp_type, field)), static_cast<u32_t>(sizeof(cpp_type::field))              \
-    }
+    { #field, static_cast<u32_t>(offsetof(cpp_type, field)), static_cast<u32_t>(sizeof(cpp_type::field)) }
 
         std::vector<layout_check_t> core_layout_checks()
         {
             using namespace tau::renderer;
 
             return {
-                {"PushConstants", "push_constants_t", layout_kind_e::UNIFORM_BLOCK, sizeof(push_constants_t),
+                {"PushConstants",
+                 "push_constants_t",  layout_kind_e::UNIFORM_BLOCK,
+                 sizeof(push_constants_t),
                  {TAU_FIELD(push_constants_t, object_buffer), TAU_FIELD(push_constants_t, material_buffer),
                   TAU_FIELD(push_constants_t, custom_data), TAU_FIELD(push_constants_t, texture_id)}},
 
-                {"ObjectData", "object_data_t", layout_kind_e::BUFFER_ARRAY, sizeof(object_data_t),
+                {"ObjectData",
+                 "object_data_t",     layout_kind_e::BUFFER_ARRAY,
+                 sizeof(object_data_t),
                  {TAU_FIELD(object_data_t, model_matrix), TAU_FIELD(object_data_t, normal_matrix),
                   TAU_FIELD(object_data_t, vertex_buffer), TAU_FIELD(object_data_t, index_buffer),
                   TAU_FIELD(object_data_t, material_offset), TAU_FIELD(object_data_t, entity),
-                  TAU_FIELD(object_data_t, _pad1), TAU_FIELD(object_data_t, _pad2)}},
+                  TAU_FIELD(object_data_t, _pad1), TAU_FIELD(object_data_t, _pad2)}                 },
 
-                {"CullData", "cull_data_t", layout_kind_e::BUFFER_ARRAY, sizeof(cull_data_t),
+                {"CullData",
+                 "cull_data_t",       layout_kind_e::BUFFER_ARRAY,
+                 sizeof(cull_data_t),
                  {TAU_FIELD(cull_data_t, bounding_sphere), TAU_FIELD(cull_data_t, index_count),
                   TAU_FIELD(cull_data_t, pipeline_index), TAU_FIELD(cull_data_t, flags),
-                  TAU_FIELD(cull_data_t, draw_bin_offset)}},
+                  TAU_FIELD(cull_data_t, draw_bin_offset)}                                          },
 
-                {"ShadowTile", "gpu_shadow_tile_t", layout_kind_e::BUFFER_ARRAY, sizeof(gpu_shadow_tile_t),
+                {"ShadowTile",
+                 "gpu_shadow_tile_t", layout_kind_e::BUFFER_ARRAY,
+                 sizeof(gpu_shadow_tile_t),
                  {TAU_FIELD(gpu_shadow_tile_t, view_proj), TAU_FIELD(gpu_shadow_tile_t, uv_offset_scale),
                   TAU_FIELD(gpu_shadow_tile_t, texel_world_size), TAU_FIELD(gpu_shadow_tile_t, normal_bias),
                   TAU_FIELD(gpu_shadow_tile_t, depth_bias), TAU_FIELD(gpu_shadow_tile_t, split_far)}},
 
-                {"GlobalData", "global_data_t", layout_kind_e::UNIFORM_BLOCK, sizeof(global_data_t),
-                 {TAU_FIELD(global_data_t, view), TAU_FIELD(global_data_t, projection),
-                  TAU_FIELD(global_data_t, view_proj), TAU_FIELD(global_data_t, camera_pos),
-                  TAU_FIELD(global_data_t, frustum_planes), TAU_FIELD(global_data_t, inv_view_proj),
-                  TAU_FIELD(global_data_t, dir_light_buffer), TAU_FIELD(global_data_t, point_light_buffer),
-                  TAU_FIELD(global_data_t, spot_light_buffer), TAU_FIELD(global_data_t, cluster_counts_buffer),
-                  TAU_FIELD(global_data_t, cluster_indices_buffer), TAU_FIELD(global_data_t, shadow_cascade_buffer),
-                  TAU_FIELD(global_data_t, time), TAU_FIELD(global_data_t, dir_light_count),
-                  TAU_FIELD(global_data_t, point_light_count), TAU_FIELD(global_data_t, spot_light_count),
-                  TAU_FIELD(global_data_t, object_count), TAU_FIELD(global_data_t, active_pipeline_count),
-                  TAU_FIELD(global_data_t, cull_flags), TAU_FIELD(global_data_t, debug_view),
-                  TAU_FIELD(global_data_t, shadow_atlas_id), TAU_FIELD(global_data_t, shadow_cascade_count),
-                  TAU_FIELD(global_data_t, shadow_fade_start), TAU_FIELD(global_data_t, shadow_fade_end),
-                  TAU_FIELD(global_data_t, cluster_z_near), TAU_FIELD(global_data_t, cluster_z_far),
-                  TAU_FIELD(global_data_t, cluster_tiles_x), TAU_FIELD(global_data_t, cluster_tiles_y),
+                {"GlobalData",
+                 "global_data_t",     layout_kind_e::UNIFORM_BLOCK,
+                 sizeof(global_data_t),
+                 {TAU_FIELD(global_data_t, view),
+                  TAU_FIELD(global_data_t, projection),
+                  TAU_FIELD(global_data_t, view_proj),
+                  TAU_FIELD(global_data_t, camera_pos),
+                  TAU_FIELD(global_data_t, frustum_planes),
+                  TAU_FIELD(global_data_t, inv_view_proj),
+                  TAU_FIELD(global_data_t, dir_light_buffer),
+                  TAU_FIELD(global_data_t, point_light_buffer),
+                  TAU_FIELD(global_data_t, spot_light_buffer),
+                  TAU_FIELD(global_data_t, cluster_counts_buffer),
+                  TAU_FIELD(global_data_t, cluster_indices_buffer),
+                  TAU_FIELD(global_data_t, shadow_cascade_buffer),
+                  TAU_FIELD(global_data_t, time),
+                  TAU_FIELD(global_data_t, dir_light_count),
+                  TAU_FIELD(global_data_t, point_light_count),
+                  TAU_FIELD(global_data_t, spot_light_count),
+                  TAU_FIELD(global_data_t, object_count),
+                  TAU_FIELD(global_data_t, active_pipeline_count),
+                  TAU_FIELD(global_data_t, cull_flags),
+                  TAU_FIELD(global_data_t, debug_view),
+                  TAU_FIELD(global_data_t, shadow_atlas_id),
+                  TAU_FIELD(global_data_t, shadow_cascade_count),
+                  TAU_FIELD(global_data_t, shadow_fade_start),
+                  TAU_FIELD(global_data_t, shadow_fade_end),
+                  TAU_FIELD(global_data_t, cluster_z_near),
+                  TAU_FIELD(global_data_t, cluster_z_far),
+                  TAU_FIELD(global_data_t, cluster_tiles_x),
+                  TAU_FIELD(global_data_t, cluster_tiles_y),
                   TAU_FIELD(global_data_t, punctual_shadow_buffer),
                   TAU_FIELD(global_data_t, punctual_shadow_atlas_id),
-                  TAU_FIELD(global_data_t, punctual_shadow_count)}},
+                  TAU_FIELD(global_data_t, punctual_shadow_count)}                                  },
             };
         }
 
@@ -655,7 +677,7 @@ namespace tau::cooker::shader
                     out_valid = false;
                     continue;
                 }
-                shader_info.size = struct_layout->getSize();
+                shader_info.size = static_cast<u32_t>(struct_layout->getSize());
 
                 flatten_members(struct_layout, "", 0, shader_info.members);
 
@@ -1074,7 +1096,7 @@ namespace tau::cooker::shader
             mod_header.member_count = static_cast<u32_t>(module.members.size());
             out.write(reinterpret_cast<const char*>(&mod_header), sizeof(shader_module_header_t));
 
-            for (const auto& [name_hash, member] : module.members)
+            for (auto [name_hash, member] : module.members)
             {
                 shader_member_header_t member_header;
                 std::memset(&member_header, 0, sizeof(member_header));

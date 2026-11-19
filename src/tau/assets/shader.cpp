@@ -146,7 +146,7 @@ namespace tau
             set_bindings[b.set].push_back(layout_binding);
         }
 
-        for (const auto& [set, bindings] : set_bindings)
+        for (auto [set, bindings] : set_bindings)
         {
             VkDescriptorSetLayoutCreateInfo layout_info = {
                 .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -160,7 +160,7 @@ namespace tau
         }
 
         u32_t max_set = 1;
-        for (const auto& [set, layout] : shader.custom_layouts) { max_set = std::max(max_set, set); }
+        for (auto [set, layout] : shader.custom_layouts) { max_set = std::max(max_set, set); }
 
         std::vector<VkDescriptorSetLayout> set_layouts(max_set + 1, VK_NULL_HANDLE);
 
@@ -548,7 +548,7 @@ namespace tau
 
         // pipeline layout is shared, so only one deletion
         bool layout_attached = false;
-        for (const auto& [variant, pipeline] : shader.pipelines)
+        for (auto [variant, pipeline] : shader.pipelines)
         {
             renderer::res_system.deletion_queue.push_back({
                 .type = renderer::resource_type_e::PIPELINE,
@@ -559,7 +559,7 @@ namespace tau
             layout_attached = true;
         }
 
-        for (const auto& [set, layout] : shader.custom_layouts)
+        for (auto [set, layout] : shader.custom_layouts)
         {
             renderer::res_system.deletion_queue.push_back({
                 .type = renderer::resource_type_e::DESCRIPTOR_SET_LAYOUT,
