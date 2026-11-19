@@ -7,6 +7,7 @@
 #include "entt/meta/meta.hpp"
 #include "entt/meta/resolve.hpp"
 #include "tau/asset.h"
+#include "tau/assets/scene_format.h"
 #include "tau/defines.h"
 #include "tau/ecs.h"
 #include "tau/hash.h"
@@ -14,6 +15,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -287,6 +289,13 @@ namespace tau::reflection
         builder.template discover<Limit>();
         return builder;
     }
+
+    TAU_ENGINE_API std::optional<scene_value_type_e> pod_tag(const type_t& type);
+
+    inline const void* value_data(const any_t& value) { return value.base().data(); }
+
+    inline void* mutable_value_data(any_t& value)
+    { return value.base().policy() == entt::any_policy::cref ? nullptr : const_cast<void*>(value.base().data()); }
 
     using register_func_t = void (*)(ctx_t&);
 

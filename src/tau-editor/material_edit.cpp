@@ -103,6 +103,7 @@ namespace tau::editor::material_edit
             }
 
             const nlohmann::json state = {
+                {"shader",   assets::path_of(mat->shader)},
                 {"members",  std::move(members)      },
                 {"textures", std::move(textures)     },
                 {"authored", mat->authored_properties},
@@ -116,8 +117,15 @@ namespace tau::editor::material_edit
             const shader_t* shader = mat ? assets::get(mat->shader) : nullptr;
             if (!shader) { return false; }
 
-            const nlohmann::json state = nlohmann::json::from_cbor(bytes, true, false);
+            nlohmann::json state = nlohmann::json::from_cbor(bytes, true, false);
             if (state.is_discarded()) { return false; }
+
+            const std::string shader_path = state.value("shader", std::string{});
+            if (!shader_path.empty() && shader_path != assets::path_of(mat->shader))
+            {
+                if (!mat->set_shader(assets::load<shader_t>(shader_path))) { return false; }
+                shader = assets::get(mat->shader);
+            }
 
             const nlohmann::json& members = state["members"];
             const nlohmann::json& textures = state["textures"];
@@ -296,6 +304,13 @@ namespace tau::editor::material_edit
         {
             material_t* mat = assets::get(asset_t<material_t>{handle});
             if (!mat) { return false; }
+
+            asset_handle_t picked = mat->shader;
+            if (widgets::asset_slot(world, "Shader", get_type_id<shader_t>(), mat->shader, picked, "##shader") &&
+                picked != mat->shader.handle && mat->set_shader(asset_t<shader_t>{picked}))
+            {
+                return true;
+            }
 
             const shader_t* shader = assets::get(mat->shader);
             if (!shader || mat->data.empty()) { return false; }

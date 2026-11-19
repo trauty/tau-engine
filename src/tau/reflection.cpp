@@ -3,6 +3,7 @@
 #include "tau/asset.h"
 #include "tau/assets/material.h"
 #include "tau/assets/mesh.h"
+#include "tau/color.h"
 #include "tau/components/camera.h"
 #include "tau/components/lighting.h"
 #include "tau/components/physics.h"
@@ -15,9 +16,11 @@
 #include "tau/math.h"
 #include "tau/os.h"
 
+#include <array>
 #include <entt/entt.hpp>
 #include <entt/meta/meta.hpp>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace tau::reflection
@@ -139,6 +142,44 @@ namespace tau::reflection
         return static_cast<u32_t>(
             std::erase_if(registrations(), [module_base](register_func_t fn)
                           { return os::module_base_of(reinterpret_cast<const void*>(fn)) == module_base; }));
+    }
+
+    namespace
+    {
+        struct pod_entry_t
+        {
+            entt::id_type hash = 0;
+            scene_value_type_e tag = scene_value_type_e::I32;
+        };
+
+        template <typename T, scene_value_type_e Tag>
+        constexpr pod_entry_t pod_entry()
+        {
+            static_assert(std::is_trivially_copyable_v<T> && sizeof(T) == pod_size(pod_layout(Tag)));
+            return {entt::type_hash<T>::value(), Tag};
+        }
+
+        const std::array POD_TYPES = {
+            pod_entry<bool, scene_value_type_e::BOOL>(),   pod_entry<i32, scene_value_type_e::I32>(),
+            pod_entry<u32, scene_value_type_e::U32>(),     pod_entry<i64, scene_value_type_e::I64>(),
+            pod_entry<i64_t, scene_value_type_e::I64>(),   pod_entry<u64, scene_value_type_e::U64>(),
+            pod_entry<u64_t, scene_value_type_e::U64>(),   pod_entry<f32, scene_value_type_e::F32>(),
+            pod_entry<f64, scene_value_type_e::F64>(),     pod_entry<vec2_t, scene_value_type_e::VEC2>(),
+            pod_entry<vec3_t, scene_value_type_e::VEC3>(), pod_entry<vec4_t, scene_value_type_e::VEC4>(),
+            pod_entry<quat_t, scene_value_type_e::QUAT>(), pod_entry<color_t, scene_value_type_e::COLOR>(),
+        };
+    } // namespace
+
+    std::optional<scene_value_type_e> pod_tag(const type_t& type)
+    {
+        if (!type) { return std::nullopt; }
+
+        const entt::id_type hash = type.info().hash();
+        for (const pod_entry_t& entry : POD_TYPES)
+        {
+            if (entry.hash == hash) { return entry.tag; }
+        }
+        return std::nullopt;
     }
 
     void register_types() { register_types_into(get_engine_context()); }

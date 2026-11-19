@@ -131,6 +131,56 @@ namespace tau
         }
     }
 
+    bool material_t::set_shader(asset_t<shader_t> new_shader)
+    {
+        const shader_t* next = assets::get(new_shader);
+        if (!next || !next->has_material_data)
+        {
+            TAU_LOG_ERROR("MATERIAL", "'{}' cannot drive a material, it did not load or has no material data",
+                          assets::path_of(new_shader));
+            return false;
+        }
+        if (new_shader == shader) { return true; }
+
+        const shader_t* prev = assets::get(shader);
+        const std::vector<u8> prev_data = data;
+
+        release_heap();
+        shader = new_shader;
+        data.assign(next->module.size, 0);
+
+        std::vector<u32_t> kept;
+        for (const u32_t hash : authored_properties)
+        {
+            const shader_member_t* now = next->module.members.find(hash);
+            const shader_member_t* before = prev ? prev->module.members.find(hash) : nullptr;
+            if (!now || !before || now->type != before->type || now->edit != before->edit) { continue; }
+
+            if (now->edit != shader_member_edit_e::TEXTURE)
+            {
+                if (before->offset + before->size > prev_data.size() || now->size != before->size) { continue; }
+                std::memcpy(data.data() + now->offset, prev_data.data() + before->offset, now->size);
+            }
+            kept.push_back(hash);
+        }
+        authored_properties = std::move(kept);
+
+        std::vector<u32_t> bound;
+        for (const auto& [hash, texture] : textures) { bound.push_back(hash); }
+        for (const u32_t hash : bound)
+        {
+            const shader_member_t* member = next->module.members.find(hash);
+            if (member && member->edit == shader_member_edit_e::TEXTURE) { refresh_texture(hash); }
+            else
+            {
+                textures.erase(hash);
+            }
+        }
+
+        dirty_frames = renderer::MAX_FRAMES_IN_FLIGHT;
+        return true;
+    }
+
     void material_t::release_heap()
     {
         for (u32_t i = 0; i < renderer::MAX_FRAMES_IN_FLIGHT; i++)

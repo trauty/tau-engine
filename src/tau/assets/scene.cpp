@@ -36,20 +36,13 @@ namespace tau
             }
             prop.type = static_cast<scene_value_type_e>(type_raw);
 
+            if (const u32_t size = pod_size(pod_layout(prop.type)); size > 0)
+            {
+                return SDL_ReadIO(stream, prop.pod.data(), size) == size;
+            }
+
             switch (prop.type)
             {
-            case scene_value_type_e::I32: return read_pod(stream, prop.i);
-            case scene_value_type_e::U32: return read_pod(stream, prop.u);
-            case scene_value_type_e::F32: return read_pod(stream, prop.f);
-            case scene_value_type_e::BOOL:
-            {
-                u8_t b = 0;
-                const bool ok = read_pod(stream, b);
-                prop.b = b != 0;
-                return ok;
-            }
-            case scene_value_type_e::VEC3:
-                return read_pod(stream, prop.vec.x) && read_pod(stream, prop.vec.y) && read_pod(stream, prop.vec.z);
             case scene_value_type_e::STRING: return read_str(stream, prop.str);
             case scene_value_type_e::ASSET_REF:
                 return read_pod(stream, prop.asset_type) && read_str(stream, prop.str) && read_pod(stream, prop.guid);
@@ -77,6 +70,7 @@ namespace tau
                 }
                 return true;
             }
+            default: break;
             }
 
             return false;

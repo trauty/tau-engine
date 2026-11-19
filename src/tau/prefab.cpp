@@ -111,6 +111,16 @@ namespace tau::prefab
             }
         }
 
+        // part with no stored id: same id on every expansion
+        u64_t derived_id(u64_t instance, u64_t source)
+        {
+            u64_t x = instance ^ (source + 0x9e3779b97f4a7c15ull + (instance << 6) + (instance >> 2));
+            x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ull;
+            x = (x ^ (x >> 27)) * 0x94d049bb133111ebull;
+            x ^= x >> 31;
+            return x != 0 ? x : 1;
+        }
+
         std::unordered_set<u64_t> removed_sources(const nlohmann::json& entities, const nlohmann::json& removed)
         {
             std::unordered_set<u64_t> out;
@@ -118,7 +128,10 @@ namespace tau::prefab
 
             for (const nlohmann::json& e : entities)
             {
-                if (out.contains(guid::from_json(e.value("parent", nlohmann::json{})))) { out.insert(guid::from_json(e["id"])); }
+                if (out.contains(guid::from_json(e.value("parent", nlohmann::json{}))))
+                {
+                    out.insert(guid::from_json(e["id"]));
+                }
             }
             return out;
         }
@@ -140,10 +153,16 @@ namespace tau::prefab
         }
 
         u64_t part_instance(const nlohmann::json& state)
-        { return guid::from_json(state.value("prefab_part", nlohmann::json::object()).value("instance", nlohmann::json{})); }
+        {
+            return guid::from_json(
+                state.value("prefab_part", nlohmann::json::object()).value("instance", nlohmann::json{}));
+        }
 
         u64_t part_source(const nlohmann::json& state)
-        { return guid::from_json(state.value("prefab_part", nlohmann::json::object()).value("source", nlohmann::json{})); }
+        {
+            return guid::from_json(
+                state.value("prefab_part", nlohmann::json::object()).value("source", nlohmann::json{}));
+        }
 
         part_map_t map_parts(const nlohmann::json* prefab_data, std::span<const nlohmann::json> parts)
         {
@@ -355,7 +374,7 @@ namespace tau::prefab
             else
             {
                 const u64_t known = guid::from_json(parts.value(guid::to_string(source), nlohmann::json{}));
-                map.to_instance[source] = known != 0 ? known : guid::generate();
+                map.to_instance[source] = known != 0 ? known : derived_id(root_id, source);
             }
         }
 
@@ -427,7 +446,16 @@ namespace tau::prefab
 
         nlohmann::json part_ids = nlohmann::json::object();
         nlohmann::json overrides = nlohmann::json::object();
-        nlohmann::json removed = root.value("removed", nlohmann::json::array());
+        nlohmann::json removed = nlohmann::json::array();
+        for (const nlohmann::json& source : root.value("removed", nlohmann::json::array()))
+        {
+            const u64_t id = guid::from_json(source);
+            if (std::any_of(entities.begin(), entities.end(),
+                            [id](const nlohmann::json& e) { return guid::from_json(e["id"]) == id; }))
+            {
+                removed.push_back(source);
+            }
+        }
         const std::unordered_set<u64_t> already_removed = removed_sources(entities, removed);
 
         for (const nlohmann::json& e : entities)
@@ -492,8 +520,8 @@ namespace tau::prefab
         for (const auto& [index, id] : slots)
         {
             const std::vector<nlohmann::json>& parts = groups[id];
-            const auto root = std::find_if(parts.begin(), parts.end(), [](const nlohmann::json& p)
-                                           { return p.contains("prefab"); });
+            const auto root =
+                std::find_if(parts.begin(), parts.end(), [](const nlohmann::json& p) { return p.contains("prefab"); });
             out[index] = collapse_instance(entry_target(*root, lookup), parts);
         }
         return out;
@@ -503,7 +531,7 @@ namespace tau::prefab
     {
         nlohmann::json entry = {
             {"id",     guid::to_json(guid::generate())},
-            {"prefab", prefab_ref                 },
+            {"prefab", prefab_ref                     },
         };
 
         nlohmann::json parts = nlohmann::json::object();

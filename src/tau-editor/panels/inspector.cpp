@@ -197,6 +197,28 @@ namespace tau::editor::panels
             return changed;
         }
 
+        bool draw_pod(const char* label, void* data, scene_value_type_e tag, const tau::reflection::editor_prop_t* prop)
+        {
+            if (tag == scene_value_type_e::VEC3) { return draw_vec3(label, *static_cast<tau::vec3_t*>(data), prop); }
+            if (tag == scene_value_type_e::COLOR) { return ImGui::ColorEdit4(label, static_cast<f32*>(data)); }
+
+            const pod_layout_t layout = pod_layout(tag);
+            ImGuiDataType type = ImGuiDataType_Float;
+            switch (layout.scalar)
+            {
+            case scalar_e::NONE: return false;
+            case scalar_e::BOOL: return ImGui::Checkbox(label, static_cast<bool*>(data));
+            case scalar_e::I32: type = ImGuiDataType_S32; break;
+            case scalar_e::U32: type = ImGuiDataType_U32; break;
+            case scalar_e::I64: type = ImGuiDataType_S64; break;
+            case scalar_e::U64: type = ImGuiDataType_U64; break;
+            case scalar_e::F32: type = ImGuiDataType_Float; break;
+            case scalar_e::F64: type = ImGuiDataType_Double; break;
+            }
+            const bool floating = layout.scalar == scalar_e::F32 || layout.scalar == scalar_e::F64;
+            return ImGui::DragScalarN(label, type, data, layout.count, floating ? 0.1f : 1.0f);
+        }
+
         bool draw_enum(tau::world_t& world, const char* label, tau::reflection::any_t& value,
                        tau::reflection::type_t type)
         {
@@ -329,16 +351,11 @@ namespace tau::editor::panels
         {
             tau::reflection::ctx_t& ctx = *world.reflection_ctx;
 
-            if (type == tau::reflection::resolve<i32>(ctx)) { return ImGui::DragInt(label, &value.cast<i32&>()); }
-            if (type == tau::reflection::resolve<u32>(ctx))
+            if (const std::optional<scene_value_type_e> tag = tau::reflection::pod_tag(type))
             {
-                return ImGui::DragScalar(label, ImGuiDataType_U32, &value.cast<u32&>());
+                void* data = tau::reflection::mutable_value_data(value);
+                return data && draw_pod(label, data, *tag, prop);
             }
-            if (type == tau::reflection::resolve<f32>(ctx))
-            {
-                return ImGui::DragFloat(label, &value.cast<f32&>(), 0.1f);
-            }
-            if (type == tau::reflection::resolve<bool>(ctx)) { return ImGui::Checkbox(label, &value.cast<bool&>()); }
             if (type == tau::reflection::resolve<std::string>(ctx))
             {
                 std::string& target = value.cast<std::string&>();
@@ -352,10 +369,6 @@ namespace tau::editor::panels
                     return true;
                 }
                 return false;
-            }
-            if (type == tau::reflection::resolve<tau::vec3_t>(ctx))
-            {
-                return draw_vec3(label, value.cast<tau::vec3_t&>(), prop);
             }
             // before the enum check, entities are an enum
             if (type == tau::reflection::resolve<tau::ecs::entity_t>(ctx))
@@ -649,6 +662,18 @@ namespace tau::editor::panels
                         for (const auto& [key, fields] : saved.items())
                         {
                             ImGui::TextDisabled("%s: type not registered, kept as saved", key.c_str());
+                        }
+                    }
+                    const nlohmann::json unknown = nlohmann::json::parse(kept->fields, nullptr, false);
+                    if (unknown.is_object())
+                    {
+                        for (const auto& [key, fields] : unknown.items())
+                        {
+                            for (const auto& [field, value] : fields.items())
+                            {
+                                ImGui::TextDisabled("%s.%s: no such field, kept as saved", key.c_str(),
+                                                    field.c_str());
+                            }
                         }
                     }
                 }

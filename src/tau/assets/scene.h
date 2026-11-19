@@ -4,6 +4,7 @@
 #include "tau/assets/scene_format.h"
 #include "tau/math.h"
 
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -17,11 +18,7 @@ namespace tau
         std::string prop_name;
         scene_value_type_e type = scene_value_type_e::I32;
 
-        i32_t i = 0;
-        u32_t u = 0;
-        f32 f = 0.0f;
-        bool b = false;
-        vec3_t vec = {};
+        std::array<u8_t, MAX_POD_SIZE> pod{};
         std::string str;
         u64_t asset_type = 0;
         std::vector<std::string> strs;
@@ -31,6 +28,7 @@ namespace tau
         std::vector<asset_guid_t> guids;
 
         u64_t ref = 0;
+        bool ref_is_index = false;
 
         // STRUCT fields, LIST elements
         std::vector<scene_property_t> children;

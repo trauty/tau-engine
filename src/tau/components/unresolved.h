@@ -6,11 +6,11 @@
 
 namespace tau
 {
-    // components whose type was not registered when the entity loaded (game not built, type renamed)
-    // kept as saved, so saving writes them back and a later load with the type applies them
+    // saved data the registered types did not take (game not built, type or field renamed)
+    // written back on save, applied by a later load that knows it
     struct TAU_ENGINE_API unresolved_components_t
     {
-        // JSON object: component key -> saved fields
-        std::string json;
+        std::string json = "{}";
+        std::string fields = "{}";
     };
 } // namespace tau

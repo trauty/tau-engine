@@ -4,9 +4,12 @@ import tau_surface;
 [ShaderConfig("Surface", "Opaque", true, true, true)]
 struct UnlitShader
 {
+    [Color]
     float4 base_color;
 
+    [Texture]
     uint albedo_tex;
+    [Sampler]
     uint albedo_sampler;
 
     property Texture albedo

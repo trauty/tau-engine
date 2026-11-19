@@ -40,6 +40,8 @@ namespace tau
 
         void sync();
 
+        bool set_shader(asset_t<shader_t> new_shader);
+
         template <typename T>
         void set_property(u32_t name_hash, const T& value)
         {

@@ -6,8 +6,8 @@
 #include "tau/assets/prefab.h"
 #include "tau/assets/scene_format.h"
 #include "tau/components/prefab.h"
-#include "tau/components/unresolved.h"
 #include "tau/components/transform.h"
+#include "tau/components/unresolved.h"
 #include "tau/ecs_fwd.h"
 #include "tau/engine.h"
 #include "tau/guid.h"
@@ -43,6 +43,103 @@ namespace tau::serialization
         }
 
         std::string meta_key(const char* name, u32_t id) { return name ? std::string(name) : std::to_string(id); }
+
+        template <typename T>
+        nlohmann::json scalar_json(const u8_t* at)
+        {
+            T value;
+            std::memcpy(&value, at, sizeof(T));
+            return value;
+        }
+
+        nlohmann::json pod_to_json(pod_layout_t layout, const u8_t* bytes)
+        {
+            auto one = [&](const u8_t* at) -> nlohmann::json
+            {
+                switch (layout.scalar)
+                {
+                case scalar_e::NONE: break;
+                case scalar_e::BOOL: return *at != 0;
+                case scalar_e::I32: return scalar_json<i32_t>(at);
+                case scalar_e::U32: return scalar_json<u32_t>(at);
+                case scalar_e::I64: return scalar_json<i64_t>(at);
+                case scalar_e::U64: return scalar_json<u64_t>(at);
+                case scalar_e::F32: return scalar_json<f32>(at);
+                case scalar_e::F64: return scalar_json<f64>(at);
+                }
+                return nullptr;
+            };
+
+            if (layout.count == 1) { return one(bytes); }
+
+            nlohmann::json values = nlohmann::json::array();
+            for (u32_t i = 0; i < layout.count; i++) { values.push_back(one(bytes + i * scalar_size(layout.scalar))); }
+            return values;
+        }
+
+        template <typename T>
+        bool scalar_from_json(const nlohmann::json& value, u8_t* at)
+        {
+            if (!value.is_number()) { return false; }
+            const T scalar = value.get<T>();
+            std::memcpy(at, &scalar, sizeof(T));
+            return true;
+        }
+
+        bool pod_from_json(pod_layout_t layout, const nlohmann::json& value, u8_t* out)
+        {
+            auto one = [&](const nlohmann::json& v, u8_t* at)
+            {
+                switch (layout.scalar)
+                {
+                case scalar_e::NONE: break;
+                case scalar_e::BOOL:
+                    if (!v.is_boolean() && !v.is_number()) { return false; }
+                    *at = (v.is_boolean() ? v.get<bool>() : v.get<f64>() != 0.0) ? 1 : 0;
+                    return true;
+                case scalar_e::I32: return scalar_from_json<i32_t>(v, at);
+                case scalar_e::U32: return scalar_from_json<u32_t>(v, at);
+                case scalar_e::I64: return scalar_from_json<i64_t>(v, at);
+                case scalar_e::U64: return scalar_from_json<u64_t>(v, at);
+                case scalar_e::F32: return scalar_from_json<f32>(v, at);
+                case scalar_e::F64: return scalar_from_json<f64>(v, at);
+                }
+                return false;
+            };
+
+            if (layout.count == 1) { return one(value, out); }
+            if (!value.is_array() || value.size() != layout.count) { return false; }
+
+            for (u32_t i = 0; i < layout.count; i++)
+            {
+                if (!one(value[i], out + i * scalar_size(layout.scalar))) { return false; }
+            }
+            return true;
+        }
+
+        template <typename T>
+        tau::reflection::any_t scalar_any(tau::reflection::ctx_t& ctx, const u8_t* at)
+        {
+            T value;
+            std::memcpy(&value, at, sizeof(T));
+            return tau::reflection::any_t{ctx, value};
+        }
+
+        tau::reflection::any_t scalar_any(tau::reflection::ctx_t& ctx, scalar_e scalar, const u8_t* at)
+        {
+            switch (scalar)
+            {
+            case scalar_e::NONE: break;
+            case scalar_e::BOOL: return tau::reflection::any_t{ctx, *at != 0};
+            case scalar_e::I32: return scalar_any<i32_t>(ctx, at);
+            case scalar_e::U32: return scalar_any<u32_t>(ctx, at);
+            case scalar_e::I64: return scalar_any<i64_t>(ctx, at);
+            case scalar_e::U64: return scalar_any<u64_t>(ctx, at);
+            case scalar_e::F32: return scalar_any<f32>(ctx, at);
+            case scalar_e::F64: return scalar_any<f64>(ctx, at);
+            }
+            return {};
+        }
 
         bool is_numeric_key(const std::string& key)
         { return !key.empty() && key.find_first_not_of("0123456789") == std::string::npos; }
@@ -162,7 +259,6 @@ namespace tau::serialization
             }
         };
 
-
         nlohmann::json encode_fields(tau::world_t& world, tau::reflection::type_t type,
                                      tau::reflection::any_t& instance, const entity_refs_t& refs);
 
@@ -172,30 +268,15 @@ namespace tau::serialization
         {
             tau::reflection::ctx_t& ctx = *world.reflection_ctx;
 
-            if (type == tau::reflection::resolve<i32>(ctx))
+            if (const std::optional<scene_value_type_e> tag = tau::reflection::pod_tag(type))
             {
-                return tagged(scene_value_type_e::I32, value.cast<i32>());
-            }
-            if (type == tau::reflection::resolve<u32>(ctx))
-            {
-                return tagged(scene_value_type_e::U32, value.cast<u32>());
-            }
-            if (type == tau::reflection::resolve<f32>(ctx))
-            {
-                return tagged(scene_value_type_e::F32, value.cast<f32>());
-            }
-            if (type == tau::reflection::resolve<bool>(ctx))
-            {
-                return tagged(scene_value_type_e::BOOL, value.cast<bool>());
+                const u8_t* bytes = static_cast<const u8_t*>(tau::reflection::value_data(value));
+                if (!bytes) { return {}; }
+                return tagged(*tag, pod_to_json(pod_layout(*tag), bytes));
             }
             if (type == tau::reflection::resolve<std::string>(ctx))
             {
                 return tagged(scene_value_type_e::STRING, value.cast<std::string>());
-            }
-            if (type == tau::reflection::resolve<vec3_t>(ctx))
-            {
-                const vec3_t vec = value.cast<vec3_t>();
-                return tagged(scene_value_type_e::VEC3, {vec.x, vec.y, vec.z});
             }
             // before the enum check, entities are an enum
             if (type == tau::reflection::resolve<tau::ecs::entity_t>(ctx))
@@ -314,18 +395,26 @@ namespace tau::serialization
                 return false;
             }
 
+            if (!val["ty"].is_number_integer() || val["ty"].get<i64_t>() < 0 || val["ty"].get<i64_t>() > 255)
+            {
+                TAU_LOG_WARN("SCENE", "Property '{}' has an unknown value type -- skipped", prop_key);
+                return false;
+            }
             prop.type = static_cast<scene_value_type_e>(val["ty"].get<u8_t>());
             const nlohmann::json& v = val["v"];
 
+            if (const pod_layout_t layout = pod_layout(prop.type); layout.count > 0)
+            {
+                if (pod_from_json(layout, v, prop.pod.data())) { return true; }
+                TAU_LOG_WARN("SCENE", "Property '{}' does not hold the value its type names -- skipped", prop_key);
+                return false;
+            }
+
             switch (prop.type)
             {
-            case scene_value_type_e::I32: prop.i = v.get<i32_t>(); return true;
-            case scene_value_type_e::U32: prop.u = v.get<u32_t>(); return true;
-            case scene_value_type_e::F32: prop.f = v.get<f32>(); return true;
-            case scene_value_type_e::BOOL: prop.b = v.get<bool>(); return true;
-            case scene_value_type_e::STRING: prop.str = v.get<std::string>(); return true;
-            case scene_value_type_e::VEC3:
-                prop.vec = vec3_t(v[0].get<f32>(), v[1].get<f32>(), v[2].get<f32>());
+            case scene_value_type_e::STRING:
+                if (!v.is_string()) { break; }
+                prop.str = v.get<std::string>();
                 return true;
             case scene_value_type_e::ASSET_REF:
                 prop.asset_type = asset_type_id(v, prop_key);
@@ -344,7 +433,11 @@ namespace tau::serialization
                 return true;
             }
             case scene_value_type_e::ENTITY:
-                if (v.is_number_integer() && v.get<i64_t>() >= 0) { prop.u = v.get<u32_t>() + 1; }
+                if (v.is_number_integer() && v.get<i64_t>() >= 0)
+                {
+                    prop.ref = v.get<u64_t>() + 1;
+                    prop.ref_is_index = true;
+                }
                 else
                 {
                     prop.ref = guid::from_json(v);
@@ -367,18 +460,23 @@ namespace tau::serialization
                     if (parse_value(element, prop_key, child)) { prop.children.push_back(std::move(child)); }
                 }
                 return true;
+            default: break;
             }
 
             TAU_LOG_WARN("SCENE", "Property '{}' has an unknown value type -- skipped", prop_key);
             return false;
         }
 
-        void adopt_index_refs(std::vector<scene_property_t>& props)
+        void adopt_index_refs(std::vector<scene_property_t>& props, bool generated_ids)
         {
             for (scene_property_t& prop : props)
             {
-                if (prop.type == scene_value_type_e::ENTITY && prop.ref == 0) { prop.ref = prop.u; }
-                adopt_index_refs(prop.children);
+                if (prop.type == scene_value_type_e::ENTITY && prop.ref_is_index)
+                {
+                    if (!generated_ids) { prop.ref = 0; }
+                    prop.ref_is_index = false;
+                }
+                adopt_index_refs(prop.children, generated_ids);
             }
         }
 
@@ -387,17 +485,14 @@ namespace tau::serialization
             write_pod(out, prop.prop_hash);
             write_pod(out, static_cast<u8_t>(prop.type));
 
+            if (const u32_t size = pod_size(pod_layout(prop.type)); size > 0)
+            {
+                out.write(reinterpret_cast<const char*>(prop.pod.data()), size);
+                return;
+            }
+
             switch (prop.type)
             {
-            case scene_value_type_e::I32: write_pod(out, prop.i); break;
-            case scene_value_type_e::U32: write_pod(out, prop.u); break;
-            case scene_value_type_e::F32: write_pod(out, prop.f); break;
-            case scene_value_type_e::BOOL: write_pod(out, static_cast<u8_t>(prop.b ? 1 : 0)); break;
-            case scene_value_type_e::VEC3:
-                write_pod(out, prop.vec.x);
-                write_pod(out, prop.vec.y);
-                write_pod(out, prop.vec.z);
-                break;
             case scene_value_type_e::STRING: write_str(out, prop.str); break;
             case scene_value_type_e::ASSET_REF:
                 write_pod(out, prop.asset_type);
@@ -419,6 +514,7 @@ namespace tau::serialization
                 write_pod(out, static_cast<u32_t>(prop.children.size()));
                 for (const scene_property_t& child : prop.children) { write_property(out, child); }
                 break;
+            default: break;
             }
         }
     } // namespace
@@ -621,13 +717,13 @@ namespace tau::serialization
 
         const bool has_ids = std::any_of(scene.entities.begin(), scene.entities.end(),
                                          [](const scene_entity_t& entity) { return entity.id != 0; });
-        if (!has_ids && !scene.entities.empty())
+        scene.generated_ids = !has_ids && !scene.entities.empty();
+        for (std::size_t i = 0; i < scene.entities.size(); i++)
         {
-            scene.generated_ids = true;
-            for (std::size_t i = 0; i < scene.entities.size(); i++)
+            if (scene.generated_ids) { scene.entities[i].id = i + 1; }
+            for (scene_component_t& comp : scene.entities[i].components)
             {
-                scene.entities[i].id = i + 1;
-                for (scene_component_t& comp : scene.entities[i].components) { adopt_index_refs(comp.properties); }
+                adopt_index_refs(comp.properties, scene.generated_ids);
             }
         }
 
@@ -665,7 +761,7 @@ namespace tau::serialization
     {
         void apply_fields(tau::world_t& world, tau::reflection::any_t& object, tau::reflection::type_t type,
                           const std::vector<scene_property_t>& props, const entity_refs_t& refs,
-                          const std::string& owner);
+                          const std::string& owner, std::vector<std::string>* unknown = nullptr);
 
         // built on `current` so fields missing from the file keep their value, empty when nothing applies
         tau::reflection::any_t decode_value(tau::world_t& world, const scene_property_t& prop,
@@ -674,14 +770,23 @@ namespace tau::serialization
         {
             tau::reflection::ctx_t& ctx = *world.reflection_ctx;
 
+            if (const pod_layout_t layout = pod_layout(prop.type); layout.count > 0)
+            {
+                if (tau::reflection::pod_tag(type) == prop.type)
+                {
+                    if (!current) { current = type.construct(); }
+                    void* target = current ? tau::reflection::mutable_value_data(current) : nullptr;
+                    if (!target) { return {}; }
+                    std::memcpy(target, prop.pod.data(), pod_size(layout));
+                    return current;
+                }
+                // other scalars and enums: converted on set
+                return layout.count == 1 ? scalar_any(ctx, layout.scalar, prop.pod.data()) : tau::reflection::any_t{};
+            }
+
             switch (prop.type)
             {
-            case scene_value_type_e::I32: return tau::reflection::any_t{ctx, prop.i};
-            case scene_value_type_e::U32: return tau::reflection::any_t{ctx, prop.u};
-            case scene_value_type_e::F32: return tau::reflection::any_t{ctx, prop.f};
-            case scene_value_type_e::BOOL: return tau::reflection::any_t{ctx, prop.b};
             case scene_value_type_e::STRING: return tau::reflection::any_t{ctx, prop.str};
-            case scene_value_type_e::VEC3: return tau::reflection::any_t{ctx, prop.vec};
             case scene_value_type_e::ENTITY: return tau::reflection::any_t{ctx, refs.decode(prop.ref)};
             case scene_value_type_e::ASSET_REF:
             {
@@ -730,22 +835,34 @@ namespace tau::serialization
                 }
                 return current;
             }
+            default: break;
             }
 
             return {};
         }
 
+        bool first_warning(const std::string& key)
+        {
+            static std::unordered_set<std::string> warned;
+            return warned.insert(key).second;
+        }
+
         void apply_fields(tau::world_t& world, tau::reflection::any_t& object, tau::reflection::type_t type,
                           const std::vector<scene_property_t>& props, const entity_refs_t& refs,
-                          const std::string& owner)
+                          const std::string& owner, std::vector<std::string>* unknown)
         {
             for (const scene_property_t& prop : props)
             {
                 tau::reflection::data_t data = type.data(prop.prop_hash);
                 if (!data)
                 {
-                    TAU_LOG_WARN("SCENE", "Unknown field '{}' on '{}', value dropped",
-                                 describe_key(prop.prop_name, prop.prop_hash), owner);
+                    const std::string key = describe_key(prop.prop_name, prop.prop_hash);
+                    if (unknown) { unknown->push_back(key); }
+                    if (first_warning(owner + "." + key))
+                    {
+                        TAU_LOG_WARN("SCENE", "Unknown field '{}' on '{}', {}", key, owner,
+                                     unknown ? "kept as saved" : "value dropped");
+                    }
                     continue;
                 }
 
@@ -762,6 +879,7 @@ namespace tau::serialization
                                 const entity_refs_t& refs)
         {
             nlohmann::json unresolved = nlohmann::json::object();
+            nlohmann::json unknown_fields = nlohmann::json::object();
             for (const scene_component_t& comp : scene_entity.components)
             {
                 tau::reflection::type_t type = tau::reflection::resolve(*world.reflection_ctx, comp.type_hash);
@@ -775,9 +893,7 @@ namespace tau::serialization
                         continue;
                     }
 
-                    // once per type, undo and duplicate apply it again
-                    static std::unordered_set<std::string> warned;
-                    if (warned.insert(key).second)
+                    if (first_warning(key))
                     {
                         TAU_LOG_WARN("SCENE", "Unknown component '{}', kept as saved until its type is registered",
                                      key);
@@ -803,8 +919,19 @@ namespace tau::serialization
                 }
                 if (!instance) { continue; }
 
-                apply_fields(world, instance, type, comp.properties, refs,
-                             describe_key(comp.type_name, comp.type_hash));
+                std::vector<std::string> unknown;
+                apply_fields(world, instance, type, comp.properties, refs, describe_key(comp.type_name, comp.type_hash),
+                             comp.source_json.empty() ? nullptr : &unknown);
+                if (!unknown.empty())
+                {
+                    const nlohmann::json saved = nlohmann::json::parse(comp.source_json, nullptr, false);
+                    nlohmann::json kept = nlohmann::json::object();
+                    for (const std::string& key : unknown)
+                    {
+                        if (saved.is_object() && saved.contains(key)) { kept[key] = saved[key]; }
+                    }
+                    if (!kept.empty()) { unknown_fields[meta_key(type.name(), static_cast<u32_t>(type.id()))] = kept; }
+                }
 
                 if (tau::reflection::func_t on_changed = type.func("on_changed"_h); on_changed)
                 {
@@ -812,10 +939,14 @@ namespace tau::serialization
                 }
             }
 
-            if (unresolved.empty()) { world.registry.remove<unresolved_components_t>(entity); }
+            if (unresolved.empty() && unknown_fields.empty())
+            {
+                world.registry.remove<unresolved_components_t>(entity);
+            }
             else
             {
-                world.registry.emplace_or_replace<unresolved_components_t>(entity, unresolved.dump());
+                world.registry.emplace_or_replace<unresolved_components_t>(entity, unresolved.dump(),
+                                                                           unknown_fields.dump());
             }
         }
 
@@ -826,10 +957,24 @@ namespace tau::serialization
             if (!kept) { return; }
 
             const nlohmann::json saved = nlohmann::json::parse(kept->json, nullptr, false);
-            if (!saved.is_object()) { return; }
-            for (const auto& [key, fields] : saved.items())
+            if (saved.is_object())
             {
-                if (!components.contains(key)) { components[key] = fields; }
+                for (const auto& [key, fields] : saved.items())
+                {
+                    if (!components.contains(key)) { components[key] = fields; }
+                }
+            }
+
+            const nlohmann::json unknown = nlohmann::json::parse(kept->fields, nullptr, false);
+            if (!unknown.is_object()) { return; }
+            for (const auto& [key, fields] : unknown.items())
+            {
+                const auto component = components.find(key);
+                if (component == components.end() || !component->is_object() || !fields.is_object()) { continue; }
+                for (const auto& [field, value] : fields.items())
+                {
+                    if (!component->contains(field)) { (*component)[field] = value; }
+                }
             }
         }
     } // namespace
@@ -1123,7 +1268,10 @@ namespace tau::serialization
             {
                 return targets.contains(value.cast<tau::ecs::entity_t>());
             }
-            if (type.is_enum() || type == tau::reflection::resolve<std::string>(ctx)) { return false; }
+            if (type.is_enum() || tau::reflection::pod_tag(type) || type == tau::reflection::resolve<std::string>(ctx))
+            {
+                return false;
+            }
 
             if (type.is_sequence_container())
             {
