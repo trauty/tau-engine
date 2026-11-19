@@ -2,9 +2,9 @@
 
 #include "imgui.h"
 #include "tau-editor/asset_files.h"
+#include "tau-editor/commands.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
-#include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_stage.h"
 #include "tau/assets/material.h"
 #include "tau/assets/mesh.h"
@@ -85,12 +85,10 @@ namespace tau::editor::asset_editors
 
         // scene: only the project's open in the editor
 
-        void open_scene(world_t& world, editor_context_t& ctx, const std::string& vfs)
+        void open_scene(world_t&, editor_context_t&, const std::string& vfs)
         {
             if (asset_files::rel_of(vfs).empty()) { return; }
-
-            ctx.unsaved_action_scene = asset_files::source_of(vfs).string();
-            panels::request_action(world, ctx, unsaved_action_e::LOAD_SCENE);
+            commands::push(commands::command_e::LOAD_SCENE, asset_files::source_of(vfs).string());
         }
 
         void scene_inspector(world_t& world, editor_context_t& ctx, const std::string& vfs, asset_handle_t)

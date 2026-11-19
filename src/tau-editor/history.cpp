@@ -5,6 +5,7 @@
 #include "tau-editor/asset_files.h"
 #include "tau-editor/asset_watch.h"
 #include "tau-editor/editor_context.h"
+#include "tau-editor/events.h"
 #include "tau-editor/keymap.h"
 #include "tau/asset.h"
 #include "tau/hash.h"
@@ -284,7 +285,18 @@ namespace tau::editor::history
         return {doc, 0};
     }
 
-    void init(editor_context_t& ctx) { g_ctx = &ctx; }
+    void init(editor_context_t& ctx)
+    {
+        g_ctx = &ctx;
+        events::on(events::event_e::PROJECT_OPENED, [](world_t&, editor_context_t&) { clear(); });
+
+        events::on(events::event_e::PLAY_STARTING,
+                   [](world_t& world, editor_context_t&)
+                   {
+                       if (open) { commit(world); }
+                       pending.clear();
+                   });
+    }
 
     void clear()
     {

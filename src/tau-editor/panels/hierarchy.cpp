@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "tau-editor/asset_editors.h"
+#include "tau-editor/commands.h"
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
 #include "tau-editor/panels/asset_browser.h"
@@ -47,7 +48,6 @@ namespace tau::editor::panels
             REMOVE,
             DUPLICATE,
             RENAME,
-            OPEN_PREFAB,
         };
 
         struct action_t
@@ -481,12 +481,14 @@ namespace tau::editor::panels
                     {
                         g.action = {action_kind_e::REMOVE, entity};
                     }
-                    if (prefab_edit::instance_root(world, entity) != ecs::NULL_ENTITY)
+                    if (const ecs::entity_t root = prefab_edit::instance_root(world, entity); root != ecs::NULL_ENTITY)
                     {
                         ImGui::Separator();
-                        if (ImGui::MenuItem("Open Prefab", nullptr, false, ctx.cur_mode == editor_mode_e::EDIT))
+                        if (ImGui::MenuItem("Open Prefab", nullptr, false,
+                                            commands::enabled(ctx, commands::command_e::OPEN_PREFAB)))
                         {
-                            g.action = {action_kind_e::OPEN_PREFAB, entity};
+                            commands::push(commands::command_e::OPEN_PREFAB, prefab_edit::prefab_path(world, root),
+                                           world.registry.get<prefab_part_t>(entity).source);
                         }
                     }
                     ImGui::EndPopup();
@@ -578,14 +580,6 @@ namespace tau::editor::panels
             case action_kind_e::RENAME:
                 if (world.registry.valid(action.entity)) { start_rename(world, action.entity); }
                 break;
-            case action_kind_e::OPEN_PREFAB:
-            {
-                const ecs::entity_t root = prefab_edit::instance_root(world, action.entity);
-                if (root == ecs::NULL_ENTITY) { break; }
-                const u64_t source = world.registry.get<prefab_part_t>(action.entity).source;
-                prefab_stage::open(world, ctx, prefab_edit::prefab_path(world, root), source);
-                break;
-            }
             }
         }
     } // namespace

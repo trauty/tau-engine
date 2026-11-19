@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "tau-editor/editor_context.h"
+#include "tau-editor/events.h"
 #include "tau-editor/handle_math.h"
 #include "tau-editor/history.h"
 #include "tau-editor/viewport_input.h"
@@ -601,6 +602,10 @@ namespace tau::editor::handles
     void init(editor_context_t& ctx)
     {
         g_ctx = &ctx;
+        events::on(events::event_e::PLAY_STARTING, [](world_t& world, editor_context_t&)
+                   {
+                       if (drag) { end_drag(world); }
+                   });
         renderer::register_renderer_feature("EditorHandles"_h, renderer::FEATURE_ORDER_OVERLAY - 1, &build_handles);
 
         meshes.move = assets::pin(assets::load<mesh_t>("engine://assets/models/move.glb"));

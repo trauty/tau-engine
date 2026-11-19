@@ -20,16 +20,6 @@ namespace tau
         PAUSED,
     };
 
-    enum class unsaved_action_e : u8_t
-    {
-        NONE,
-        NEW_SCENE,
-        OPEN_SCENE,
-        LOAD_SCENE,
-        OPEN_PROJECT,
-        QUIT,
-    };
-
     enum class handle_mode_e
     {
         NONE,
@@ -44,8 +34,8 @@ namespace tau
 
     struct editor_context_t
     {
+        // changes through the PLAY and STOP commands only
         editor_mode_e cur_mode = editor_mode_e::EDIT;
-        nlohmann::json world_backup;
 
         tau::editor::editor_camera_t editor_camera;
 
@@ -89,15 +79,8 @@ namespace tau
         std::string project_cooked_dir;
 
         std::string inspected_asset;
-        std::string pending_scene_path;
+        // set through scene_io::set_path
         std::string current_scene_path;
-        bool pending_scene_load = false;
-        bool pending_scene_save = false;
-
-        unsaved_action_e unsaved_action = unsaved_action_e::NONE;
-        std::string unsaved_action_project;
-        std::string unsaved_action_scene;
-        std::string confirmed_project;
 
         bool project_loaded = false;
 
@@ -105,9 +88,8 @@ namespace tau
         bool reload_pending = false;
         bool replay_on_reload = false;
 
-        bool recompile_requested = false;
         bool recompiling = false;
-        bool cancel_build_requested = false; // the console's Cancel, while recompiling
+        bool build_cancelling = false;
 
         bool show_project_manager = false;
         bool show_settings = false;

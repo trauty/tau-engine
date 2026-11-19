@@ -2,7 +2,9 @@
 
 #include "imgui.h"
 #include "tau-editor/asset_watch.h"
+#include "tau-editor/commands.h"
 #include "tau-editor/editor_context.h"
+#include "tau-editor/events.h"
 #include "tau-editor/handle_math.h"
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
@@ -49,7 +51,6 @@ namespace tau::editor::prefab_stage
 
         history::doc_t doc() { return {history::doc_kind_e::STAGE, g.prefab.guid()}; }
 
-
         std::string file_name() { return std::filesystem::path(assets::path_of(g.prefab)).filename().string(); }
 
         void stage_roots(std::vector<asset_handle_t>& out)
@@ -90,12 +91,33 @@ namespace tau::editor::prefab_stage
             direction = length > 1e-4f ? direction * (1.0f / length) : vec3_t{0.0f, -1.0f, 0.0f};
             renderer::set_fallback_light(staged, direction, {1.0f, 1.0f, 1.0f}, 3.0f);
         }
+
+        void reset()
+        {
+            if (g.open) { renderer::set_fallback_light(false); }
+            g = {};
+        }
+
+        bool editing(const editor_context_t& ctx) { return ctx.project_loaded && ctx.cur_mode == editor_mode_e::EDIT; }
     } // namespace
 
     void init(editor_context_t& ctx)
     {
         g_ctx = &ctx;
         assets::add_roots(&stage_roots);
+        events::on(events::event_e::PROJECT_OPENED, [](world_t&, editor_context_t&) { reset(); });
+
+        commands::set(commands::command_e::OPEN_PREFAB,
+                      {.label = "Open Prefab",
+                       .enabled = &editing,
+                       .run = [](world_t& world, editor_context_t& ctx, const commands::request_t& request)
+                       { open(world, ctx, request.path, request.guid); }});
+        commands::set(
+            commands::command_e::CLOSE_PREFAB,
+            {.label = "Close Prefab",
+             .shortcut = keymap::action_e::CLOSE_PREFAB,
+             .enabled = [](const editor_context_t& ctx) { return editing(ctx) && g.open; },
+             .run = [](world_t& world, editor_context_t& ctx, const commands::request_t&) { close(world, ctx); }});
     }
 
     bool is_open() { return g.open; }
@@ -108,8 +130,6 @@ namespace tau::editor::prefab_stage
 
     bool open(world_t& world, editor_context_t& ctx, const std::string& vfs_path, u64_t select)
     {
-        if (ctx.cur_mode != editor_mode_e::EDIT) { return false; }
-
         const asset_t<prefab_t> handle = assets::load<prefab_t>(vfs_path);
         const prefab_t* prefab = assets::get(handle);
         if (!prefab || !prefab->data.contains("entities") || prefab->data["entities"].empty())
@@ -189,12 +209,6 @@ namespace tau::editor::prefab_stage
         }
     }
 
-    void reset()
-    {
-        if (g.open) { renderer::set_fallback_light(false); }
-        g = {};
-    }
-
     bool save(world_t& world)
     {
         if (!g.open) { return false; }
@@ -249,13 +263,6 @@ namespace tau::editor::prefab_stage
     {
         if (!g.open) { return; }
 
-        const bool edit = ctx.cur_mode == editor_mode_e::EDIT;
-        if (edit && !ImGui::GetIO().WantTextInput && keymap::pressed(keymap::action_e::CLOSE_PREFAB))
-        {
-            close(world, ctx);
-            return;
-        }
-
         if (g.frame_pending)
         {
             g.frame_pending = false;
@@ -264,7 +271,7 @@ namespace tau::editor::prefab_stage
         set_lighting(true, ctx);
 
         ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + 6.0f, ImGui::GetCursorPosY() + 4.0f));
-        if (ImGui::SmallButton("< Scene")) { close(world, ctx); }
+        commands::button(ctx, commands::command_e::CLOSE_PREFAB, "< Scene", true);
         if (ImGui::IsItemHovered())
         {
             const std::string key = keymap::label(keymap::action_e::CLOSE_PREFAB);
@@ -272,7 +279,6 @@ namespace tau::editor::prefab_stage
                                           : "Back to the scene, the edits stay as an unsaved prefab (%s)",
                               key.c_str());
         }
-        if (!g.open) { return; }
 
         ImGui::SameLine();
         ImGui::TextDisabled(">");

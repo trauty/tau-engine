@@ -6,7 +6,9 @@
 #include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
 #include "tau-editor/asset_watch.h"
+#include "tau-editor/commands.h"
 #include "tau-editor/editor_context.h"
+#include "tau-editor/events.h"
 #include "tau-editor/handles.h"
 #include "tau-editor/history.h"
 #include "tau-editor/material_edit.h"
@@ -44,6 +46,7 @@
 #include "tau/rendering/vulkan.h"
 #include "tau/serialization.h"
 #include "tau/systems/camera.h"
+#include "tau/systems/guid.h"
 #include "tau/tween.h"
 #include "tau/vfs.h"
 #include "tau/window.h"
@@ -72,7 +75,7 @@ std::filesystem::path game_lib_copy;
 std::vector<tau::game_library_t> g_retired_game_libs;
 std::filesystem::file_time_type last_reload_time;
 
-tau::editor_mode_e g_prev_mode = tau::editor_mode_e::EDIT;
+nlohmann::json g_play_backup;
 // a rebuild stopped Play to reload, so Play starts again after it
 bool g_replay_after_reload = false;
 
@@ -212,6 +215,7 @@ static void release_game_library(tau::editor_context_t& ctx)
 {
     std::erase_if(ctx.custom_panels, [](tau::panel_draw_func panel)
                   { return tau::os::module_base_of(reinterpret_cast<const void*>(panel)) == game_lib.module; });
+    tau::editor::events::remove_from_module(game_lib.module);
 
     if (!tau::game_library::close(game_lib))
     {
@@ -276,24 +280,30 @@ static void reload_game_library(tau::editor_context_t& ctx)
     TAU_LOG_INFO("EDITOR", "Successfully hot-reloaded game lib");
 }
 
-static void begin_play(tau::editor_context_t& ctx)
+static void start_play(tau::world_t& world, tau::editor_context_t& ctx)
 {
-    tau::world_t& world = tau::engine::get_active_world();
+    tau::editor::events::emit(tau::editor::events::event_e::PLAY_STARTING, world, ctx);
 
-    ctx.world_backup = tau::serialization::serialize_scene(world);
+    g_play_backup = tau::serialization::serialize_scene(world);
     world.begin_play();
+    ctx.cur_mode = tau::editor_mode_e::PLAY;
 }
 
-static void end_play(tau::editor_context_t& ctx)
+static void stop_play(tau::world_t& world, tau::editor_context_t& ctx)
 {
-    tau::world_t& world = tau::engine::get_active_world();
-
     world.end_play();
     tau::tween::cancel_all();
 
     tau::serialization::clear_scene(world);
-    tau::serialization::deserialize_scene(world, ctx.world_backup);
+    tau::serialization::deserialize_scene(world, g_play_backup);
+    g_play_backup = nullptr;
     tau::assets::collect();
+
+    ctx.cur_mode = tau::editor_mode_e::EDIT;
+    // entities made during Play are gone
+    std::erase_if(ctx.selection.guids,
+                  [&](u64_t guid) { return tau::guid_system::find(world.registry, guid) == tau::ecs::NULL_ENTITY; });
+    tau::editor::events::emit(tau::editor::events::event_e::PLAY_STOPPED, world, ctx);
 }
 
 bool process_editor_event(const SDL_Event& event, tau::editor_context_t& ctx)
@@ -304,7 +314,7 @@ bool process_editor_event(const SDL_Event& event, tau::editor_context_t& ctx)
     // window close asks when unsaved, signal quit does not
     if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
     {
-        tau::editor::panels::request_action(tau::engine::get_active_world(), ctx, tau::unsaved_action_e::QUIT);
+        tau::editor::commands::push(tau::editor::commands::command_e::QUIT);
         return true;
     }
 
@@ -443,6 +453,8 @@ void update_editor_ui(tau::editor_context_t& ctx)
 {
     if (!ctx.project_loaded)
     {
+        tau::editor::commands::run_pending(tau::engine::get_active_world(), ctx);
+
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
 
@@ -580,7 +592,7 @@ void update_editor_ui(tau::editor_context_t& ctx)
 
     if (ctx.reload_pending && game_lib.handle)
     {
-        if (ctx.cur_mode == tau::editor_mode_e::EDIT && g_prev_mode == tau::editor_mode_e::EDIT)
+        if (ctx.cur_mode == tau::editor_mode_e::EDIT)
         {
             ctx.reload_pending = false;
             reload_game_library(ctx);
@@ -588,38 +600,20 @@ void update_editor_ui(tau::editor_context_t& ctx)
             if (g_replay_after_reload)
             {
                 g_replay_after_reload = false;
-                ctx.cur_mode = tau::editor_mode_e::PLAY;
+                tau::editor::commands::push(tau::editor::commands::command_e::PLAY);
             }
         }
         else if (ctx.replay_on_reload && !g_replay_after_reload)
         {
             g_replay_after_reload = true;
-            ctx.cur_mode = tau::editor_mode_e::EDIT;
+            tau::editor::commands::push(tau::editor::commands::command_e::STOP);
         }
     }
 
     // after a reload, which replaces the world
     tau::world_t& world = tau::engine::get_active_world();
 
-    if (ctx.pending_scene_load)
-    {
-        ctx.pending_scene_load = false;
-        tau::editor::scene_io::load(world, ctx, ctx.pending_scene_path);
-        ctx.pending_scene_path.clear();
-    }
-
-    if (ctx.pending_scene_save)
-    {
-        ctx.pending_scene_save = false;
-        tau::editor::scene_io::save(world, ctx, ctx.pending_scene_path);
-        ctx.pending_scene_path.clear();
-    }
-
-    if (!ctx.confirmed_project.empty())
-    {
-        request_open_project(ctx.confirmed_project, ctx);
-        ctx.confirmed_project.clear();
-    }
+    tau::editor::commands::run_pending(world, ctx);
 
     update_window_title(ctx);
 
@@ -678,6 +672,8 @@ void update_editor_ui(tau::editor_context_t& ctx)
 
     ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
 
+    tau::editor::commands::poll_shortcuts(ctx);
+
     // ImGui::ShowDemoWindow();
 
     tau::editor::panels::draw_main_menu_bar(world, ctx);
@@ -691,6 +687,7 @@ void update_editor_ui(tau::editor_context_t& ctx)
     tau::editor::panels::draw_asset_browser(world, ctx);
 
     for (tau::panel_draw_func custom_panel : ctx.custom_panels) { custom_panel(world, ctx); }
+    tau::editor::commands::draw_unsaved_prompt(world, ctx);
 
     tau::editor::handles::update(world, ctx);
     tau::editor::viewport_input::update(world, ctx);
@@ -699,16 +696,6 @@ void update_editor_ui(tau::editor_context_t& ctx)
     // after shortcuts: a key captured for a binding must not also fire the old one
     tau::editor::settings::draw(ctx);
 
-    if (ctx.recompile_requested && !ctx.recompiling)
-    {
-        ctx.recompile_requested = false;
-        ctx.recompiling = true;
-        ctx.cancel_build_requested = false;
-        g_build_cancel.reset();
-        const std::filesystem::path pf = ctx.project_file;
-        const std::string eng = tau::editor::project_manager::engine_dir();
-        g_recompile_future = std::async(std::launch::async, [pf, eng] { return build_project(pf, eng); });
-    }
     if (ctx.recompiling && g_recompile_future.valid() &&
         g_recompile_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
     {
@@ -716,9 +703,8 @@ void update_editor_ui(tau::editor_context_t& ctx)
         ctx.recompiling = false;
         if (g_build_cancel.requested()) { TAU_LOG_WARN("EDITOR", "Recompile cancelled"); }
         else if (!ok) { TAU_LOG_ERROR("EDITOR", "Recompile failed, see console output"); }
-        ctx.cancel_build_requested = false;
+        ctx.build_cancelling = false;
     }
-    if (ctx.recompiling && ctx.cancel_build_requested) { g_build_cancel.cancel(); }
 
     std::string chosen_project;
     bool commit_project = false;
@@ -734,14 +720,6 @@ void update_editor_ui(tau::editor_context_t& ctx)
 
     tau::renderer::set_view_debug_view("PrimaryView"_h, ctx.debug_view);
     tau::renderer::set_view_post_processing("PrimaryView"_h, ctx.post_processing);
-
-    if (ctx.cur_mode != g_prev_mode)
-    {
-        if (g_prev_mode == tau::editor_mode_e::EDIT) { begin_play(ctx); }
-        else if (ctx.cur_mode == tau::editor_mode_e::EDIT) { end_play(ctx); }
-
-        g_prev_mode = ctx.cur_mode;
-    }
 
     if (ctx.cur_mode == tau::editor_mode_e::EDIT)
     {
@@ -764,8 +742,63 @@ void update_editor_ui(tau::editor_context_t& ctx)
     if (commit_project)
     {
         ctx.show_project_manager = false;
-        tau::editor::panels::request_action(world, ctx, tau::unsaved_action_e::OPEN_PROJECT, chosen_project);
+        tau::editor::commands::push(tau::editor::commands::command_e::OPEN_PROJECT, chosen_project);
     }
+}
+
+// the ones main owns: Play, the game library and the project
+static void register_commands()
+{
+    using tau::editor_context_t;
+    using tau::editor_mode_e;
+    using tau::world_t;
+    using tau::editor::commands::command_e;
+    using tau::editor::commands::discards_e;
+    using tau::editor::commands::request_t;
+
+    tau::editor::commands::set(
+        command_e::PLAY,
+        {.label = "Play",
+         .enabled = [](const editor_context_t& ctx)
+         { return ctx.project_loaded && ctx.cur_mode == editor_mode_e::EDIT && !tau::editor::prefab_stage::is_open(); },
+         .run = [](world_t& world, editor_context_t& ctx, const request_t&) { start_play(world, ctx); }});
+    tau::editor::commands::set(
+        command_e::STOP,
+        {.label = "Stop",
+         .enabled = [](const editor_context_t& ctx) { return ctx.cur_mode != editor_mode_e::EDIT; },
+         .run = [](world_t& world, editor_context_t& ctx, const request_t&) { stop_play(world, ctx); }});
+    tau::editor::commands::set(command_e::OPEN_PROJECT,
+                               {.label = "Open Project",
+                                .discards = discards_e::EVERYTHING,
+                                .run = [](world_t&, editor_context_t& ctx, const request_t& request)
+                                { request_open_project(request.path, ctx); }});
+    tau::editor::commands::set(command_e::QUIT,
+                               {.label = "Quit",
+                                .discards = discards_e::EVERYTHING,
+                                .run = [](world_t&, editor_context_t&, const request_t&) { tau::engine::exit(); }});
+    tau::editor::commands::set(
+        command_e::RECOMPILE,
+        {.label = "Recompile",
+         .enabled = [](const editor_context_t& ctx) { return ctx.project_loaded && !ctx.recompiling; },
+         .run =
+             [](world_t&, editor_context_t& ctx, const request_t&)
+         {
+             ctx.recompiling = true;
+             ctx.build_cancelling = false;
+             g_build_cancel.reset();
+             const std::filesystem::path pf = ctx.project_file;
+             const std::string eng = tau::editor::project_manager::engine_dir();
+             g_recompile_future = std::async(std::launch::async, [pf, eng] { return build_project(pf, eng); });
+         }});
+    tau::editor::commands::set(command_e::CANCEL_BUILD, {.label = "Cancel",
+                                                         .enabled = [](const editor_context_t& ctx)
+                                                         { return ctx.recompiling && !ctx.build_cancelling; },
+                                                         .run =
+                                                             [](world_t&, editor_context_t& ctx, const request_t&)
+                                                         {
+                                                             ctx.build_cancelling = true;
+                                                             g_build_cancel.cancel();
+                                                         }});
 }
 
 bool open_project(const std::filesystem::path& project_file, tau::editor_context_t& ctx)
@@ -805,10 +838,12 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
     tau::project::mount(project, false);
     tau::vfs::mount("src://", project.assets_dir.generic_string() + "/");
 
-    if (g_prev_mode != tau::editor_mode_e::EDIT)
+    // the world goes, nothing to restore
+    if (ctx.cur_mode != tau::editor_mode_e::EDIT)
     {
         tau::engine::get_active_world().end_play();
-        ctx.cur_mode = g_prev_mode = tau::editor_mode_e::EDIT;
+        ctx.cur_mode = tau::editor_mode_e::EDIT;
+        g_play_backup = nullptr;
     }
 
     // the previous project's world goes while its library is loaded
@@ -821,16 +856,13 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
     ctx.reload_pending = false;
     g_replay_after_reload = false;
 
-    tau::editor::prefab_stage::reset();
-    tau::editor::history::clear();
     ctx.selection.clear();
-    ctx.current_scene_path.clear();
     ctx.inspected_asset.clear();
+    ctx.project_dir = project.project_dir.string();
     ctx.project_assets_dir = project.assets_dir.string();
     ctx.project_cooked_dir = project.cooked_assets_dir.string();
-    tau::editor::asset_files::reset();
-    tau::editor::asset_watch::set_open_scene({});
-    ctx.project_dir = project.project_dir.string();
+    tau::editor::scene_io::set_path(ctx, {});
+    tau::editor::events::emit(tau::editor::events::event_e::PROJECT_OPENED, tau::engine::get_active_world(), ctx);
     tau::assets::collect();
 
     loaded_library_t lib;
@@ -926,6 +958,8 @@ int main(i32 argc, char** argv)
     tau::editor::asset_files::init(editor_ctx);
     tau::editor::prefab_edit::init(editor_ctx);
     tau::editor::prefab_stage::init(editor_ctx);
+    tau::editor::scene_io::init(editor_ctx);
+    register_commands();
     // after the transform update, before the overlay
     tau::renderer::register_renderer_feature("EditorColliders"_h, tau::renderer::FEATURE_ORDER_OVERLAY - 1,
                                              [](tau::renderer::rendergraph_t&, tau::ecs::registry_t& reg)

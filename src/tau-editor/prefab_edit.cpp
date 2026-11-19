@@ -4,6 +4,7 @@
 #include "tau-editor/asset_cook.h"
 #include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
+#include "tau-editor/commands.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
 #include "tau-editor/prefab_stage.h"
@@ -401,8 +402,8 @@ namespace tau::editor::prefab_edit
         asset_editors::add({
             .type_id = get_type_id<prefab_t>(),
             .color = IM_COL32(90, 180, 230, 255),
-            .open = [](world_t& world, editor_context_t& ctx, const std::string& vfs)
-            { prefab_stage::open(world, ctx, vfs); },
+            .open = [](world_t&, editor_context_t&, const std::string& vfs)
+            { commands::push(commands::command_e::OPEN_PREFAB, vfs); },
             .drop_in_viewport = [](world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3_t& at)
             { instantiate(world, ctx, vfs, ecs::NULL_ENTITY, &at); },
             .drop_on_entity = [](world_t& world, editor_context_t& ctx, const std::string& vfs, ecs::entity_t parent)

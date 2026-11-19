@@ -3,7 +3,9 @@
 #include "tau-editor/asset_cook.h"
 #include "tau-editor/asset_watch.h"
 #include "tau-editor/editor_context.h"
+#include "tau-editor/events.h"
 #include "tau-editor/history.h"
+#include "tau-editor/scene_io.h"
 #include "tau/asset.h"
 #include "tau/asset_sources.h"
 #include "tau/engine.h"
@@ -165,8 +167,7 @@ namespace tau::editor::asset_files
                 const std::string rel = fs::relative(g_ctx->current_scene_path, source_root(), ec).generic_string();
                 if (!ec && is_within(rel, from))
                 {
-                    g_ctx->current_scene_path = source_path(rebase(rel)).string();
-                    asset_watch::set_open_scene(g_ctx->current_scene_path);
+                    scene_io::set_path(*g_ctx, source_path(rebase(rel)).string());
                 }
             }
 
@@ -250,7 +251,11 @@ namespace tau::editor::asset_files
         }
     } // namespace
 
-    void init(editor_context_t& ctx) { g_ctx = &ctx; }
+    void init(editor_context_t& ctx)
+    {
+        g_ctx = &ctx;
+        events::on(events::event_e::PROJECT_OPENED, [](world_t&, editor_context_t&) { reset(); });
+    }
 
     u64_t reserve_entry() { return new_entry(); }
 

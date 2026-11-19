@@ -3,9 +3,9 @@
 #include "imgui.h"
 #include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
+#include "tau-editor/commands.h"
 #include "tau-editor/history.h"
 #include "tau-editor/panels/asset_browser.h"
-#include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
 #include "tau-editor/widgets.h"
@@ -485,7 +485,6 @@ namespace tau::editor::panels
         enum class prefab_action_e : u8_t
         {
             NONE,
-            OPEN,
             REVERT,
             APPLY,
             UNPACK,
@@ -495,7 +494,6 @@ namespace tau::editor::panels
         {
             prefab_action_e action = prefab_action_e::NONE;
             u64_t root = 0;
-            u64_t source = 0;
         };
 
         pending_prefab_t pending_prefab;
@@ -521,7 +519,7 @@ namespace tau::editor::panels
                 ctx.selection.clear();
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Open")) { pending_prefab = {prefab_action_e::OPEN, root_guid, source}; }
+            if (ImGui::SmallButton("Open")) { commands::push(commands::command_e::OPEN_PREFAB, path, source); }
             if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Edit the prefab on its own, its instances follow"); }
             ImGui::SameLine();
             if (ImGui::SmallButton("Revert")) { pending_prefab = {prefab_action_e::REVERT, root_guid}; }
@@ -554,9 +552,6 @@ namespace tau::editor::panels
             switch (pending.action)
             {
             case prefab_action_e::NONE: break;
-            case prefab_action_e::OPEN:
-                prefab_stage::open(world, ctx, prefab_edit::prefab_path(world, root), pending.source);
-                break;
             case prefab_action_e::REVERT: prefab_edit::revert(world, ctx, root); break;
             case prefab_action_e::APPLY: prefab_edit::apply(world, ctx, root); break;
             case prefab_action_e::UNPACK: prefab_edit::unpack(world, ctx, root); break;

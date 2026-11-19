@@ -21,9 +21,9 @@ namespace tau::editor::prefab_stage
     ecs::entity_t root(world_t& world);
     bool is_dirty();
 
+    // OPEN_PREFAB and CLOSE_PREFAB run these
     bool open(world_t& world, editor_context_t& ctx, const std::string& vfs_path, u64_t select = 0);
     void close(world_t& world, editor_context_t& ctx);
-    void reset();
 
     bool save(world_t& world);
 

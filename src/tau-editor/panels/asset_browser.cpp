@@ -8,7 +8,6 @@
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
 #include "tau-editor/panels/hierarchy.h"
-#include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"

@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "tau-editor/commands.h"
 #include "tau/log.h"
 
 #include <cstring>
@@ -135,20 +136,16 @@ namespace tau::editor::panels
 
         ImGui::Begin("Console");
 
-        ImGui::BeginDisabled(ctx.recompiling);
-        if (ImGui::Button("Recompile")) { ctx.recompile_requested = true; }
-        ImGui::EndDisabled();
+        commands::button(ctx, commands::command_e::RECOMPILE);
 
         if (ctx.recompiling)
         {
             ImGui::SameLine();
             ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(160.0f, 0.0f),
-                               ctx.cancel_build_requested ? "cancelling..." : "building...");
+                               ctx.build_cancelling ? "cancelling..." : "building...");
 
             ImGui::SameLine();
-            ImGui::BeginDisabled(ctx.cancel_build_requested);
-            if (ImGui::Button("Cancel")) { ctx.cancel_build_requested = true; }
-            ImGui::EndDisabled();
+            commands::button(ctx, commands::command_e::CANCEL_BUILD);
         }
 
         ImGui::SameLine();
