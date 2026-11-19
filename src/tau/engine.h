@@ -4,7 +4,6 @@
 #include "tau/world.h"
 
 #include <functional>
-#include <memory>
 
 union SDL_Event;
 
@@ -26,8 +25,8 @@ namespace tau::engine
     TAU_ENGINE_API const char* build_stamp();
     TAU_ENGINE_API const char* version();
 
-    TAU_ENGINE_API void create_scene();
-    TAU_ENGINE_API void set_scene(std::unique_ptr<tau::world_t> scene);
+    // ends Play in the old world and destroys it, so its game library must still be loaded
+    TAU_ENGINE_API world_t& reset_world();
     TAU_ENGINE_API world_t& get_active_world();
 
     TAU_ENGINE_API void set_event_callback(event_callback_t cb);

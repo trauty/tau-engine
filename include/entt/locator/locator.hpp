@@ -1,9 +1,10 @@
 #ifndef ENTT_LOCATOR_LOCATOR_HPP
 #define ENTT_LOCATOR_LOCATOR_HPP
 
-#include <memory>
-#include <utility>
 #include "../config/config.h"
+#include "../stl/concepts.hpp"
+#include "../stl/memory.hpp"
+#include "../stl/utility.hpp"
 
 namespace entt {
 
@@ -27,7 +28,7 @@ template<typename Service>
 class locator final {
     class service_handle {
         friend class locator<Service>;
-        std::shared_ptr<Service> value{};
+        stl::shared_ptr<Service> value{};
     };
 
 public:
@@ -84,9 +85,10 @@ public:
      * @param args Parameters to use to construct the fallback service.
      * @return A reference to a valid service.
      */
-    template<typename Type = Service, typename... Args>
+    template<stl::derived_from<Service> Type = Service, typename... Args>
+    requires stl::constructible_from<Type, Args...>
     [[nodiscard]] static Service &value_or(Args &&...args) {
-        return service ? *service : emplace<Type>(std::forward<Args>(args)...);
+        return service ? *service : emplace<Type>(stl::forward<Args>(args)...);
     }
 
     /**
@@ -96,24 +98,25 @@ public:
      * @param args Parameters to use to construct the service.
      * @return A reference to a valid service.
      */
-    template<typename Type = Service, typename... Args>
+    template<stl::derived_from<Service> Type = Service, typename... Args>
+    requires stl::constructible_from<Type, Args...>
     static Service &emplace(Args &&...args) {
-        service = std::make_shared<Type>(std::forward<Args>(args)...);
+        service = stl::make_shared<Type>(stl::forward<Args>(args)...);
         return *service;
     }
 
     /**
      * @brief Sets or replaces a service using a given allocator.
      * @tparam Type Service type.
-     * @tparam Allocator Type of allocator used to manage memory and elements.
      * @tparam Args Types of arguments to use to construct the service.
      * @param alloc The allocator to use.
      * @param args Parameters to use to construct the service.
      * @return A reference to a valid service.
      */
-    template<typename Type = Service, typename Allocator, typename... Args>
-    static Service &emplace(std::allocator_arg_t, Allocator alloc, Args &&...args) {
-        service = std::allocate_shared<Type>(alloc, std::forward<Args>(args)...);
+    template<stl::derived_from<Service> Type = Service, typename... Args>
+    requires stl::constructible_from<Type, Args...>
+    static Service &emplace(stl::allocator_arg_t, auto alloc, Args &&...args) {
+        service = stl::allocate_shared<Type>(alloc, stl::forward<Args>(args)...);
         return *service;
     }
 
@@ -142,15 +145,15 @@ public:
      * @param elem A pointer to a service to manage.
      * @param deleter A deleter to use to destroy the service.
      */
-    template<typename Type, typename Deleter = std::default_delete<Type>>
+    template<stl::derived_from<Service> Type, typename Deleter = stl::default_delete<Type>>
     static void reset(Type *elem, Deleter deleter = {}) {
-        service = std::shared_ptr<Service>{elem, std::move(deleter)};
+        service = stl::shared_ptr<Service>{elem, stl::move(deleter)};
     }
 
 private:
-    // std::shared_ptr because of its type erased allocator which is useful here
+    // stl::shared_ptr because of its type erased allocator which is useful here
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-    inline static std::shared_ptr<Service> service{};
+    inline static stl::shared_ptr<Service> service{};
 };
 
 } // namespace entt

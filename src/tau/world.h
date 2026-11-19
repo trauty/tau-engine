@@ -30,18 +30,16 @@ namespace tau
 
         bool is_simulating = false;
 
-        world_t() = default;
+        world_t();
         world_t(const world_t&) = delete;
         world_t& operator=(const world_t&) = delete;
         ~world_t();
 
-        void init();
-        // run init/shutdown systems and TAU_ON_PLAY/TAU_ON_STOP, update systems in between
+        // run init/shutdown systems and TAU_ON_PLAY/TAU_ON_STOP, game systems and tweens in between
         void begin_play();
         void end_play();
         void update();
         void fixed_update();
-        void shutdown();
 
         // register from TAU_ON_LOAD, a reload builds a new world
         void register_init_system(system_func_t system);

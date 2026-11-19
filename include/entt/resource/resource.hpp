@@ -1,9 +1,10 @@
 #ifndef ENTT_RESOURCE_RESOURCE_HPP
 #define ENTT_RESOURCE_RESOURCE_HPP
 
-#include <memory>
-#include <type_traits>
-#include <utility>
+#include <compare>
+#include "../stl/concepts.hpp"
+#include "../stl/memory.hpp"
+#include "../stl/utility.hpp"
 #include "fwd.hpp"
 
 namespace entt {
@@ -23,14 +24,11 @@ class resource {
     template<typename>
     friend class resource;
 
-    template<typename Other>
-    static constexpr bool is_acceptable = !std::is_same_v<Type, Other> && std::is_constructible_v<Type &, Other &>;
-
 public:
     /*! @brief Resource type. */
     using element_type = Type;
     /*! @brief Handle type. */
-    using handle_type = std::shared_ptr<element_type>;
+    using handle_type = stl::shared_ptr<element_type>;
 
     /*! @brief Default constructor. */
     resource() noexcept
@@ -41,7 +39,7 @@ public:
      * @param res A handle to a resource.
      */
     explicit resource(handle_type res) noexcept
-        : value{std::move(res)} {}
+        : value{stl::move(res)} {}
 
     /*! @brief Default copy constructor. */
     resource(const resource &) noexcept = default;
@@ -57,14 +55,15 @@ public:
      */
     template<typename Other>
     resource(const resource<Other> &other, element_type &res) noexcept
-        : value{other.value, std::addressof(res)} {}
+        : value{other.value, stl::addressof(res)} {}
 
     /**
      * @brief Copy constructs a handle which shares ownership of the resource.
      * @tparam Other Type of resource managed by the received handle.
      * @param other The handle to copy from.
      */
-    template<typename Other, typename = std::enable_if_t<is_acceptable<Other>>>
+    template<typename Other>
+    requires (!stl::same_as<Type, Other> && stl::constructible_from<Type &, Other &>)
     resource(const resource<Other> &other) noexcept
         : value{other.value} {}
 
@@ -73,9 +72,10 @@ public:
      * @tparam Other Type of resource managed by the received handle.
      * @param other The handle to move from.
      */
-    template<typename Other, typename = std::enable_if_t<is_acceptable<Other>>>
+    template<typename Other>
+    requires (!stl::same_as<Type, Other> && stl::constructible_from<Type &, Other &>)
     resource(resource<Other> &&other) noexcept
-        : value{std::move(other.value)} {}
+        : value{stl::move(other.value)} {}
 
     /*! @brief Default destructor. */
     ~resource() = default;
@@ -98,7 +98,8 @@ public:
      * @param other The handle to copy from.
      * @return This resource handle.
      */
-    template<typename Other, typename = std::enable_if_t<is_acceptable<Other>>>
+    template<typename Other>
+    requires (!stl::same_as<Type, Other> && stl::constructible_from<Type &, Other &>)
     resource &operator=(const resource<Other> &other) noexcept {
         value = other.value;
         return *this;
@@ -110,9 +111,10 @@ public:
      * @param other The handle to move from.
      * @return This resource handle.
      */
-    template<typename Other, typename = std::enable_if_t<is_acceptable<Other>>>
+    template<typename Other>
+    requires (!stl::same_as<Type, Other> && stl::constructible_from<Type &, Other &>)
     resource &operator=(resource<Other> &&other) noexcept {
-        value = std::move(other.value);
+        value = stl::move(other.value);
         return *this;
     }
 
@@ -121,7 +123,7 @@ public:
      * @param other Resource to exchange the content with.
      */
     void swap(resource &other) noexcept {
-        using std::swap;
+        using stl::swap;
         swap(value, other.value);
     }
 
@@ -158,6 +160,28 @@ public:
         return static_cast<bool>(value);
     }
 
+    /**
+     * @brief Compares two handles.
+     * @tparam Other Type of resource managed by the other handle.
+     * @param other A valid handle.
+     * @return True if both handles refer to the same resource, false otherwise.
+     */
+    template<typename Other>
+    [[nodiscard]] bool operator==(const resource<Other> &other) const noexcept {
+        return (value == other.value);
+    }
+
+    /**
+     * @brief Lexicographically compares two handles.
+     * @tparam Other Type of resource managed by the other handle.
+     * @param other A valid handle.
+     * @return The relative order between the two handles.
+     */
+    template<typename Other>
+    [[nodiscard]] auto operator<=>(const resource<Other> &other) const noexcept {
+        return (value <=> other.value);
+    }
+
     /*! @brief Releases the ownership of the managed resource. */
     void reset() {
         value.reset();
@@ -168,7 +192,7 @@ public:
      * @param other A handle to a resource.
      */
     void reset(handle_type other) {
-        value = std::move(other);
+        value = stl::move(other);
     }
 
     /**
@@ -182,86 +206,6 @@ public:
 private:
     handle_type value;
 };
-
-/**
- * @brief Compares two handles.
- * @tparam Lhs Type of resource managed by the first handle.
- * @tparam Rhs Type of resource managed by the second handle.
- * @param lhs A valid handle.
- * @param rhs A valid handle.
- * @return True if both handles refer to the same resource, false otherwise.
- */
-template<typename Lhs, typename Rhs>
-[[nodiscard]] bool operator==(const resource<Lhs> &lhs, const resource<Rhs> &rhs) noexcept {
-    return (std::addressof(*lhs) == std::addressof(*rhs));
-}
-
-/**
- * @brief Compares two handles.
- * @tparam Lhs Type of resource managed by the first handle.
- * @tparam Rhs Type of resource managed by the second handle.
- * @param lhs A valid handle.
- * @param rhs A valid handle.
- * @return False if both handles refer to the same resource, true otherwise.
- */
-template<typename Lhs, typename Rhs>
-[[nodiscard]] bool operator!=(const resource<Lhs> &lhs, const resource<Rhs> &rhs) noexcept {
-    return !(lhs == rhs);
-}
-
-/**
- * @brief Compares two handles.
- * @tparam Lhs Type of resource managed by the first handle.
- * @tparam Rhs Type of resource managed by the second handle.
- * @param lhs A valid handle.
- * @param rhs A valid handle.
- * @return True if the first handle is less than the second, false otherwise.
- */
-template<typename Lhs, typename Rhs>
-[[nodiscard]] bool operator<(const resource<Lhs> &lhs, const resource<Rhs> &rhs) noexcept {
-    return (std::addressof(*lhs) < std::addressof(*rhs));
-}
-
-/**
- * @brief Compares two handles.
- * @tparam Lhs Type of resource managed by the first handle.
- * @tparam Rhs Type of resource managed by the second handle.
- * @param lhs A valid handle.
- * @param rhs A valid handle.
- * @return True if the first handle is greater than the second, false otherwise.
- */
-template<typename Lhs, typename Rhs>
-[[nodiscard]] bool operator>(const resource<Lhs> &lhs, const resource<Rhs> &rhs) noexcept {
-    return rhs < lhs;
-}
-
-/**
- * @brief Compares two handles.
- * @tparam Lhs Type of resource managed by the first handle.
- * @tparam Rhs Type of resource managed by the second handle.
- * @param lhs A valid handle.
- * @param rhs A valid handle.
- * @return True if the first handle is less than or equal to the second, false
- * otherwise.
- */
-template<typename Lhs, typename Rhs>
-[[nodiscard]] bool operator<=(const resource<Lhs> &lhs, const resource<Rhs> &rhs) noexcept {
-    return !(lhs > rhs);
-}
-
-/**
- * @brief Compares two handles.
- * @tparam Lhs Type of resource managed by the first handle.
- * @tparam Rhs Type of resource managed by the second handle.
- * @param lhs A valid handle.
- * @param rhs A valid handle.
- * @return True if the first handle is greater than or equal to the second,
- * false otherwise.
- */
-template<typename Lhs, typename Rhs>
-[[nodiscard]] bool operator>=(const resource<Lhs> &lhs, const resource<Rhs> &rhs) noexcept {
-    return !(lhs < rhs);
-}
 
 } // namespace entt
 

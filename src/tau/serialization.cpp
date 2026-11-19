@@ -42,7 +42,6 @@ namespace tau::serialization
             };
         }
 
-        std::string meta_key(const char* name, u32_t id) { return name ? std::string(name) : std::to_string(id); }
 
         template <typename T>
         nlohmann::json scalar_json(const u8_t* at)
@@ -309,7 +308,7 @@ namespace tau::serialization
             }
 
             TAU_LOG_WARN("SCENE", "Field '{}' has unsupported type '{}' -- not saved", field,
-                         type.name() ? type.name() : "?");
+                         type.name().empty() ? std::string_view{"?"} : type.name());
             return {};
         }
 
@@ -321,7 +320,7 @@ namespace tau::serialization
             for (auto [data_id, data] : type.data())
             {
                 tau::reflection::any_t field_value = data.get(instance);
-                const std::string prop_key = meta_key(data.name(), data_id);
+                const std::string prop_key = tau::reflection::meta_key(data.name(), data_id);
 
                 tau::reflection::editor_prop_t* prop = static_cast<tau::reflection::editor_prop_t*>(data.custom());
                 if (prop && prop->asset_type_hash != 0 && prop->is_list)
@@ -373,7 +372,7 @@ namespace tau::serialization
                     type.func("get"_h).invoke({}, tau::reflection::forward_as_meta(world.registry), entity);
                 if (!instance) { continue; }
 
-                components[meta_key(type.name(), static_cast<u32_t>(type.id()))] =
+                components[tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias()))] =
                     encode_fields(world, type, instance, refs);
             }
 
@@ -585,7 +584,7 @@ namespace tau::serialization
 
             const tau::reflection::type_t type = type_it->second;
             const tau::reflection::func_t get_func = type.func("get"_h);
-            const std::string type_key = meta_key(type.name(), static_cast<u32_t>(type.id()));
+            const std::string type_key = tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias()));
 
             for (tau::ecs::entity_t entity : pool)
             {
@@ -930,7 +929,7 @@ namespace tau::serialization
                     {
                         if (saved.is_object() && saved.contains(key)) { kept[key] = saved[key]; }
                     }
-                    if (!kept.empty()) { unknown_fields[meta_key(type.name(), static_cast<u32_t>(type.id()))] = kept; }
+                    if (!kept.empty()) { unknown_fields[tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias()))] = kept; }
                 }
 
                 if (tau::reflection::func_t on_changed = type.func("on_changed"_h); on_changed)
@@ -1110,7 +1109,7 @@ namespace tau::serialization
                 const auto type_it = by_pool.find(static_cast<u32_t>(pool_id));
                 if (type_it == by_pool.end() || !pool.contains(entity)) { continue; }
 
-                const u32_t type_hash = static_cast<u32_t>(type_it->second.id());
+                const u32_t type_hash = static_cast<u32_t>(type_it->second.alias());
                 if (std::none_of(parsed.components.begin(), parsed.components.end(),
                                  [type_hash](const scene_component_t& c) { return c.type_hash == type_hash; }))
                 {

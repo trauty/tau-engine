@@ -47,7 +47,6 @@
 #include "tau/serialization.h"
 #include "tau/systems/camera.h"
 #include "tau/systems/guid.h"
-#include "tau/tween.h"
 #include "tau/vfs.h"
 #include "tau/window.h"
 #include "tau/world.h"
@@ -238,7 +237,6 @@ static std::vector<tau::ecs::entity_t> start_game_library(tau::editor_context_t&
     tau::world_t& world = tau::engine::get_active_world();
     tau::reflection::register_types();
     tau::reflection::run_registrations(*world.reflection_ctx);
-    world.init();
 
     std::vector<tau::ecs::entity_t> created;
     if (scene) { created = tau::serialization::deserialize_scene(world, *scene); }
@@ -268,10 +266,8 @@ static void reload_game_library(tau::editor_context_t& ctx)
 
     const nlohmann::json scene = tau::serialization::serialize_scene(tau::engine::get_active_world());
 
-    tau::tween::cancel_all();
-
     // the old world goes while its library is loaded, its pools and listeners run that library's code
-    tau::engine::create_scene();
+    tau::engine::reset_world();
     tau::reflection::shutdown();
     release_game_library(ctx);
 
@@ -292,7 +288,6 @@ static void start_play(tau::world_t& world, tau::editor_context_t& ctx)
 static void stop_play(tau::world_t& world, tau::editor_context_t& ctx)
 {
     world.end_play();
-    tau::tween::cancel_all();
 
     tau::serialization::clear_scene(world);
     tau::serialization::deserialize_scene(world, g_play_backup);
@@ -448,6 +443,8 @@ namespace
                                       "? Its engine version changes in the project file.";
     }
 } // namespace
+
+
 
 void update_editor_ui(tau::editor_context_t& ctx)
 {
@@ -839,15 +836,11 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
     tau::vfs::mount("src://", project.assets_dir.generic_string() + "/");
 
     // the world goes, nothing to restore
-    if (ctx.cur_mode != tau::editor_mode_e::EDIT)
-    {
-        tau::engine::get_active_world().end_play();
-        ctx.cur_mode = tau::editor_mode_e::EDIT;
-        g_play_backup = nullptr;
-    }
+    ctx.cur_mode = tau::editor_mode_e::EDIT;
+    g_play_backup = nullptr;
 
-    // the previous project's world goes while its library is loaded
-    tau::engine::create_scene();
+    // the previous project's world goes while its library is loaded, ending Play
+    tau::engine::reset_world();
     if (game_lib.handle)
     {
         tau::reflection::shutdown();
@@ -868,7 +861,6 @@ bool open_project(const std::filesystem::path& project_file, tau::editor_context
     loaded_library_t lib;
     if (!open_game_library(lib))
     {
-        tau::engine::get_active_world().init();
         TAU_LOG_ERROR("EDITOR", "Could not load the game lib (check the build output for errors)");
         return false;
     }
@@ -945,9 +937,6 @@ int main(i32 argc, char** argv)
     ImGui_ImplSDL3_InitForVulkan(tau::window::get_window());
     tau::editor::imgui::init();
     tau::editor::imgui::init_multiviewport();
-
-    tau::engine::create_scene();
-    tau::engine::get_active_world().init();
 
     static tau::editor_context_t editor_ctx;
     tau::editor::picking::init(editor_ctx);

@@ -16,6 +16,7 @@
 #include <array>
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -117,6 +118,9 @@ namespace tau::reflection
         static constexpr u64_t type_id = get_type_id<A>();
         static constexpr bool is_list = true;
     };
+
+    inline std::string meta_key(std::string_view name, u32_t id)
+    { return name.empty() ? std::to_string(id) : std::string(name); }
 
     // asset_t<T> value as untyped handle, conversions per asset type
     inline asset_handle_t asset_of(const any_t& value)

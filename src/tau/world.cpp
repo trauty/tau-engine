@@ -5,10 +5,14 @@
 #include "tau/game.h"
 #include "tau/physics/physics_internal.h"
 #include "tau/profiling.h"
+#include "tau/reflection.h"
 #include "tau/serialization.h"
+#include "tau/systems/camera.h"
 #include "tau/systems/guid.h"
+#include "tau/systems/shadows.h"
 #include "tau/systems/transform.h"
 #include "tau/time.h"
+#include "tau/tween.h"
 
 #include <algorithm>
 #include <vector>
@@ -25,20 +29,27 @@ namespace tau
         }
     } // namespace
 
-    world_t::~world_t() { std::erase(g_live_worlds, this); }
-
-    void world_t::init()
+    world_t::world_t() : reflection_ctx(&reflection::get_engine_context())
     {
         transform_system::connect(registry);
         guid_system::connect(registry);
 
         physics::detail::create(*this);
 
-        if (std::find(g_live_worlds.begin(), g_live_worlds.end(), this) == g_live_worlds.end())
-        {
-            g_live_worlds.push_back(this);
-        }
+        g_live_worlds.push_back(this);
         assets::add_roots(&asset_roots);
+    }
+
+    world_t::~world_t()
+    {
+        std::erase(g_live_worlds, this);
+
+        if (is_simulating) { end_play(); }
+
+        physics::detail::destroy(*this);
+
+        registry.clear();
+        registry.ctx().clear();
     }
 
     void world_t::begin_play()
@@ -54,15 +65,22 @@ namespace tau
         for (system_func_t system : shutdown_systems) { system(*this); }
         is_simulating = false;
         physics::detail::stop(*this);
+        tween::cancel_all();
     }
 
     void world_t::update()
     {
         ZoneScoped;
-        if (!is_simulating) { return; }
+        if (is_simulating)
+        {
+            tween::update(static_cast<f32>(time::get_dt()));
+            for (system_func_t system : update_systems) { system(*this); }
+            physics::detail::end_frame(*this);
+        }
 
-        for (system_func_t system : update_systems) { system(*this); }
-        physics::detail::end_frame(*this);
+        transform_system::update(registry);
+        camera_system::update(registry);
+        shadow_system::update(registry);
     }
 
     void world_t::fixed_update()
@@ -73,18 +91,6 @@ namespace tau
         physics::detail::begin_step(*this);
         for (system_func_t system : fixed_update_systems) { system(*this); }
         physics::detail::step(*this, static_cast<f32>(time::fixed_dt));
-    }
-
-    void world_t::shutdown()
-    {
-        std::erase(g_live_worlds, this);
-
-        if (is_simulating) { end_play(); }
-
-        physics::detail::destroy(*this);
-
-        registry.clear();
-        registry.ctx().clear();
     }
 
     void world_t::register_init_system(system_func_t system) { init_systems.push_back(system); }

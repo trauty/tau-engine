@@ -1,21 +1,21 @@
 #ifndef ENTT_GRAPH_FLOW_HPP
 #define ENTT_GRAPH_FLOW_HPP
 
-#include <algorithm>
-#include <cstddef>
-#include <functional>
-#include <iterator>
-#include <memory>
-#include <type_traits>
-#include <utility>
-#include <vector>
 #include "../config/config.h"
 #include "../container/dense_map.hpp"
 #include "../container/dense_set.hpp"
 #include "../core/compressed_pair.hpp"
 #include "../core/fwd.hpp"
 #include "../core/iterator.hpp"
-#include "../core/utility.hpp"
+#include "../stl/algorithm.hpp"
+#include "../stl/concepts.hpp"
+#include "../stl/cstddef.hpp"
+#include "../stl/functional.hpp"
+#include "../stl/iterator.hpp"
+#include "../stl/memory.hpp"
+#include "../stl/type_traits.hpp"
+#include "../stl/utility.hpp"
+#include "../stl/vector.hpp"
 #include "adjacency_matrix.hpp"
 #include "fwd.hpp"
 
@@ -27,12 +27,12 @@ namespace entt {
  */
 template<typename Allocator>
 class basic_flow {
-    using alloc_traits = std::allocator_traits<Allocator>;
-    static_assert(std::is_same_v<typename alloc_traits::value_type, id_type>, "Invalid value type");
-    using task_container_type = dense_set<id_type, identity, std::equal_to<>, typename alloc_traits::template rebind_alloc<id_type>>;
-    using ro_rw_container_type = std::vector<std::pair<std::size_t, bool>, typename alloc_traits::template rebind_alloc<std::pair<std::size_t, bool>>>;
-    using deps_container_type = dense_map<id_type, ro_rw_container_type, identity, std::equal_to<>, typename alloc_traits::template rebind_alloc<std::pair<const id_type, ro_rw_container_type>>>;
-    using adjacency_matrix_type = adjacency_matrix<directed_tag, typename alloc_traits::template rebind_alloc<std::size_t>>;
+    using alloc_traits = stl::allocator_traits<Allocator>;
+    static_assert(stl::is_same_v<typename alloc_traits::value_type, id_type>, "Invalid value type");
+    using task_container_type = dense_set<id_type, stl::identity, stl::equal_to<>, typename alloc_traits::template rebind_alloc<id_type>>;
+    using ro_rw_container_type = stl::vector<stl::pair<stl::size_t, bool>, typename alloc_traits::template rebind_alloc<stl::pair<stl::size_t, bool>>>;
+    using deps_container_type = dense_map<id_type, ro_rw_container_type, stl::identity, stl::equal_to<>, typename alloc_traits::template rebind_alloc<stl::pair<const id_type, ro_rw_container_type>>>;
+    using adjacency_matrix_type = adjacency_matrix<directed_tag, typename alloc_traits::template rebind_alloc<stl::size_t>>;
 
     void emplace(const id_type res, const bool is_rw) {
         ENTT_ASSERT(index.first() < vertices.size(), "Invalid node");
@@ -55,7 +55,7 @@ class basic_flow {
                     if(auto curr = it++; it != last) {
                         if(it->second) {
                             matrix.insert(curr->first, it->first);
-                        } else if(const auto next = std::find_if(it, last, [](const auto &value) { return value.second; }); next != last) {
+                        } else if(const auto next = stl::find_if(it, last, [](const auto &value) { return value.second; }); next != last) {
                             for(; it != next; ++it) {
                                 matrix.insert(curr->first, it->first);
                                 matrix.insert(it->first, next->first);
@@ -68,7 +68,7 @@ class basic_flow {
                     }
                 } else {
                     // ro item (first iteration only)
-                    if(const auto next = std::find_if(it, last, [](const auto &value) { return value.second; }); next != last) {
+                    if(const auto next = stl::find_if(it, last, [](const auto &value) { return value.second; }); next != last) {
                         for(; it != next; ++it) {
                             matrix.insert(it->first, next->first);
                         }
@@ -83,9 +83,9 @@ class basic_flow {
     void transitive_closure(adjacency_matrix_type &matrix) const {
         const auto length = matrix.size();
 
-        for(std::size_t vk{}; vk < length; ++vk) {
-            for(std::size_t vi{}; vi < length; ++vi) {
-                for(std::size_t vj{}; vj < length; ++vj) {
+        for(stl::size_t vk{}; vk < length; ++vk) {
+            for(stl::size_t vi{}; vi < length; ++vi) {
+                for(stl::size_t vj{}; vj < length; ++vj) {
                     if(matrix.contains(vi, vk) && matrix.contains(vk, vj)) {
                         matrix.insert(vi, vj);
                     }
@@ -97,14 +97,14 @@ class basic_flow {
     void transitive_reduction(adjacency_matrix_type &matrix) const {
         const auto length = matrix.size();
 
-        for(std::size_t vert{}; vert < length; ++vert) {
+        for(stl::size_t vert{}; vert < length; ++vert) {
             matrix.erase(vert, vert);
         }
 
-        for(std::size_t vj{}; vj < length; ++vj) {
-            for(std::size_t vi{}; vi < length; ++vi) {
+        for(stl::size_t vj{}; vj < length; ++vj) {
+            for(stl::size_t vi{}; vi < length; ++vi) {
                 if(matrix.contains(vi, vj)) {
-                    for(std::size_t vk{}; vk < length; ++vk) {
+                    for(stl::size_t vk{}; vk < length; ++vk) {
                         if(matrix.contains(vj, vk)) {
                             matrix.erase(vi, vk);
                         }
@@ -118,7 +118,7 @@ public:
     /*! @brief Allocator type. */
     using allocator_type = Allocator;
     /*! @brief Unsigned integer type. */
-    using size_type = std::size_t;
+    using size_type = stl::size_t;
     /*! @brief Iterable task list. */
     using iterable = iterable_adaptor<typename task_container_type::const_iterator>;
     /*! @brief Adjacency matrix type. */
@@ -161,8 +161,8 @@ public:
      */
     basic_flow(basic_flow &&other, const allocator_type &allocator)
         : index{other.index.first(), allocator},
-          vertices{std::move(other.vertices), allocator},
-          deps{std::move(other.deps), allocator},
+          vertices{stl::move(other.vertices), allocator},
+          deps{stl::move(other.deps), allocator},
           sync_on{other.sync_on} {}
 
     /*! @brief Default destructor. */
@@ -185,11 +185,11 @@ public:
      * @param other Flow builder to exchange the content with.
      */
     void swap(basic_flow &other) noexcept {
-        using std::swap;
-        std::swap(index, other.index);
-        std::swap(vertices, other.vertices);
-        std::swap(deps, other.deps);
-        std::swap(sync_on, other.sync_on);
+        using stl::swap;
+        swap(index, other.index);
+        swap(vertices, other.vertices);
+        swap(deps, other.deps);
+        swap(sync_on, other.sync_on);
     }
 
     /**
@@ -206,7 +206,7 @@ public:
      * @return The requested identifier.
      */
     [[nodiscard]] id_type operator[](const size_type pos) const {
-        return vertices.cbegin()[static_cast<typename task_container_type::difference_type>(pos)];
+        return vertices.cbegin()[static_cast<task_container_type::difference_type>(pos)];
     }
 
     /*! @brief Clears the flow builder. */
@@ -283,14 +283,11 @@ public:
 
     /**
      * @brief Assigns a range of read-only resources to the current task.
-     * @tparam It Type of input iterator.
      * @param first An iterator to the first element of the range of elements.
      * @param last An iterator past the last element of the range of elements.
      * @return This flow builder.
      */
-    template<typename It>
-    std::enable_if_t<std::is_same_v<std::remove_const_t<typename std::iterator_traits<It>::value_type>, id_type>, basic_flow &>
-    ro(It first, It last) {
+    basic_flow &ro(stl::input_iterator auto first, stl::input_iterator auto last) {
         for(; first != last; ++first) {
             emplace(*first, false);
         }
@@ -310,14 +307,11 @@ public:
 
     /**
      * @brief Assigns a range of writable resources to the current task.
-     * @tparam It Type of input iterator.
      * @param first An iterator to the first element of the range of elements.
      * @param last An iterator past the last element of the range of elements.
      * @return This flow builder.
      */
-    template<typename It>
-    std::enable_if_t<std::is_same_v<std::remove_const_t<typename std::iterator_traits<It>::value_type>, id_type>, basic_flow &>
-    rw(It first, It last) {
+    basic_flow &rw(stl::input_iterator auto first, stl::input_iterator auto last) {
         for(; first != last; ++first) {
             emplace(*first, true);
         }

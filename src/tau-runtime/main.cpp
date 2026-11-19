@@ -40,9 +40,7 @@ int main(int argc, char* argv[])
     // a project keeps its own engine asset copy, its root supersedes that one, guid maps merge
     if (have_project) { tau::project::mount(project, true); }
 
-    tau::engine::create_scene();
     tau::world_t& world = tau::engine::get_active_world();
-    world.init();
 
 #ifndef TAU_STATIC_LINK
     tau::game_library_t game_lib;
@@ -89,13 +87,11 @@ int main(int argc, char* argv[])
 
     tau::engine::run();
 
-    tau::engine::get_active_world().end_play();
-
     // world and types run its code, so they go first
 #ifndef TAU_STATIC_LINK
     if (game_lib.handle)
     {
-        tau::engine::create_scene();
+        tau::engine::reset_world();
         tau::reflection::shutdown();
         tau::game_library::close(game_lib);
     }

@@ -67,6 +67,7 @@ namespace tau::renderer
         bool image_acquired = false;
         u32_t acquired_index = 0;
 
+        std::optional<VkExtent2D> pending_resize;
         // resize waits until the held image is presented
         std::optional<VkExtent2D> deferred_resize;
 
@@ -2076,22 +2077,14 @@ namespace tau::renderer
         const ecs::entity_t frame_cascade_light = submitted_cascade_light;
         submitted_cascade_light = ecs::NULL_ENTITY;
 
-        bool needs_resize = false;
-        u32_t new_width, new_height;
-        for (auto [entity, event] : reg.view<window::window_size_changed_event>().each())
+        if (pending_resize)
         {
-            needs_resize = true;
-            new_width = event.width;
-            new_height = event.height;
-        }
-
-        if (needs_resize)
-        {
-            if (image_acquired) { deferred_resize = VkExtent2D{new_width, new_height}; }
+            if (image_acquired) { deferred_resize = pending_resize; }
             else
             {
-                resize(new_width, new_height);
+                resize(pending_resize->width, pending_resize->height);
             }
+            pending_resize.reset();
         }
 
         // each entry waits on the timeline its value came from: see deletion_clock_e
@@ -2813,6 +2806,8 @@ namespace tau::renderer
             deferred_resize.reset();
         }
     }
+
+    void on_window_resized(u32_t width, u32_t height) { pending_resize = VkExtent2D{width, height}; }
 
     VkFormat find_depth_format()
     {

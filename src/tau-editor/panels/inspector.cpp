@@ -390,7 +390,6 @@ namespace tau::editor::panels
             return false;
         }
 
-        std::string meta_key(const char* name, u32_t id) { return name ? std::string(name) : std::to_string(id); }
 
         constexpr ImVec4 PREFAB_COLOR = {0.45f, 0.72f, 1.0f, 1.0f};
 
@@ -411,7 +410,7 @@ namespace tau::editor::panels
             {
                 tau::reflection::editor_prop_t* prop = data.custom();
                 const char* label = prop ? prop->name : "Unknown";
-                if (overridden && overridden->contains(meta_key(data.name(), id))) { mark_override(); }
+                if (overridden && overridden->contains(tau::reflection::meta_key(data.name(), id))) { mark_override(); }
 
                 tau::reflection::any_t field_value = data.get(instance);
 
@@ -610,7 +609,7 @@ namespace tau::editor::panels
 
                             // vs prefab: missing component or differing fields
                             const auto changed_fields =
-                                overrides.find(meta_key(type.name(), static_cast<u32_t>(type.id())));
+                                overrides.find(tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias())));
                             const bool added =
                                 changed_fields != overrides.end() && changed_fields->second.contains("*");
                             if (changed_fields != overrides.end()) { mark_override(); }

@@ -10,12 +10,7 @@
 #include "tau/reflection.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_types.h"
-#include "tau/systems/camera.h"
-#include "tau/systems/events.h"
-#include "tau/systems/shadows.h"
-#include "tau/systems/transform.h"
 #include "tau/time.h"
-#include "tau/tween.h"
 #include "tau/vfs.h"
 #include "tau/window.h"
 #include "tau/world.h"
@@ -46,7 +41,7 @@ namespace tau::engine
     namespace
     {
         std::string game_name;
-        std::unique_ptr<world_t> active_scene;
+        std::unique_ptr<world_t> active_world;
         bool is_running = true;
         bool is_suspended = false;
 
@@ -117,6 +112,8 @@ namespace tau::engine
             return false;
         }
 
+        active_world = std::make_unique<world_t>();
+
         return true;
     }
 
@@ -154,7 +151,8 @@ namespace tau::engine
                 {
                 case SDL_EVENT_QUIT: is_running = false; break;
                 case SDL_EVENT_WINDOW_RESIZED:
-                    tau::window::on_resized(event.window.data1, event.window.data2);
+                    tau::renderer::on_window_resized(static_cast<u32_t>(event.window.data1),
+                                                     static_cast<u32_t>(event.window.data2));
                     break;
 
                 case SDL_EVENT_WILL_ENTER_BACKGROUND:
@@ -180,26 +178,18 @@ namespace tau::engine
 
             while (accumulator >= fixed_timestep)
             {
-                active_scene->fixed_update();
+                active_world->fixed_update();
                 accumulator -= fixed_timestep;
             }
 
             if (user_ui_cb) { user_ui_cb(); }
 
-            tau::tween::update(static_cast<f32>(tau::time::get_dt()));
-
             // tau::physics::interpolation_alpha = static_cast<f32>(accumulator / fixed_timestep);
-            active_scene->update();
+            active_world->update();
 
-            tau::transform_system::update(active_scene->registry);
-            tau::camera_system::update(active_scene->registry);
-            tau::shadow_system::update(active_scene->registry);
-
-            if (!is_suspended) { tau::renderer::render(active_scene->registry); }
+            tau::renderer::render(active_world->registry);
 
             if (user_post_render_cb) { user_post_render_cb(); }
-
-            tau::event_system::clear_frame_events(active_scene->registry);
 
             FrameMark;
         }
@@ -209,15 +199,10 @@ namespace tau::engine
     {
         TAU_LOG_INFO("ENGINE", "Stopping engine.");
 
-        tau::reflection::shutdown();
-
         vkDeviceWaitIdle(renderer::ctx.device);
 
-        if (active_scene)
-        {
-            active_scene->shutdown();
-            active_scene.reset();
-        }
+        active_world.reset();
+        tau::reflection::shutdown();
 
         tau::renderer::reset_assets();
         tau::assets::shutdown();
@@ -235,31 +220,15 @@ namespace tau::engine
 
     std::string get_game_name() { return game_name; }
 
-    void create_scene()
+    world_t& reset_world()
     {
-        if (active_scene) { active_scene->shutdown(); }
-
-        active_scene = std::make_unique<tau::world_t>();
-
-        active_scene->reflection_ctx = &tau::reflection::get_engine_context();
-
-        if (!active_scene) { TAU_LOG_ERROR("ENGINE", "Could not create scene"); }
+        // the old one goes first, two live worlds would both hold assets
+        active_world.reset();
+        active_world = std::make_unique<world_t>();
+        return *active_world;
     }
 
-    void set_scene(std::unique_ptr<tau::world_t> new_scene)
-    {
-        if (active_scene) { active_scene->shutdown(); }
-
-        active_scene = std::move(new_scene);
-
-        if (active_scene) { active_scene->init(); }
-        else
-        {
-            TAU_LOG_ERROR("ENGINE", "Could not set scene");
-        }
-    }
-
-    world_t& get_active_world() { return *active_scene; }
+    world_t& get_active_world() { return *active_world; }
 
     void set_event_callback(event_callback_t cb) { user_event_cb = cb; }
     void set_ui_callback(ui_callback_t cb) { user_ui_cb = cb; }
