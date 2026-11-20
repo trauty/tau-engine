@@ -29,7 +29,7 @@ namespace tau::cooker::scene
         }
     } // namespace
 
-    bool cook_scene(const std::string& input_path, const std::string& output_path, const resolve_fn_t& resolve,
+    bool cook_scene(const std::string& input_path, const std::string& output_path, const prefab_fn_t& prefab,
                     std::vector<std::filesystem::path>& deps)
     {
         TAU_LOG_INFO("SCENE_COOKER", "Cooking scene: {} -> {}", input_path, output_path);
@@ -41,18 +41,21 @@ namespace tau::cooker::scene
         std::unordered_map<std::string, nlohmann::json> prefabs;
         const tau::prefab::lookup_t lookup = tau::prefab::flattening(
             [&](asset_guid_t guid, const std::string& path) -> const nlohmann::json*
-        {
-            const std::filesystem::path source = resolve(tau::assets::resolve(guid, path));
-            if (source.empty()) { return nullptr; }
-
-            auto [it, inserted] = prefabs.try_emplace(source.generic_string());
-            if (inserted)
             {
-                it->second = read_json(source.generic_string(), "prefab");
-                deps.push_back(source);
-            }
-            return it->second.is_object() ? &it->second : nullptr;
-        });
+                const std::string vfs_path = tau::assets::resolve(guid, path);
+                if (vfs_path.empty()) { return nullptr; }
+
+                auto [it, inserted] = prefabs.try_emplace(vfs_path);
+                if (inserted)
+                {
+                    it->second = prefab(vfs_path, deps);
+                    if (it->second.is_discarded())
+                    {
+                        TAU_LOG_ERROR("SCENE_COOKER", "Prefab {} is missing or not valid", vfs_path);
+                    }
+                }
+                return it->second.is_object() ? &it->second : nullptr;
+            });
 
         const tau::scene_t scene = tau::serialization::scene_from_json(tau::prefab::expand(scene_json, lookup));
 

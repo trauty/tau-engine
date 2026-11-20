@@ -125,14 +125,6 @@ namespace tau::editor::material_edit
 
         bool write(asset_handle_t handle, std::filesystem::path& out_source)
         {
-            const material_t* mat = material_of(handle);
-            const shader_t* shader = mat ? assets::get(mat->shader) : nullptr;
-            if (!mat || !shader)
-            {
-                TAU_LOG_ERROR("EDITOR", "Cannot save a material whose shader is not loaded");
-                return false;
-            }
-
             const std::string virtual_path = assets::path_of(handle);
             const std::filesystem::path target = asset_files::source_of(virtual_path);
             if (target.empty())
@@ -141,82 +133,13 @@ namespace tau::editor::material_edit
                 return false;
             }
 
-            nlohmann::json out;
+            nlohmann::json out = to_json(handle);
+            if (out.is_null())
+            {
+                TAU_LOG_ERROR("EDITOR", "Cannot save a material whose shader is not loaded");
+                return false;
+            }
             out["guid"] = assets::guid_text(asset_sources::guid_for_writing(target.string()));
-
-            const std::string shader_path = assets::path_of(mat->shader);
-            out["shader"] = shader_path;
-
-            // guid next to the path survives a shader rename
-            if (const asset_guid_t shader_guid = assets::guid_of(shader_path))
-            {
-                out["shader_guid"] = assets::guid_text(shader_guid);
-            }
-
-            nlohmann::json properties = nlohmann::json::object();
-            nlohmann::json textures = nlohmann::json::object();
-            nlohmann::json texture_guids = nlohmann::json::object();
-            nlohmann::json samplers = nlohmann::json::object();
-
-            for (u32_t name_hash : mat->authored_properties)
-            {
-                const shader_member_t* it = shader->module.members.find(name_hash);
-                if (it == nullptr) { continue; }
-
-                const shader_member_t& member = *it;
-                if (member.edit == shader_member_edit_e::HIDDEN) { continue; }
-                if (member.offset + member.size > mat->data.size()) { continue; }
-
-                const void* slot = mat->data.data() + member.offset;
-
-                if (member.edit == shader_member_edit_e::TEXTURE)
-                {
-                    const std::string tex_path = named_texture(*mat, name_hash);
-                    if (!tex_path.empty())
-                    {
-                        textures[member.name] = tex_path;
-
-                        if (const asset_guid_t tex_guid = assets::guid_of(tex_path))
-                        {
-                            texture_guids[member.name] = assets::guid_text(tex_guid);
-                        }
-                    }
-                    continue;
-                }
-
-                if (member.edit == shader_member_edit_e::SAMPLER)
-                {
-                    samplers[member.name] = *static_cast<const u32_t*>(slot);
-                    continue;
-                }
-
-                switch (member.type)
-                {
-                case shader_member_type_e::FLOAT: properties[member.name] = tidy(*static_cast<const f32*>(slot)); break;
-                case shader_member_type_e::FLOAT2:
-                case shader_member_type_e::FLOAT3:
-                case shader_member_type_e::FLOAT4:
-                {
-                    const u32_t count = member.size / sizeof(f32);
-                    const f32* values = static_cast<const f32*>(slot);
-                    std::vector<f64> tidied;
-                    for (u32_t i = 0; i < count; i++) { tidied.push_back(tidy(values[i])); }
-                    properties[member.name] = std::move(tidied);
-                    break;
-                }
-                case shader_member_type_e::INT: properties[member.name] = *static_cast<const i32*>(slot); break;
-                case shader_member_type_e::UINT: properties[member.name] = *static_cast<const u32_t*>(slot); break;
-                case shader_member_type_e::BOOL:
-                    properties[member.name] = (*static_cast<const u32_t*>(slot) != 0u);
-                    break;
-                default: break;
-                }
-            }
-
-            if (!properties.empty()) { out["properties"] = std::move(properties); }
-            if (!textures.empty()) { out["textures"] = std::move(textures); }
-            if (!texture_guids.empty()) { out["texture_guids"] = std::move(texture_guids); }
-            if (!samplers.empty()) { out["samplers"] = std::move(samplers); }
 
             std::error_code ec;
             std::filesystem::create_directories(target.parent_path(), ec);
@@ -481,6 +404,88 @@ namespace tau::editor::material_edit
         void draw_inspector(world_t& world, editor_context_t&, const std::string&, asset_handle_t handle)
         { edit_properties(world, handle); }
     } // namespace
+
+    nlohmann::json to_json(asset_handle_t handle)
+    {
+        const material_t* mat = material_of(handle);
+        const shader_t* shader = mat ? assets::get(mat->shader) : nullptr;
+        if (!mat || !shader) { return nullptr; }
+
+        nlohmann::json out;
+        const std::string shader_path = assets::path_of(mat->shader);
+        out["shader"] = shader_path;
+
+        // guid next to the path survives a shader rename
+        if (const asset_guid_t shader_guid = assets::guid_of(shader_path))
+        {
+            out["shader_guid"] = assets::guid_text(shader_guid);
+        }
+
+        nlohmann::json properties = nlohmann::json::object();
+        nlohmann::json textures = nlohmann::json::object();
+        nlohmann::json texture_guids = nlohmann::json::object();
+        nlohmann::json samplers = nlohmann::json::object();
+
+        for (u32_t name_hash : mat->authored_properties)
+        {
+            const shader_member_t* it = shader->module.members.find(name_hash);
+            if (it == nullptr) { continue; }
+
+            const shader_member_t& member = *it;
+            if (member.edit == shader_member_edit_e::HIDDEN) { continue; }
+            if (member.offset + member.size > mat->data.size()) { continue; }
+
+            const void* slot = mat->data.data() + member.offset;
+
+            if (member.edit == shader_member_edit_e::TEXTURE)
+            {
+                const std::string tex_path = named_texture(*mat, name_hash);
+                if (!tex_path.empty())
+                {
+                    textures[member.name] = tex_path;
+
+                    if (const asset_guid_t tex_guid = assets::guid_of(tex_path))
+                    {
+                        texture_guids[member.name] = assets::guid_text(tex_guid);
+                    }
+                }
+                continue;
+            }
+
+            if (member.edit == shader_member_edit_e::SAMPLER)
+            {
+                samplers[member.name] = *static_cast<const u32_t*>(slot);
+                continue;
+            }
+
+            switch (member.type)
+            {
+            case shader_member_type_e::FLOAT: properties[member.name] = tidy(*static_cast<const f32*>(slot)); break;
+            case shader_member_type_e::FLOAT2:
+            case shader_member_type_e::FLOAT3:
+            case shader_member_type_e::FLOAT4:
+            {
+                const u32_t count = member.size / sizeof(f32);
+                const f32* values = static_cast<const f32*>(slot);
+                std::vector<f64> tidied;
+                for (u32_t i = 0; i < count; i++) { tidied.push_back(tidy(values[i])); }
+                properties[member.name] = std::move(tidied);
+                break;
+            }
+            case shader_member_type_e::INT: properties[member.name] = *static_cast<const i32*>(slot); break;
+            case shader_member_type_e::UINT: properties[member.name] = *static_cast<const u32_t*>(slot); break;
+            case shader_member_type_e::BOOL: properties[member.name] = (*static_cast<const u32_t*>(slot) != 0u); break;
+            default: break;
+            }
+        }
+
+        if (!properties.empty()) { out["properties"] = std::move(properties); }
+        if (!textures.empty()) { out["textures"] = std::move(textures); }
+        if (!texture_guids.empty()) { out["texture_guids"] = std::move(texture_guids); }
+        if (!samplers.empty()) { out["samplers"] = std::move(samplers); }
+
+        return out;
+    }
 
     void init(editor_context_t&)
     {

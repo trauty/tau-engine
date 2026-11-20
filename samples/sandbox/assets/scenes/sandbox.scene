@@ -25,11 +25,15 @@
                         "ty": 3,
                         "v": true
                     },
-                    "material": {
-                        "ty": 6,
+                    "materials": {
+                        "ty": 7,
                         "v": {
-                            "g": "84621d302ca05ce8",
-                            "p": "game://assets/materials/sphere.mat",
+                            "e": [
+                                {
+                                    "g": "84621d302ca05ce8",
+                                    "p": "game://assets/materials/sphere.mat"
+                                }
+                            ],
                             "t": "material"
                         }
                     },
@@ -37,7 +41,7 @@
                         "ty": 6,
                         "v": {
                             "g": "71fad64bce5f169b",
-                            "p": "game://assets/models/sphere.glb",
+                            "p": "game://assets/models/sphere.glb/mesh_0.mesh",
                             "t": "mesh"
                         }
                     }
@@ -87,11 +91,15 @@
                         "ty": 3,
                         "v": true
                     },
-                    "material": {
-                        "ty": 6,
+                    "materials": {
+                        "ty": 7,
                         "v": {
-                            "g": "195956c96db324aa",
-                            "p": "game://assets/materials/ground.mat",
+                            "e": [
+                                {
+                                    "g": "195956c96db324aa",
+                                    "p": "game://assets/materials/ground.mat"
+                                }
+                            ],
                             "t": "material"
                         }
                     },
@@ -99,7 +107,7 @@
                         "ty": 6,
                         "v": {
                             "g": "ff888a45bfef7a58",
-                            "p": "game://assets/models/ground.glb",
+                            "p": "game://assets/models/ground.glb/mesh_0.mesh",
                             "t": "mesh"
                         }
                     }

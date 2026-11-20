@@ -1,5 +1,7 @@
 #pragma once
 
+#include "tau/asset.h"
+
 #include "json/json.hpp"
 #include <string>
 
@@ -16,6 +18,8 @@ namespace tau::editor::import_edit
     void draw(world_t& world, const std::string& vfs);
 
     void revert(const std::string& vfs);
+
+    bool remap_material(world_t& world, const std::string& model_vfs, const std::string& name, asset_handle_t material);
 
     const nlohmann::json& project_defaults();
     void set_project_defaults(const nlohmann::json& defaults);

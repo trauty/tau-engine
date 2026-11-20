@@ -1,6 +1,7 @@
 #include "tau/assets/import_settings.h"
 
 #include "tau/asset.h"
+#include "tau/assets/material.h"
 #include "tau/log.h"
 #include "tau/reflection_json.h"
 
@@ -83,6 +84,15 @@ namespace tau::reflection
             .field<&texture_import_t::max_size>("Max Size")
             .field<&texture_import_t::mips>("Mips");
 
-        structure<mesh_import_t>(ctx, "Mesh Import").field<&mesh_import_t::scale>("Scale");
+        structure<material_remap_t>(ctx, "Material Remap")
+            .field<&material_remap_t::name>("Model Material")
+            .field<&material_remap_t::material>("Material");
+
+        structure<model_import_t>(ctx, "Model Import")
+            .field<&model_import_t::scale>("Scale")
+            .field<&model_import_t::submeshes_as_entities>("Submeshes As Entities")
+            .field<&model_import_t::import_animations>("Import Animations")
+            .field<&model_import_t::skipped_clips>("Skipped Clips")
+            .field<&model_import_t::material_remaps>("Material Remaps");
     }
 } // namespace tau::reflection

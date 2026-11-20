@@ -70,9 +70,67 @@ namespace tau::editor::panels
             return true;
         }
 
+        struct slot_labels_t
+        {
+            u32_t type_id = 0;
+            u32_t field_id = 0;
+            slot_labels_fn_t labels = nullptr;
+        };
+
+        std::vector<slot_labels_t> g_slot_labels;
+
+        slot_labels_fn_t slot_labels_of(const tau::reflection::any_t& instance, u32_t field_id)
+        {
+            const u32_t type_id = instance.type().alias();
+            for (const slot_labels_t& entry : g_slot_labels)
+            {
+                if (entry.type_id == type_id && entry.field_id == field_id) { return entry.labels; }
+            }
+            return nullptr;
+        }
+
+        bool draw_asset_slots(tau::world_t& world, tau::reflection::data_t& data, tau::reflection::any_t& instance,
+                              tau::reflection::any_t& field_value, const tau::reflection::editor_prop_t& prop, u32_t id,
+                              const std::vector<std::string>& labels)
+        {
+            std::vector<asset_handle_t> list = tau::reflection::assets_of(field_value);
+
+            ImGui::Text("%s", prop.name);
+            ImGui::Indent();
+            bool modified = false;
+            for (std::size_t i = 0; i < labels.size(); i++)
+            {
+                const asset_handle_t current = i < list.size() ? list[i] : asset_handle_t{};
+                asset_handle_t new_handle = current;
+                bool clear = false;
+                const bool picked =
+                    widgets::asset_slot(world, labels[i].c_str(), prop.asset_type_hash, current, new_handle,
+                                        "##slot_" + std::to_string(id) + "_" + std::to_string(i),
+                                        current.is_valid() ? &clear : nullptr, "(imported)");
+                if (picked || clear)
+                {
+                    if (list.size() <= i) { list.resize(i + 1); }
+                    list[i] = clear ? asset_handle_t{} : new_handle;
+                    modified = true;
+                }
+            }
+            if (labels.empty()) { ImGui::TextDisabled("no mesh"); }
+            ImGui::Unindent();
+
+            if (!modified) { return false; }
+            while (!list.empty() && !list.back().is_valid()) { list.pop_back(); }
+            data.set(instance, list);
+            return true;
+        }
+
         bool draw_asset_list(tau::world_t& world, tau::reflection::data_t& data, tau::reflection::any_t& instance,
                              tau::reflection::any_t& field_value, const tau::reflection::editor_prop_t& prop, u32_t id)
         {
+            if (const slot_labels_fn_t labels = slot_labels_of(instance, id))
+            {
+                return draw_asset_slots(world, data, instance, field_value, prop, id, labels(instance));
+            }
+
             std::vector<asset_handle_t> list = tau::reflection::assets_of(field_value);
 
             bool modified = false;
@@ -123,7 +181,8 @@ namespace tau::editor::panels
 
         // overridden: field keys differing from the prefab
         bool draw_meta_any(tau::world_t& world, tau::reflection::any_t& instance, tau::reflection::type_t type,
-                           const std::unordered_set<std::string>* overridden = nullptr);
+                           const std::unordered_set<std::string>* overridden = nullptr,
+                           std::span<const std::string_view> skip = {});
 
         std::string entity_name(tau::world_t& world, tau::ecs::entity_t entity)
         {
@@ -402,12 +461,14 @@ namespace tau::editor::panels
         }
 
         bool draw_meta_any(tau::world_t& world, tau::reflection::any_t& instance, tau::reflection::type_t type,
-                           const std::unordered_set<std::string>* overridden)
+                           const std::unordered_set<std::string>* overridden, std::span<const std::string_view> skip)
         {
             bool was_modified = false;
 
             for (auto [id, data] : type.data())
             {
+                if (std::find(skip.begin(), skip.end(), data.name()) != skip.end()) { continue; }
+
                 tau::reflection::editor_prop_t* prop = data.custom();
                 const char* label = prop ? prop->name : "Unknown";
                 if (overridden && overridden->contains(tau::reflection::meta_key(data.name(), id))) { mark_override(); }
@@ -503,7 +564,12 @@ namespace tau::editor::panels
             ImGui::Separator();
 
             import_edit::draw(world, path);
+
+            const bool sub_asset = assets::split_sub_asset(path).has_value();
+            if (sub_asset) { ImGui::TextDisabled("Read-only: part of its model"); }
+            ImGui::BeginDisabled(sub_asset);
             if (editor && editor->draw_inspector) { editor->draw_inspector(world, ctx, path, inspected.handle); }
+            ImGui::EndDisabled();
         }
 
         enum class prefab_action_e : u8_t
@@ -542,21 +608,31 @@ namespace tau::editor::panels
                 ctx.inspected_asset = path;
                 ctx.selection.clear();
             }
+
+            const bool from_model = assets::split_sub_asset(path).has_value();
+            const char* model_note = "A model's prefab is read-only: change the model, or make a variant";
+
             ImGui::SameLine();
+            ImGui::BeginDisabled(from_model);
             if (ImGui::SmallButton("Open")) { commands::push(commands::command_e::OPEN_PREFAB, path, source); }
-            if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Edit the prefab on its own, its instances follow"); }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip("%s", from_model ? model_note : "Edit the prefab on its own, its instances follow");
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("Revert")) { pending_prefab = {prefab_action_e::REVERT, root_guid}; }
             if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Back to the prefab, the root keeps its placement"); }
             ImGui::SameLine();
-            ImGui::BeginDisabled(prefab_stage::is_open());
+            ImGui::BeginDisabled(prefab_stage::is_open() || from_model);
             if (ImGui::SmallButton("Apply")) { pending_prefab = {prefab_action_e::APPLY, root_guid}; }
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
-                ImGui::SetTooltip(prefab_stage::is_open()
-                                      ? "Not inside an open prefab, Open edits this one"
-                                      : "The prefab becomes this instance, its other instances follow");
+                ImGui::SetTooltip("%s", from_model ? model_note
+                                        : prefab_stage::is_open()
+                                            ? "Not inside an open prefab, Open edits this one"
+                                            : "The prefab becomes this instance, its other instances follow");
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Unpack")) { pending_prefab = {prefab_action_e::UNPACK, root_guid}; }
@@ -583,8 +659,11 @@ namespace tau::editor::panels
         }
     } // namespace
 
-    bool draw_fields(world_t& world, reflection::any_t& value)
-    { return draw_meta_any(world, value, value.type(), nullptr); }
+    bool draw_fields(world_t& world, reflection::any_t& value, std::span<const std::string_view> skip)
+    { return draw_meta_any(world, value, value.type(), nullptr, skip); }
+
+    void add_slot_labels(u32_t type_id, u32_t field_id, slot_labels_fn_t labels)
+    { g_slot_labels.push_back({type_id, field_id, labels}); }
 
     void draw_inspector(world_t& world, editor_context_t& ctx)
     {

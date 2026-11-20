@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <ktx.h>
 #include <stb/stb_image.h>
 #include <stb/stb_image_resize2.h>
@@ -83,6 +85,27 @@ namespace tau::cooker::texture
 
         void add_kv(ktxTexture2* tex, const char* key, const std::string& value)
         { ktxHashList_AddKVPair(&tex->kvDataHead, key, static_cast<u32_t>(value.length()) + 1, value.c_str()); }
+        // already Basis (KHR_texture_basisu) or GPU-ready
+        bool pass_through(std::span<const u8_t> bytes, const std::string& output_path, const texture_import_t& settings,
+                          const std::string& owner)
+        {
+            ktxTexture2* tex = nullptr;
+            if (ktxTexture2_CreateFromMemory(bytes.data(), bytes.size(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+                                             &tex) != KTX_SUCCESS)
+            {
+                TAU_LOG_ERROR("TEXTURE_COOKER", "Not a KTX2 texture: {}", owner);
+                return false;
+            }
+
+            ktxHashList_DeleteKVPair(&tex->kvDataHead, "tau_tex_type");
+            add_kv(tex, "tau_tex_type", kind_key(settings.kind));
+
+            std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
+            const bool ok = ktxTexture_WriteToNamedFile(ktxTexture(tex), output_path.c_str()) == KTX_SUCCESS;
+            if (!ok) { TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to save '{}' to '{}'", owner, output_path); }
+            ktxTexture_Destroy(ktxTexture(tex));
+            return ok;
+        }
     } // namespace
 
     nlohmann::json prepare_meta(const std::string& input_path, const nlohmann::json& project_defaults)
@@ -121,17 +144,36 @@ namespace tau::cooker::texture
 
     bool cook_texture(const std::string& input_path, const std::string& output_path, const texture_import_t& settings)
     {
+        std::ifstream file(input_path, std::ios::binary);
+        const std::vector<u8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (bytes.empty())
+        {
+            TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to read texture: {}", input_path);
+            return false;
+        }
+
+        const std::string extension = to_lower(std::filesystem::path(input_path).extension().string());
+        return cook_texture_bytes(bytes, extension, output_path, settings, input_path);
+    }
+
+    bool cook_texture_bytes(std::span<const u8_t> bytes, const std::string& extension, const std::string& output_path,
+                            const texture_import_t& settings, const std::string& owner)
+    {
+        const std::string& input_path = owner;
         TAU_LOG_INFO("TEXTURE_COOKER", "Cooking texture: {} -> {}", input_path, output_path);
+
+        if (extension == ".ktx2") { return pass_through(bytes, output_path, settings, owner); }
 
         const bool srgb = settings.kind == texture_kind_e::COLOR && settings.srgb;
 
         i32 width = 0;
         i32 height = 0;
         i32 channels = 0;
-        stbi_uc* pixels = stbi_load(input_path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+        stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<i32>(bytes.size()), &width, &height,
+                                                &channels, STBI_rgb_alpha);
         if (!pixels)
         {
-            TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to load texture: {}", input_path);
+            TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to decode texture: {}", input_path);
             return false;
         }
 

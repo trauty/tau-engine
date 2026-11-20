@@ -43,6 +43,11 @@ namespace tau::cooker
 
         const nlohmann::json& entry = data[out_path];
 
+        for (const std::string& output : outputs_of(out_path))
+        {
+            if (!std::filesystem::exists(output)) { return true; }
+        }
+
         // prefer the deps the last cook recorded over the caller's guess
         std::vector<std::filesystem::path> effective = deps;
         if (entry.contains("deps") && entry["deps"].is_array())
@@ -54,9 +59,33 @@ namespace tau::cooker
         return entry.value("hash", std::string{}) != combined_dep_hash(effective, settings);
     }
 
-    void asset_cache_t::update_cache(const std::string& out_path, const std::vector<std::filesystem::path>& deps,
-                                     const std::string& source_path, const std::string& settings)
+    std::vector<std::string> asset_cache_t::outputs_of(const std::string& out_path) const
     {
+        std::vector<std::string> out;
+        const auto it = data.find(out_path);
+        if (it == data.end() || !it->is_object() || !it->contains("outputs")) { return out; }
+        for (const nlohmann::json& output : (*it)["outputs"])
+        {
+            if (output.is_string()) { out.push_back(output.get<std::string>()); }
+        }
+        return out;
+    }
+
+    void asset_cache_t::update_cache(const std::string& out_path, const std::vector<std::filesystem::path>& deps,
+                                     const std::string& source_path, const std::string& settings,
+                                     const std::vector<std::filesystem::path>& outputs)
+    {
+        if (outputs.empty())
+        {
+            if (data.contains(out_path) && data[out_path].is_object()) { data[out_path].erase("outputs"); }
+        }
+        else
+        {
+            nlohmann::json list = nlohmann::json::array();
+            for (const std::filesystem::path& output : outputs) { list.push_back(output.generic_string()); }
+            data[out_path]["outputs"] = std::move(list);
+        }
+
         nlohmann::json dep_list = nlohmann::json::array();
         for (const std::filesystem::path& dep : deps) { dep_list.push_back(dep.generic_string()); }
 

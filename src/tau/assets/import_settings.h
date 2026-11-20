@@ -1,10 +1,13 @@
 #pragma once
 
+#include "tau/asset.h"
 #include "tau/defines.h"
 #include "tau/reflection.h"
 
 #include "json/json.hpp"
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace tau
 {
@@ -23,8 +26,22 @@ namespace tau
         bool mips = true;
     };
 
-    struct mesh_import_t
-    { f32 scale = 1.0f; };
+    struct material_t;
+
+    struct material_remap_t
+    {
+        std::string name;
+        asset_t<material_t> material;
+    };
+
+    struct model_import_t
+    {
+        f32 scale = 1.0f;
+        bool submeshes_as_entities = false;
+        bool import_animations = true;
+        std::vector<std::string> skipped_clips;
+        std::vector<material_remap_t> material_remaps;
+    };
 } // namespace tau
 
 namespace tau::import_settings

@@ -1,164 +1,235 @@
 #include "mesh_cooker.h"
 
+#include "tau/assets/bytes.h"
 #include "tau/assets/mesh.h"
 #include "tau/assets/mesh_format.h"
 #include "tau/log.h"
 
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <meshoptimizer.h>
-#include <tinygltf/tiny_gltf.h>
 #include <vector>
 
 namespace tau::cooker::mesh
 {
-    bool cook_mesh(const std::string& input_path, const std::string& output_path, const mesh_import_t& settings)
+    namespace
     {
-        TAU_LOG_INFO("MESH_COOKER", "Cooking Mesh: {} -> {}", input_path, output_path);
-
-        tinygltf::TinyGLTF loader;
-        tinygltf::Model model;
-        std::string warn, err;
-
-        bool is_glb = input_path.ends_with(".glb");
-        bool loaded = is_glb ? loader.LoadBinaryFromFile(&model, &err, &warn, input_path)
-                             : loader.LoadASCIIFromFile(&model, &err, &warn, input_path);
-
-        if (!loaded || model.meshes.empty())
+        struct stream_t
         {
-            TAU_LOG_ERROR("MESH_COOKER", "GLTF load error: {}", err);
-            return false;
-        }
-
-        const tinygltf::Mesh& mesh = model.meshes[0];
-        const tinygltf::Primitive& primitive = mesh.primitives[0];
-        const std::map<std::string, int>& attribs = primitive.attributes;
-
-        const tinygltf::Accessor& pos_accessor = model.accessors[primitive.attributes.at("POSITION")];
-        const tinygltf::BufferView& pos_view = model.bufferViews[pos_accessor.bufferView];
-        const tinygltf::Buffer& pos_buffer = model.buffers[pos_view.buffer];
-        const f32* positions =
-            reinterpret_cast<const f32*>(&pos_buffer.data[pos_view.byteOffset + pos_accessor.byteOffset]);
-
-        const f32* normals = nullptr;
-        if (attribs.find("NORMAL") != attribs.end())
-        {
-            const tinygltf::Accessor& norm_accessor = model.accessors[attribs.at("NORMAL")];
-            const tinygltf::BufferView& norm_view = model.bufferViews[norm_accessor.bufferView];
-            const tinygltf::Buffer& norm_buffer = model.buffers[norm_view.buffer];
-            normals = reinterpret_cast<const f32*>(&norm_buffer.data[norm_view.byteOffset + norm_accessor.byteOffset]);
-        }
-
-        const f32* uvs = nullptr;
-        if (attribs.find("TEXCOORD_0") != attribs.end())
-        {
-            const tinygltf::Accessor& uv_accessor = model.accessors[attribs.at("TEXCOORD_0")];
-            const tinygltf::BufferView& uv_view = model.bufferViews[uv_accessor.bufferView];
-            const tinygltf::Buffer& uv_buffer = model.buffers[uv_view.buffer];
-            uvs = reinterpret_cast<const f32*>(&uv_buffer.data[uv_view.byteOffset + uv_accessor.byteOffset]);
-        }
-
-        std::vector<vertex_t> vertex_data(pos_accessor.count);
-        for (size_t i = 0; i < vertex_data.size(); ++i)
-        {
-            for (u32_t axis = 0; axis < 3; axis++)
-            {
-                vertex_data[i].position[axis] = positions[i * 3 + axis] * settings.scale;
-            }
-            if (normals) { std::memcpy(vertex_data[i].normal, &normals[i * 3], 3 * sizeof(f32)); }
-            if (uvs) { std::memcpy(vertex_data[i].uv, &uvs[i * 2], 2 * sizeof(f32)); }
-        }
-
-        std::vector<u32_t> indices;
-        if (primitive.indices >= 0)
-        {
-            const tinygltf::Accessor& idx_accessor = model.accessors[primitive.indices];
-            const tinygltf::BufferView& idx_view = model.bufferViews[idx_accessor.bufferView];
-            const tinygltf::Buffer& idx_buffer = model.buffers[idx_view.buffer];
-
-            const void* raw_indices = &idx_buffer.data[idx_view.byteOffset + idx_accessor.byteOffset];
-            indices.resize(idx_accessor.count);
-
-            switch (idx_accessor.componentType)
-            {
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-            {
-                const u16* src = reinterpret_cast<const u16*>(raw_indices);
-                for (size_t i = 0; i < indices.size(); ++i) indices[i] = static_cast<u32>(src[i]);
-                break;
-            }
-            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-            {
-                const u32* src = reinterpret_cast<const u32*>(raw_indices);
-                std::copy(src, src + idx_accessor.count, indices.begin());
-                break;
-            }
-            }
-        }
-        else
-        {
-            indices.resize(vertex_data.size());
-            for (u32_t i = 0; i < indices.size(); i++) { indices[i] = i; }
-        }
-
-        std::vector<u32_t> optimized_indices(indices.size());
-        meshopt_optimizeVertexCache(optimized_indices.data(), indices.data(), indices.size(), vertex_data.size());
-        meshopt_optimizeOverdraw(optimized_indices.data(), optimized_indices.data(), indices.size(),
-                                 &vertex_data[0].position[0], vertex_data.size(), sizeof(vertex_t), 1.05f);
-
-        std::vector<vertex_t> optimized_vertices(vertex_data.size());
-        meshopt_optimizeVertexFetch(optimized_vertices.data(), optimized_indices.data(), indices.size(),
-                                    vertex_data.data(), vertex_data.size(), sizeof(vertex_t));
-
-        vec3_t min_pos = {FLT_MAX, FLT_MAX, FLT_MAX};
-        vec3_t max_pos = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
-
-        for (const vertex_t& vertex : optimized_vertices)
-        {
-            min_pos.x = std::min(min_pos.x, vertex.position[0]);
-            min_pos.y = std::min(min_pos.y, vertex.position[1]);
-            min_pos.z = std::min(min_pos.z, vertex.position[2]);
-
-            max_pos.x = std::max(max_pos.x, vertex.position[0]);
-            max_pos.y = std::max(max_pos.y, vertex.position[1]);
-            max_pos.z = std::max(max_pos.z, vertex.position[2]);
-        }
-
-        vec3_t center = {
-            (min_pos.x + max_pos.x) * 0.5f,
-            (min_pos.y + max_pos.y) * 0.5f,
-            (min_pos.z + max_pos.z) * 0.5f,
+            mesh_stream_e kind;
+            u32_t element_size;
+            std::string name;
+            std::vector<u8_t> data;
+            bool present = false;
         };
 
-        f32 max_sq_dist = 0.0f;
-        for (const vertex_t& vertex : optimized_vertices)
+        template <typename T>
+        void append(stream_t& stream, const std::vector<T>& values, u32_t vertex_count)
         {
-            f32 dx = vertex.position[0] - center.x;
-            f32 dy = vertex.position[1] - center.y;
-            f32 dz = vertex.position[2] - center.z;
-
-            f32 sq_dist = (dx * dx) + (dy * dy) + (dz * dz);
-            if (sq_dist > max_sq_dist) { max_sq_dist = sq_dist; }
+            const std::size_t bytes = static_cast<std::size_t>(vertex_count) * stream.element_size;
+            const std::size_t at = stream.data.size();
+            stream.data.resize(at + bytes, 0);
+            if (values.size() * sizeof(T) >= bytes && !values.empty())
+            {
+                std::memcpy(stream.data.data() + at, values.data(), bytes);
+                stream.present = true;
+            }
         }
 
-        f32 local_radius = std::sqrt(max_sq_dist);
+        void sphere_of(const std::vector<vertex_t>& vertices, std::span<const u32_t> indices, vec3_t& center,
+                       f32& radius)
+        {
+            vec3_t lo = {FLT_MAX, FLT_MAX, FLT_MAX};
+            vec3_t hi = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+            for (const u32_t index : indices)
+            {
+                const f32* p = vertices[index].position;
+                lo = {std::min(lo.x, p[0]), std::min(lo.y, p[1]), std::min(lo.z, p[2])};
+                hi = {std::max(hi.x, p[0]), std::max(hi.y, p[1]), std::max(hi.z, p[2])};
+            }
+            if (indices.empty())
+            {
+                center = {};
+                radius = 0.0f;
+                return;
+            }
+
+            center = {(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+            f32 max_sq = 0.0f;
+            for (const u32_t index : indices)
+            {
+                const f32* p = vertices[index].position;
+                const f32 dx = p[0] - center.x;
+                const f32 dy = p[1] - center.y;
+                const f32 dz = p[2] - center.z;
+                max_sq = std::max(max_sq, dx * dx + dy * dy + dz * dz);
+            }
+            radius = std::sqrt(max_sq);
+        }
+    } // namespace
+
+    bool write_mesh(const model::mesh_desc_t& mesh, std::span<const submesh_source_t> submeshes,
+                    const std::string& output_path)
+    {
+        std::vector<vertex_t> vertices;
+        std::vector<u32_t> indices;
+        std::vector<mesh_submesh_record_t> records;
+
+        std::vector<stream_t> streams = {
+            {mesh_stream_e::TANGENT, 16, {}, {}},
+            {mesh_stream_e::UV1,     8,  {}, {}},
+            {mesh_stream_e::COLOR,   16, {}, {}},
+            {mesh_stream_e::JOINTS,  8,  {}, {}},
+            {mesh_stream_e::WEIGHTS, 16, {}, {}},
+        };
+
+        // morph targets only when every submesh has the mesh's target count
+        const std::size_t target_count = mesh.target_names.size() > 0 ? mesh.target_names.size()
+                                         : submeshes.empty()          ? 0
+                                                                      : submeshes[0].primitive->targets.size();
+        const bool morphs =
+            target_count > 0 && std::all_of(submeshes.begin(), submeshes.end(), [&](const submesh_source_t& s)
+                                            { return s.primitive->targets.size() == target_count; });
+        const std::size_t first_morph = streams.size();
+        if (morphs)
+        {
+            for (std::size_t t = 0; t < target_count; t++)
+            {
+                const std::string name = t < mesh.target_names.size() ? mesh.target_names[t] : std::to_string(t);
+                streams.push_back({mesh_stream_e::MORPH_POSITION, 12, name, {}});
+                streams.push_back({mesh_stream_e::MORPH_NORMAL, 12, name, {}});
+            }
+        }
+
+        for (const submesh_source_t& source : submeshes)
+        {
+            const model::primitive_desc_t& p = *source.primitive;
+            const u32_t base = static_cast<u32_t>(vertices.size());
+            const u32_t count = p.vertex_count();
+
+            vertices.resize(base + count);
+            for (u32_t v = 0; v < count; v++)
+            {
+                vertex_t& out = vertices[base + v];
+                std::memcpy(out.position, &p.positions[v * 3], sizeof(out.position));
+                if (p.normals.size() >= (v + 1) * 3) { std::memcpy(out.normal, &p.normals[v * 3], sizeof(out.normal)); }
+                if (p.uv0.size() >= (v + 1) * 2) { std::memcpy(out.uv, &p.uv0[v * 2], sizeof(out.uv)); }
+            }
+
+            append(streams[0], p.tangents, count);
+            append(streams[1], p.uv1, count);
+            append(streams[2], p.colors, count);
+            append(streams[3], p.joints, count);
+            append(streams[4], p.weights, count);
+            if (morphs)
+            {
+                for (std::size_t t = 0; t < target_count; t++)
+                {
+                    append(streams[first_morph + t * 2], p.targets[t].positions, count);
+                    append(streams[first_morph + t * 2 + 1], p.targets[t].normals, count);
+                }
+            }
+
+            mesh_submesh_record_t& record = records.emplace_back();
+            record.first_index = static_cast<u32_t>(indices.size());
+            record.index_count = static_cast<u32_t>(p.indices.size());
+            for (const u32_t index : p.indices) { indices.push_back(index < count ? base + index : base); }
+        }
+
+        for (stream_t& stream : streams)
+        {
+            if (stream.kind == mesh_stream_e::MORPH_POSITION) { stream.present = true; }
+        }
+
+        const std::size_t vertex_count = vertices.size();
+        for (const mesh_submesh_record_t& record : records)
+        {
+            u32_t* range = indices.data() + record.first_index;
+            meshopt_optimizeVertexCache(range, range, record.index_count, vertex_count);
+            meshopt_optimizeOverdraw(range, range, record.index_count, &vertices[0].position[0], vertex_count,
+                                     sizeof(vertex_t), 1.05f);
+        }
+
+        // one fetch order for the whole mesh
+        std::vector<u32_t> remap(vertex_count);
+        const std::size_t unique = vertex_count > 0 ? meshopt_optimizeVertexFetchRemap(remap.data(), indices.data(),
+                                                                                       indices.size(), vertex_count)
+                                                    : 0;
+        meshopt_remapIndexBuffer(indices.data(), indices.data(), indices.size(), remap.data());
+        {
+            std::vector<vertex_t> remapped(unique);
+            meshopt_remapVertexBuffer(remapped.data(), vertices.data(), vertex_count, sizeof(vertex_t), remap.data());
+            vertices = std::move(remapped);
+        }
+        for (stream_t& stream : streams)
+        {
+            if (!stream.present) { continue; }
+            std::vector<u8_t> remapped(unique * stream.element_size);
+            meshopt_remapVertexBuffer(remapped.data(), stream.data.data(), vertex_count, stream.element_size,
+                                      remap.data());
+            stream.data = std::move(remapped);
+        }
+
+        mesh_header_t header;
+        header.vertex_count = static_cast<u32_t>(vertices.size());
+        header.index_count = static_cast<u32_t>(indices.size());
+        header.submesh_count = static_cast<u32_t>(records.size());
+        sphere_of(vertices, indices, header.local_center, header.local_radius);
+
+        byte_writer_t out;
+        out.write(header);
+        for (std::size_t i = 0; i < records.size(); i++)
+        {
+            mesh_submesh_record_t& record = records[i];
+            sphere_of(vertices, std::span(indices).subspan(record.first_index, record.index_count), record.local_center,
+                      record.local_radius);
+            record.material_guid = submeshes[i].material_guid;
+            record.material_path_length = static_cast<u32_t>(submeshes[i].material_path.size());
+            record.material_name_length = static_cast<u32_t>(submeshes[i].material_name.size());
+            out.write(record);
+            out.string(submeshes[i].material_path);
+            out.string(submeshes[i].material_name);
+        }
+        out.array(vertices);
+        out.array(indices);
+
+        u32_t stream_count = 0;
+        const auto write_stream = [&](mesh_stream_e kind, u32_t element_size, u32_t count, const std::string& name,
+                                      const void* data, std::size_t size)
+        {
+            out.write(mesh_stream_record_t{kind, element_size, count, static_cast<u32_t>(name.size())});
+            out.string(name);
+            out.put(data, size);
+            stream_count++;
+        };
+        for (const stream_t& stream : streams)
+        {
+            if (stream.present)
+            {
+                write_stream(stream.kind, stream.element_size, header.vertex_count, stream.name, stream.data.data(),
+                             stream.data.size());
+            }
+        }
+        if (morphs && !mesh.default_weights.empty())
+        {
+            write_stream(mesh_stream_e::MORPH_WEIGHTS, sizeof(f32), static_cast<u32_t>(mesh.default_weights.size()), {},
+                         mesh.default_weights.data(), mesh.default_weights.size() * sizeof(f32));
+        }
+
+        header.stream_count = stream_count;
+        std::memcpy(out.data.data(), &header, sizeof(header));
 
         std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
-        std::ofstream out(output_path, std::ios::binary);
-
-        mesh_header_t header = {
-            .magic = TAU_MESH_MAGIC,
-            .version = TAU_MESH_VERSION,
-            .vertex_count = static_cast<u32_t>(optimized_vertices.size()),
-            .index_count = static_cast<u32_t>(optimized_indices.size()),
-            .local_center = center,
-            .local_radius = local_radius,
-        };
-
-        out.write(reinterpret_cast<const char*>(&header), sizeof(mesh_header_t));
-        out.write(reinterpret_cast<const char*>(optimized_vertices.data()),
-                  optimized_vertices.size() * sizeof(vertex_t));
-        out.write(reinterpret_cast<const char*>(optimized_indices.data()), optimized_indices.size() * sizeof(u32_t));
+        std::ofstream file(output_path, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(out.data.data()), static_cast<std::streamsize>(out.data.size()));
+        if (!file)
+        {
+            TAU_LOG_ERROR("MESH_COOKER", "Could not write {}", output_path);
+            return false;
+        }
         return true;
     }
 } // namespace tau::cooker::mesh

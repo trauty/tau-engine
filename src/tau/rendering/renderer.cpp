@@ -1515,6 +1515,7 @@ namespace tau::renderer
         ctx.fallback_tex = assets::pin(assets::load<texture_t>(FALLBACK_TEXTURE_PATH));
         ctx.fallback_mesh = assets::pin(assets::load<mesh_t>(FALLBACK_MESH_PATH));
         ctx.fallback_material = assets::pin(assets::load<material_t>(FALLBACK_MATERIAL_PATH));
+        ctx.default_material = assets::pin(assets::load<material_t>(DEFAULT_MATERIAL_PATH));
 
         overlay::init();
 
@@ -1545,6 +1546,7 @@ namespace tau::renderer
         assets::unpin(ctx.fallback_tex);
         assets::unpin(ctx.fallback_mesh);
         assets::unpin(ctx.fallback_material);
+        assets::unpin(ctx.default_material);
         rendergraph.clear();
         custom_renderer_features.clear();
     }
@@ -1758,6 +1760,8 @@ namespace tau::renderer
             material_t* material;
             shader_t* shader;
             mesh_t* mesh;
+            // null: the whole mesh
+            const submesh_t* submesh;
             const transform_t* transform;
             bool casts_shadow;
             u32_t entity;
@@ -1774,23 +1778,7 @@ namespace tau::renderer
 
         for (auto [entity, transform, renderer] : reg.view<transform_t, mesh_renderer_t>().each())
         {
-            // an entity with nothing assigned yet is not a failure, so it still just skips
-            if (!renderer.active || !renderer.mesh || !renderer.material.is_valid()) { continue; }
-
-            material_t* mat = assets::get(renderer.material);
-            shader_t* shader = mat ? assets::get(mat->shader) : nullptr;
-
-            // a material that will not load (usually its shader stopped compiling) draws as the fallback
-            // the component's handle stays, so fixing the file and reloading swaps the real one back
-            if (mat == nullptr || shader == nullptr)
-            {
-                report_missing("material", renderer.material);
-
-                mat = assets::get(ctx.fallback_material);
-                shader = mat ? assets::get(mat->shader) : nullptr;
-
-                if (mat == nullptr || shader == nullptr) { continue; } // the fallback is gone too
-            }
+            if (!renderer.active || !renderer.mesh) { continue; }
 
             mesh_t* mesh = assets::get(renderer.mesh);
             if (mesh == nullptr)
@@ -1801,16 +1789,37 @@ namespace tau::renderer
                 if (mesh == nullptr) { continue; }
             }
 
-            draw_items.push_back({
-                static_cast<u32_t>(pass_for(*shader)) * 16u + static_cast<u32_t>(shader->module.blend_mode),
-                binding_pipeline(*shader),
-                mat,
-                shader,
-                mesh,
-                &transform,
-                renderer.casts_shadow,
-                static_cast<u32_t>(entt::to_integral(entity)) + 1,
-            });
+            const u32_t submesh_count = std::max<u32_t>(1, static_cast<u32_t>(mesh->submeshes.size()));
+            for (u32_t submesh = 0; submesh < submesh_count; submesh++)
+            {
+                asset_t<material_t> handle = slot_material(renderer, mesh, submesh);
+                if (!handle.is_valid()) { handle = ctx.default_material; }
+
+                material_t* mat = assets::get(handle);
+                shader_t* shader = mat ? assets::get(mat->shader) : nullptr;
+
+                // a material that will not load (usually its shader stopped compiling) draws as the fallback
+                if (mat == nullptr || shader == nullptr)
+                {
+                    report_missing("material", handle);
+
+                    mat = assets::get(ctx.fallback_material);
+                    shader = mat ? assets::get(mat->shader) : nullptr;
+                    if (mat == nullptr || shader == nullptr) { continue; }
+                }
+
+                draw_items.push_back({
+                    static_cast<u32_t>(pass_for(*shader)) * 16u + static_cast<u32_t>(shader->module.blend_mode),
+                    binding_pipeline(*shader),
+                    mat,
+                    shader,
+                    mesh,
+                    submesh < mesh->submeshes.size() ? &mesh->submeshes[submesh] : nullptr,
+                    &transform,
+                    renderer.casts_shadow,
+                    static_cast<u32_t>(entt::to_integral(entity)) + 1,
+                });
+            }
         }
 
         // pass and blend first so mesh passes come out as ranges, then pipeline so each bin is one run
@@ -1866,14 +1875,20 @@ namespace tau::renderer
 
             obj_data.material_offset = item.material->heap_offset[ctx.cur_frame];
             obj_data.entity = item.entity;
+            const u32_t first_index = item.submesh ? item.submesh->first_index : 0;
+            const u32_t index_count = item.submesh ? item.submesh->index_count : mesh.index_count;
+            const vec3_t local_center = item.submesh ? item.submesh->local_center : mesh.local_center;
+            const f32 local_radius = item.submesh ? item.submesh->local_radius : mesh.local_radius;
+
             obj_data.vertex_buffer = mesh.vertex_buffer_address;
-            obj_data.index_buffer = mesh.index_buffer_address;
+            // vertices are pulled through the index address, so a submesh is its first index
+            obj_data.index_buffer = mesh.index_buffer_address + u64_t(first_index) * sizeof(u32_t);
 
             const active_pipeline_t& bin = frame_data.active_pipelines.back();
             const bool has_shadow = bin.shadow_pipeline != VK_NULL_HANDLE;
 
             vec3_t world_center;
-            vec3_t local_c = mesh.local_center;
+            vec3_t local_c = local_center;
             glm_mat4_mulv3(transform.world_mat, local_c, 1.0f, world_center);
 
             const f32 scale_x =
@@ -1889,8 +1904,8 @@ namespace tau::renderer
             cull.bounding_sphere.data.x = world_center.x;
             cull.bounding_sphere.data.y = world_center.y;
             cull.bounding_sphere.data.z = world_center.z;
-            cull.bounding_sphere.data.w = mesh.local_radius * max_scale;
-            cull.index_count = mesh.index_count;
+            cull.bounding_sphere.data.w = local_radius * max_scale;
+            cull.index_count = index_count;
             cull.pipeline_index = bin.pipeline_index;
             cull.flags = (item.casts_shadow && has_shadow) ? 1u : 0u;
             cull.draw_bin_offset = bin.first_object;

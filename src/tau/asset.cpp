@@ -777,6 +777,10 @@ namespace tau::assets
             const std::vector<std::string_view>& sources = g_types[i].source_extensions;
             if (std::find(sources.begin(), sources.end(), ext) != sources.end()) { return &g_types[i]; }
         }
+        for (u32_t i = 0; i < g_type_count; i++)
+        {
+            if (!g_types[i].sub_extension.empty() && g_types[i].sub_extension == ext) { return &g_types[i]; }
+        }
         return nullptr;
     }
 
@@ -797,5 +801,19 @@ namespace tau::assets
         cooked.replace_extension(std::string(type->cooked_extension));
 
         return std::string(parts.protocol) + cooked.generic_string();
+    }
+
+    std::optional<sub_asset_path_t> split_sub_asset(std::string_view path)
+    {
+        for (std::size_t slash = path.find('/'); slash != std::string_view::npos; slash = path.find('/', slash + 1))
+        {
+            const std::string_view head = path.substr(0, slash);
+            const std::string_view name = path.substr(slash + 1);
+            if (name.empty() || name.find('/') != std::string_view::npos) { continue; }
+
+            const asset_type_t* type = type_by_path(head);
+            if (type && type->has_sub_assets) { return sub_asset_path_t{head, name}; }
+        }
+        return std::nullopt;
     }
 } // namespace tau::assets

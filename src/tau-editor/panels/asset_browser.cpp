@@ -6,13 +6,19 @@
 #include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
 #include "tau-editor/history.h"
+#include "tau-editor/import_edit.h"
 #include "tau-editor/keymap.h"
+#include "tau-editor/material_edit.h"
 #include "tau-editor/panels/hierarchy.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
 #include "tau/asset.h"
+#include "tau/assets/material.h"
+#include "tau/assets/model.h"
 #include "tau/assets/texture.h"
 #include "tau/engine.h"
+#include "tau/guid.h"
+#include "tau/log.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/systems/guid.h"
 #include "tau/vfs.h"
@@ -26,6 +32,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -46,6 +53,8 @@ namespace tau::editor::panels
             std::string rel;
             bool is_dir = false;
             const asset_type_t* type = nullptr;
+            // part of a model, shown in its band: read-only, rel is <model rel>/<name>
+            bool sub = false;
         };
 
         struct folder_t
@@ -65,6 +74,7 @@ namespace tau::editor::panels
             REMOVE,
             MOVE,
             MAKE_PREFAB,
+            EXTRACT,
         };
 
         struct action_t
@@ -104,6 +114,8 @@ namespace tau::editor::panels
             f32 tile = 76.0f;
 
             std::unordered_map<std::string, asset_handle_t> thumbs;
+            // models whose band is open, by rel
+            std::unordered_set<std::string> open_models;
 
             action_t action;
         };
@@ -208,6 +220,24 @@ namespace tau::editor::panels
                                                               b.name.end(), [](unsigned char x, unsigned char y)
                                                               { return std::tolower(x) < std::tolower(y); });
                       });
+
+            for (std::size_t i = 0; i < g.items.size(); i++)
+            {
+                const item_t model = g.items[i];
+                if (!model.type || !model.type->has_sub_assets || !g.open_models.contains(model.rel)) { continue; }
+
+                const model_t* manifest = assets::get(assets::load<model_t>(vfs_of(g.root, model.rel)));
+                if (!manifest) { continue; }
+
+                std::vector<item_t> parts;
+                for (const model_sub_asset_t& sub : manifest->sub_assets)
+                {
+                    parts.push_back(
+                        {sub.name, model.rel + "/" + sub.name, false, assets::type_by_id(sub.type_id), true});
+                }
+                g.items.insert(g.items.begin() + static_cast<std::ptrdiff_t>(i) + 1, parts.begin(), parts.end());
+                i += parts.size();
+            }
 
             std::erase_if(g.selection,
                           [](const std::string& rel)
@@ -498,7 +528,19 @@ namespace tau::editor::panels
             if (ImGui::MenuItem("Revert", nullptr, false, editing && unsaved(item))) { history::revert_asset(doc); }
             ImGui::Separator();
 
-            const bool can = editable(ctx);
+            const bool can = editable(ctx) && !item.sub;
+            if (item.sub && item.type && item.type->id == get_type_id<material_t>())
+            {
+                if (ImGui::MenuItem("Extract Material", nullptr, false, editable(ctx)))
+                {
+                    g.action = {action_kind_e::EXTRACT, item.rel};
+                }
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Writes an editable .mat beside the model and draws the model with it");
+                }
+                ImGui::Separator();
+            }
             if (ImGui::MenuItem("Rename", keymap::label(keymap::action_e::RENAME).c_str(), false, can))
             {
                 g.action = {action_kind_e::RENAME, item.rel};
@@ -522,6 +564,12 @@ namespace tau::editor::panels
             ImGui::EndPopup();
         }
 
+        void toggle_band(const std::string& rel)
+        {
+            if (!g.open_models.erase(rel)) { g.open_models.insert(rel); }
+            g.stale = true;
+        }
+
         void draw_tile(world_t& world, editor_context_t& ctx, const item_t& item)
         {
             const f32 text_h = ImGui::GetTextLineHeightWithSpacing();
@@ -529,12 +577,19 @@ namespace tau::editor::panels
             const bool selected = std::find(g.selection.begin(), g.selection.end(), item.rel) != g.selection.end();
             const bool renaming = g.renaming == item.rel;
 
+            const bool model = item.type && item.type->has_sub_assets;
+
             ImGui::PushID(item.rel.c_str());
-            if (renaming) { ImGui::SetNextItemAllowOverlap(); }
+            if (renaming || model) { ImGui::SetNextItemAllowOverlap(); }
             ImGui::InvisibleButton("##tile", ImVec2(g.tile, g.tile + text_h));
             const bool hovered = ImGui::IsItemHovered();
 
             ImDrawList* draw = ImGui::GetWindowDrawList();
+            if (item.sub)
+            {
+                draw->AddRectFilled(ImVec2(pos.x - 2.0f, pos.y), ImVec2(pos.x + g.tile + 2.0f, pos.y + g.tile + text_h),
+                                    ImGui::GetColorU32(ImGuiCol_FrameBg), 0.0f);
+            }
             if (selected || hovered)
             {
                 draw->AddRectFilled(pos, ImVec2(pos.x + g.tile, pos.y + g.tile + text_h),
@@ -573,6 +628,7 @@ namespace tau::editor::panels
             if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
                 if (item.is_dir) { navigate(g.root, item.rel); }
+                else if (model) { toggle_band(item.rel); }
                 else if (const asset_editors::asset_editor_t* editor =
                              item.type ? asset_editors::of(item.type->id) : nullptr;
                          editor && editor->open)
@@ -624,6 +680,21 @@ namespace tau::editor::panels
                 ImGui::Dummy(ImVec2(g.tile, g.tile + text_h));
             }
 
+            // the chevron opens the model's parts in a band beside it
+            if (model)
+            {
+                const f32 size = ImGui::GetFrameHeight();
+                ImGui::SetCursorScreenPos(ImVec2(pos.x + g.tile - size, pos.y + (g.tile - size) * 0.5f));
+                const bool open = g.open_models.contains(item.rel);
+                if (ImGui::ArrowButton("##parts", open ? ImGuiDir_Left : ImGuiDir_Right)) { toggle_band(item.rel); }
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip(open ? "Hide the model's parts" : "Show the model's parts");
+                }
+                ImGui::SetCursorScreenPos(pos);
+                ImGui::Dummy(ImVec2(g.tile, g.tile + text_h));
+            }
+
             ImGui::PopID();
         }
 
@@ -652,10 +723,51 @@ namespace tau::editor::panels
             if (g.root == root_e::GAME && g.search[0] == '\0') { grid_drop_target(ctx); }
         }
 
+        // the read-only material as an editable .mat beside the model, then the model remapped to it
+        void extract_material(world_t& world, const std::string& rel)
+        {
+            const std::string vfs = vfs_of(g.root, rel);
+            const std::optional<assets::sub_asset_path_t> part = assets::split_sub_asset(vfs);
+            if (!part) { return; }
+
+            nlohmann::json data = material_edit::to_json(assets::load<material_t>(vfs));
+            if (data.is_null())
+            {
+                TAU_LOG_ERROR("ASSETS", "Cannot extract {}: its shader is not loaded", vfs);
+                return;
+            }
+
+            const std::string model_vfs(part->model);
+            const std::string name = fs::path(std::string(part->name)).stem().string();
+            const std::string model_rel = asset_files::rel_of(model_vfs);
+            const std::string target =
+                asset_files::unique_path(fs::path(model_rel).parent_path().generic_string(), name, ".mat");
+
+            const asset_guid_t guid = guid::generate();
+            data["guid"] = guid::to_string(guid);
+
+            const u64_t entry = asset_files::reserve_entry();
+            const history::target_t files = {history::PROJECT_FILES, entry};
+            history::begin(world, "Extract " + name, {&files, 1});
+            const bool written = asset_files::write_new_file(entry, target, data.dump(4) + "\n");
+            history::end(world);
+
+            if (written) { import_edit::remap_material(world, model_vfs, name, asset_handle_t{guid}); }
+        }
+
         void run_action(world_t& world, editor_context_t& ctx)
         {
             const action_t action = std::move(g.action);
             g.action = {};
+
+            // a model's parts are no files: no rename, duplicate, delete or move
+            const auto is_part = [](const std::string& rel)
+            { return assets::split_sub_asset(vfs_of(g.root, rel)).has_value(); };
+            if (action.kind != action_kind_e::EXTRACT)
+            {
+                std::erase_if(g.selection, is_part);
+                if (!action.rel.empty() && is_part(action.rel) && action.kind != action_kind_e::MOVE) { return; }
+            }
 
             std::string made;
             switch (action.kind)
@@ -692,7 +804,14 @@ namespace tau::editor::panels
                 asset_files::remove(world, g.selection);
                 g.selection.clear();
                 break;
-            case action_kind_e::MOVE: asset_files::move(world, action.rels, action.rel); break;
+            case action_kind_e::MOVE:
+            {
+                std::vector<std::string> rels = action.rels;
+                std::erase_if(rels, is_part);
+                asset_files::move(world, rels, action.rel);
+                break;
+            }
+            case action_kind_e::EXTRACT: extract_material(world, action.rel); break;
             case action_kind_e::MAKE_PREFAB:
             {
                 const ecs::entity_t entity = guid_system::find(world.registry, action.entity);

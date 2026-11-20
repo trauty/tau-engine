@@ -1,3 +1,7 @@
 {
-  "guid": "71fad64bce5f169b"
+    "guid": "965ea7eb62e91703",
+    "sub_assets": {
+        "mesh_0.mesh": "71fad64bce5f169b",
+        "sphere.prefab": "f06f2154429dbde4"
+    }
 }

@@ -3,6 +3,7 @@
 #include "tau/defines.h"
 #include "tau/hash.h"
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -80,6 +81,9 @@ namespace tau
         bool guid_in_source = false;
 
         u32_t import_type = 0;
+
+        bool has_sub_assets = false;
+        std::string_view sub_extension;
 
         u64_t id = 0;
 
@@ -180,4 +184,13 @@ namespace tau::assets
     bool path_is(std::string_view path)
     { return path_is(path, get_type_id<T>()); }
     TAU_ENGINE_API std::string cooked_path(u64_t type_id, std::string_view source_path);
+
+    struct sub_asset_path_t
+    {
+        std::string_view model;
+        std::string_view name;
+    };
+
+    // <model>/<name>, nullopt for any other path
+    TAU_ENGINE_API std::optional<sub_asset_path_t> split_sub_asset(std::string_view path);
 } // namespace tau::assets

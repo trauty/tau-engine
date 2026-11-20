@@ -24,12 +24,19 @@ namespace tau::cooker::material
         }
 
         // parse without throwing: a typo in a hand edited .mat is a cook error, not a crash
-        nlohmann::json mat_json = nlohmann::json::parse(file, nullptr, false);
+        const nlohmann::json mat_json = nlohmann::json::parse(file, nullptr, false);
         if (mat_json.is_discarded() || !mat_json.is_object())
         {
             TAU_LOG_ERROR("MATERIAL_COOKER", "Material file is not valid JSON: {}", input_path);
             return false;
         }
+
+        return write_material(mat_json, output_path, input_path);
+    }
+
+    bool write_material(const nlohmann::json& mat_json, const std::string& output_path, const std::string& owner)
+    {
+        const std::string& input_path = owner;
 
         std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
         std::ofstream out(output_path, std::ios::binary);
@@ -56,7 +63,7 @@ namespace tau::cooker::material
 
         if (mat_json.contains("properties"))
         {
-            for (auto& [prop_name, prop_val] : mat_json["properties"].items())
+            for (const auto& [prop_name, prop_val] : mat_json["properties"].items())
             {
                 cooked_property_t prop;
                 prop.name_hash = tau::hash_string(prop_name);
@@ -92,7 +99,7 @@ namespace tau::cooker::material
                 else if (prop_val.is_array())
                 {
                     std::vector<f32> val_array;
-                    for (auto& val : prop_val) { val_array.push_back(val.get<f32>()); }
+                    for (const auto& val : prop_val) { val_array.push_back(val.get<f32>()); }
 
                     prop.data_size = static_cast<u32_t>(val_array.size() * sizeof(f32));
                     append_blob(&prop, sizeof(cooked_property_t));
@@ -122,7 +129,7 @@ namespace tau::cooker::material
 
         if (header.texture_count > 0)
         {
-            for (auto& [tex_name, tex_path_json] : mat_json["textures"].items())
+            for (const auto& [tex_name, tex_path_json] : mat_json["textures"].items())
             {
                 std::string tex_path = tex_path_json.get<std::string>();
 
@@ -149,7 +156,7 @@ namespace tau::cooker::material
 
         if (header.sampler_count > 0)
         {
-            for (auto& [smp_name, smp_val] : mat_json["samplers"].items())
+            for (const auto& [smp_name, smp_val] : mat_json["samplers"].items())
             {
                 cooked_sampler_bind_t smp_bind;
                 smp_bind.name_hash = tau::hash_string(smp_name);

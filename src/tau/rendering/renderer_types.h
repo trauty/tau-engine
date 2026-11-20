@@ -494,6 +494,7 @@ namespace tau::renderer
         asset_t<texture_t> fallback_tex;
         asset_t<mesh_t> fallback_mesh;
         asset_t<material_t> fallback_material;
+        asset_t<material_t> default_material;
 
         u32_t global_data_aligned_size = 0;
         VkBuffer global_data_buffer = VK_NULL_HANDLE;

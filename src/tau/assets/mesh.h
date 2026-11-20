@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace tau
 {
@@ -18,6 +19,19 @@ namespace tau
         f32 uv[2];
     };
 
+    struct material_t;
+
+    struct TAU_ENGINE_API submesh_t
+    {
+        u32_t first_index = 0;
+        u32_t index_count = 0;
+        vec3_t local_center;
+        f32 local_radius = 0.0f;
+
+        asset_t<material_t> material;
+        std::string material_name;
+    };
+
     struct TAU_ENGINE_API mesh_t
     {
         static constexpr std::string_view type_key = "mesh";
@@ -25,8 +39,11 @@ namespace tau
         u32_t vertex_count = 0;
         u32_t index_count = 0;
 
+        // all submeshes
         vec3_t local_center;
         f32 local_radius;
+
+        std::vector<submesh_t> submeshes;
 
         VkBuffer vertex_buffer = VK_NULL_HANDLE;
         VmaAllocation vertex_allocation = VK_NULL_HANDLE;
@@ -43,5 +60,6 @@ namespace tau
     {
         static std::optional<mesh_t> load(const std::string& path);
         static void unload(mesh_t& mesh);
+        static void deps(const mesh_t& mesh, std::vector<asset_handle_t>& out);
     };
 } // namespace tau

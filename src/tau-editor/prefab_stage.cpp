@@ -130,6 +130,13 @@ namespace tau::editor::prefab_stage
 
     bool open(world_t& world, editor_context_t& ctx, const std::string& vfs_path, u64_t select)
     {
+        if (assets::split_sub_asset(vfs_path))
+        {
+            TAU_LOG_WARN("PREFAB", "{} belongs to its model and is read-only: change the model, or make a variant",
+                         vfs_path);
+            return false;
+        }
+
         const asset_t<prefab_t> handle = assets::load<prefab_t>(vfs_path);
         const prefab_t* prefab = assets::get(handle);
         if (!prefab || !prefab->data.contains("entities") || prefab->data["entities"].empty())

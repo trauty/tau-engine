@@ -25,7 +25,8 @@ namespace tau::renderer
 
     // what a mesh, material or texture that failed to load is drawn with instead
     inline constexpr const char* FALLBACK_TEXTURE_PATH = "engine://assets/textures/fallback_tex.png";
-    inline constexpr const char* FALLBACK_MESH_PATH = "engine://assets/models/fallback_mesh.glb";
+    inline constexpr const char* FALLBACK_MESH_PATH = "engine://assets/models/fallback_mesh.glb/Cube.002.mesh";
+    inline constexpr const char* DEFAULT_MATERIAL_PATH = "engine://assets/materials/default.mat";
     inline constexpr const char* FALLBACK_MATERIAL_PATH = "engine://assets/materials/fallback.mat";
 
     // shadows

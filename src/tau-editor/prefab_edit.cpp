@@ -573,6 +573,11 @@ namespace tau::editor::prefab_edit
         if (!instance || !prefab) { return; }
 
         const asset_t<prefab_t> handle = instance->prefab;
+        if (assets::split_sub_asset(assets::path_of(handle)))
+        {
+            TAU_LOG_WARN("PREFAB", "A model's prefab is read-only, nothing applied");
+            return;
+        }
         // the stage's undo steps end at its exit, another prefab's change would outlive them
         if (prefab_stage::is_open())
         {

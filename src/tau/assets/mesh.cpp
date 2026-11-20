@@ -1,6 +1,7 @@
 #include "mesh.h"
 
 #include "tau/asset.h"
+#include "tau/assets/material.h"
 #include "tau/assets/mesh_format.h"
 #include "tau/log.h"
 #include "tau/rendering/renderer.h"
@@ -13,7 +14,6 @@
 #include <SDL3/SDL_iostream.h>
 #include <mutex>
 #include <optional>
-#include <tinygltf/tiny_gltf.h>
 #include <vector>
 
 namespace tau
@@ -30,9 +30,8 @@ namespace tau
         }
 
         mesh_header_t header;
-        SDL_ReadIO(stream, &header, sizeof(mesh_header_t));
-
-        if (header.magic != TAU_MESH_MAGIC)
+        if (SDL_ReadIO(stream, &header, sizeof(mesh_header_t)) != sizeof(mesh_header_t) ||
+            header.magic != TAU_MESH_MAGIC)
         {
             TAU_LOG_ERROR("MESH", "Invalid .taumesh file: {}", cooked_path);
             SDL_CloseIO(stream);
@@ -53,6 +52,38 @@ namespace tau
             .local_center = header.local_center,
             .local_radius = header.local_radius,
         };
+
+        auto read_string = [stream](u32_t length)
+        {
+            std::string text(length, '\0');
+            if (length > 0 && SDL_ReadIO(stream, text.data(), length) != length) { text.clear(); }
+            return text;
+        };
+
+        asset.submeshes.reserve(header.submesh_count);
+        for (u32_t i = 0; i < header.submesh_count; i++)
+        {
+            mesh_submesh_record_t record;
+            if (SDL_ReadIO(stream, &record, sizeof(record)) != sizeof(record) ||
+                record.first_index + record.index_count > header.index_count)
+            {
+                TAU_LOG_ERROR("MESH", "Truncated submesh table in: {}", cooked_path);
+                SDL_CloseIO(stream);
+                return std::nullopt;
+            }
+
+            submesh_t& submesh = asset.submeshes.emplace_back();
+            submesh.first_index = record.first_index;
+            submesh.index_count = record.index_count;
+            submesh.local_center = record.local_center;
+            submesh.local_radius = record.local_radius;
+
+            const std::string material_path = read_string(record.material_path_length);
+            submesh.material_name = read_string(record.material_name_length);
+
+            const std::string resolved = assets::resolve(record.material_guid, material_path);
+            if (!resolved.empty()) { submesh.material = assets::load<material_t>(resolved); }
+        }
 
         VkDeviceSize vertex_size = asset.vertex_count * sizeof(vertex_t);
         VkDeviceSize index_size = asset.index_count * sizeof(u32);
@@ -75,10 +106,18 @@ namespace tau
         VK_CHECK(vmaCreateBuffer(renderer::ctx.allocator, &staging_info, &alloc_info, &staging_buf, &staging_alloc,
                                  &staging_alloc_info));
 
-        SDL_ReadIO(stream, staging_alloc_info.pMappedData, vertex_size);
-        SDL_ReadIO(stream, (u8*)staging_alloc_info.pMappedData + vertex_size, index_size);
-
+        // extra streams after the indices wait for the renderer that reads them
+        const bool complete = SDL_ReadIO(stream, staging_alloc_info.pMappedData, vertex_size) == vertex_size &&
+                              SDL_ReadIO(stream, static_cast<u8*>(staging_alloc_info.pMappedData) + vertex_size,
+                                         index_size) == index_size;
         SDL_CloseIO(stream);
+
+        if (!complete)
+        {
+            TAU_LOG_ERROR("MESH", "Truncated vertex or index data in: {}", cooked_path);
+            vmaDestroyBuffer(renderer::ctx.allocator, staging_buf, staging_alloc);
+            return std::nullopt;
+        }
 
         VkBufferCreateInfo mesh_info = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -184,6 +223,14 @@ namespace tau
         }
 
         return asset;
+    }
+
+    void asset_loader_t<mesh_t>::deps(const mesh_t& mesh, std::vector<asset_handle_t>& out)
+    {
+        for (const submesh_t& submesh : mesh.submeshes)
+        {
+            if (submesh.material.is_valid()) { out.push_back(submesh.material); }
+        }
     }
 
     void asset_loader_t<mesh_t>::unload(mesh_t& mesh)

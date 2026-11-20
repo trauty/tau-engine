@@ -1,3 +1,7 @@
 {
-  "guid": "d6db3f4c74362a98"
+    "guid": "af93ccbcaaaefe67",
+    "sub_assets": {
+        "move.mesh": "d6db3f4c74362a98",
+        "move.prefab": "869fc89b156ae41b"
+    }
 }

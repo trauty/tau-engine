@@ -140,7 +140,7 @@ namespace tau::editor::widgets
     } // namespace
 
     bool asset_slot(world_t& world, const char* label, u64_t asset_type_hash, asset_handle_t handle,
-                    asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove)
+                    asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove, const char* empty_text)
     {
         bool modified = false;
         const std::string cur_path = assets::path_of(handle);
@@ -151,7 +151,7 @@ namespace tau::editor::widgets
         const f32 remove_width = out_remove ? (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x) : 0.0f;
         const f32 field_width = std::max(ImGui::GetContentRegionAvail().x - remove_width, 60.0f);
 
-        std::string name = cur_path.empty() ? "None" : std::string(asset_file_name(cur_path));
+        std::string name = cur_path.empty() ? empty_text : std::string(asset_file_name(cur_path));
         if (asset_unsaved(handle)) { name += "*"; }
 
         if (ImGui::Button((name + popup_id).c_str(), ImVec2(field_width, 0.0f)))

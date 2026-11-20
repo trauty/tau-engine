@@ -602,17 +602,18 @@ namespace tau::editor::handles
     void init(editor_context_t& ctx)
     {
         g_ctx = &ctx;
-        events::on(events::event_e::PLAY_STARTING, [](world_t& world, editor_context_t&)
+        events::on(events::event_e::PLAY_STARTING,
+                   [](world_t& world, editor_context_t&)
                    {
                        if (drag) { end_drag(world); }
                    });
         renderer::register_renderer_feature("EditorHandles"_h, renderer::FEATURE_ORDER_OVERLAY - 1, &build_handles);
 
-        meshes.move = assets::pin(assets::load<mesh_t>("engine://assets/models/move.glb"));
-        meshes.rotate = assets::pin(assets::load<mesh_t>("engine://assets/models/rotate.glb"));
-        meshes.scale = assets::pin(assets::load<mesh_t>("engine://assets/models/scale.glb"));
-        meshes.center = assets::pin(assets::load<mesh_t>("engine://assets/models/center.glb"));
-        meshes.plane = assets::pin(assets::load<mesh_t>("engine://assets/models/plane.glb"));
+        meshes.move = assets::pin(assets::load<mesh_t>("engine://assets/models/move.glb/move.mesh"));
+        meshes.rotate = assets::pin(assets::load<mesh_t>("engine://assets/models/rotate.glb/rotate.mesh"));
+        meshes.scale = assets::pin(assets::load<mesh_t>("engine://assets/models/scale.glb/scale.mesh"));
+        meshes.center = assets::pin(assets::load<mesh_t>("engine://assets/models/center.glb/center.mesh"));
+        meshes.plane = assets::pin(assets::load<mesh_t>("engine://assets/models/plane.glb/plane.mesh"));
     }
 
     void update(world_t& world, editor_context_t& ctx)

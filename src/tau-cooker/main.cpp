@@ -16,6 +16,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -232,12 +233,8 @@ namespace
         // a single file run rewrites only for a new asset, as the cost grows with the project
         run.guid_map_dirty = run.full();
 
-        const std::string prefix = run.vfs_prefix();
-        for (const source_t& source : run.sources)
+        const auto record = [&](const std::string& key, tau::asset_guid_t guid)
         {
-            const std::string key = prefix + source.rel_path;
-            const tau::asset_guid_t guid = tau::asset_sources::find_or_create_guid(source.path.generic_string());
-
             run.guid_map.emplace_back(key, guid);
             tau::assets::set_location(key, guid);
 
@@ -246,13 +243,60 @@ namespace
             {
                 run.guid_map_dirty = true;
             }
+        };
+
+        const std::string prefix = run.vfs_prefix();
+        for (const source_t& source : run.sources)
+        {
+            const std::string key = prefix + source.rel_path;
+
+            // first: listing may hand the source's old guid to a sub-asset
+            const tau::asset_type_t* type = tau::assets::type_by_path(source.rel_path);
+            const tau::cooker::cooker_t cooker = type ? tau::cooker::cooker_for(type->key) : tau::cooker::cooker_t{};
+            if (cooker.list)
+            {
+                for (const auto& [name, guid] : cooker.list(run.env, source.path.generic_string()))
+                {
+                    record(key + "/" + name, guid);
+                }
+            }
+
+            record(key, tau::asset_sources::find_or_create_guid(source.path.generic_string()));
         }
+    }
+
+    // models first: they set the kind of the images they use before those guess it from the name
+    std::unordered_map<std::string, nlohmann::json> prepare_all(const cook_run_t& run)
+    {
+        std::vector<const source_t*> order;
+        for (const source_t& source : run.sources) { order.push_back(&source); }
+        std::stable_sort(order.begin(), order.end(),
+                         [](const source_t* a, const source_t* b)
+                         {
+                             const tau::asset_type_t* ta = tau::assets::type_by_path(a->rel_path);
+                             const tau::asset_type_t* tb = tau::assets::type_by_path(b->rel_path);
+                             return (ta && ta->has_sub_assets) > (tb && tb->has_sub_assets);
+                         });
+
+        std::unordered_map<std::string, nlohmann::json> metas;
+        for (const source_t* source : order)
+        {
+            const tau::asset_type_t* type = tau::assets::type_by_path(source->rel_path);
+            const tau::cooker::cooker_t cooker = type ? tau::cooker::cooker_for(type->key) : tau::cooker::cooker_t{};
+            if (cooker.prepare)
+            {
+                metas[source->path.generic_string()] = cooker.prepare(run.env, source->path.generic_string());
+            }
+        }
+        return metas;
     }
 
     // pass two: cook, every reference resolves to a guid now
     void cook_all(cook_run_t& run, tau::cooker::asset_cache_t& cache)
     {
         fs::create_directories(run.output_dir + "/shaders");
+
+        const std::unordered_map<std::string, nlohmann::json> prepared = prepare_all(run);
 
         for (const source_t& source : run.sources)
         {
@@ -275,9 +319,10 @@ namespace
             out_path.replace_extension(std::string(type->cooked_extension));
             const std::string out = out_path.generic_string();
 
-            const nlohmann::json meta = cooker.prepare         ? cooker.prepare(run.env, path)
-                                        : type->guid_in_source ? nlohmann::json::object()
-                                                               : tau::asset_sources::read_meta(path);
+            const auto prepared_meta = prepared.find(path);
+            const nlohmann::json meta = prepared_meta != prepared.end() ? prepared_meta->second
+                                        : type->guid_in_source          ? nlohmann::json::object()
+                                                                        : tau::asset_sources::read_meta(path);
             const std::string settings =
                 tau::import_settings::fingerprint(type->id, run.env.import_defaults, meta, path);
 
@@ -286,6 +331,7 @@ namespace
                 // entries from before sources were recorded get them here, so dependents are found without a recook
                 cache.remember_source(out, path);
                 run.expected_outputs.insert(out);
+                for (const std::string& extra : cache.outputs_of(out)) { run.expected_outputs.insert(extra); }
                 continue;
             }
 
@@ -299,6 +345,8 @@ namespace
                     result.deps.push_back(meta_dep);
                 }
             }
+
+            for (const fs::path& extra : result.outputs) { run.expected_outputs.insert(extra.generic_string()); }
 
             if (!result.ok)
             {
@@ -315,7 +363,7 @@ namespace
             }
 
             run.expected_outputs.insert(out);
-            cache.update_cache(out, result.deps, path, settings);
+            cache.update_cache(out, result.deps, path, settings, result.outputs);
             run.cooked_sources.push_back(path);
         }
     }

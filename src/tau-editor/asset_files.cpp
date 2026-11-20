@@ -15,8 +15,8 @@
 #include "tau/vfs.h"
 
 #include <fstream>
-#include <optional>
 #include <json/json.hpp>
+#include <optional>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
@@ -115,7 +115,8 @@ namespace tau::editor::asset_files
         void write_guid_map()
         {
             const fs::path map = fs::path(g_ctx->project_cooked_dir) / "guid_map.json";
-            asset_sources::write_guid_map(map.generic_string(), assets::locations(vfs::asset_prefix(vfs::GAME_NS)), vfs::asset_prefix(vfs::GAME_NS));
+            asset_sources::write_guid_map(map.generic_string(), assets::locations(vfs::asset_prefix(vfs::GAME_NS)),
+                                          vfs::asset_prefix(vfs::GAME_NS));
         }
 
         void forget_assets(const std::string& rel)
@@ -141,6 +142,21 @@ namespace tau::editor::asset_files
                 const std::string key = vfs_path(rel);
                 assets::set_location(key, asset_sources::find_or_create_guid(file.generic_string()));
                 asset_watch::ignore_own_write(file);
+
+                // a model's parts follow it
+                if (assets::type_by_path(file.generic_string())->has_sub_assets)
+                {
+                    const nlohmann::json meta = asset_sources::read_meta(file.generic_string());
+                    const auto subs = meta.find("sub_assets");
+                    if (subs == meta.end() || !subs->is_object()) { return; }
+                    for (const auto& [name, guid] : subs->items())
+                    {
+                        if (guid.is_string())
+                        {
+                            assets::set_location(key + "/" + name, assets::parse_guid(guid.get<std::string>()));
+                        }
+                    }
+                }
             };
 
             std::error_code ec;
@@ -165,10 +181,7 @@ namespace tau::editor::asset_files
             {
                 std::error_code ec;
                 const std::string rel = fs::relative(g_ctx->current_scene_path, source_root(), ec).generic_string();
-                if (!ec && is_within(rel, from))
-                {
-                    scene_io::set_path(*g_ctx, source_path(rebase(rel)).string());
-                }
+                if (!ec && is_within(rel, from)) { scene_io::set_path(*g_ctx, source_path(rebase(rel)).string()); }
             }
 
             const std::string inspected_key = vfs::asset_prefix(vfs::GAME_NS);
@@ -212,6 +225,14 @@ namespace tau::editor::asset_files
                 move_path(asset_sources::meta_path(src_from.string()), asset_sources::meta_path(src_to.string()));
             }
             move_path(cooked_from, cooked_to);
+
+            // a model's cooked parts sit in a folder named like its source
+            const asset_type_t* type = is_dir ? nullptr : assets::type_by_path(src_to.generic_string());
+            if (type && type->has_sub_assets)
+            {
+                move_path(from.empty() ? trash_of(entry) / "cooked_parts" : cooked_root() / from,
+                          to.empty() ? trash_of(entry) / "cooked_parts" : cooked_root() / to);
+            }
 
             entries[entry] = to;
             if (!to.empty()) { adopt_assets(src_to); }
@@ -477,13 +498,22 @@ namespace tau::editor::asset_files
             }
             else if (type)
             {
-                // import settings come along
+                // import settings come along, a model's parts get guids of their own
                 nlohmann::json meta = asset_sources::read_meta(source_path(rel).string());
                 meta["guid"] = guid::to_string(guid::generate());
+                if (type->has_sub_assets) { meta["sub_assets"] = nlohmann::json::object(); }
                 asset_sources::write_meta(source_path(copy).string(), meta);
             }
 
-            if (const fs::path cooked = cooked_of(rel, false); !cooked.empty())
+            if (type && type->has_sub_assets)
+            {
+                std::string err;
+                if (!asset_cook::cook_asset(source_root() / copy, err))
+                {
+                    TAU_LOG_ERROR("ASSET_FILES", "Cannot cook {}: {}", copy, err);
+                }
+            }
+            else if (const fs::path cooked = cooked_of(rel, false); !cooked.empty())
             {
                 fs::copy_file(cooked, cooked_of(copy, false), ec);
             }

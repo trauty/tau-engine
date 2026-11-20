@@ -5,11 +5,17 @@
 #include "tau-editor/commands.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
+#include "tau-editor/panels/inspector.h"
+#include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
+#include "tau/assets/clip.h"
 #include "tau/assets/material.h"
 #include "tau/assets/mesh.h"
+#include "tau/assets/model.h"
+#include "tau/assets/prefab.h"
 #include "tau/assets/scene.h"
 #include "tau/assets/shader.h"
+#include "tau/assets/skeleton.h"
 #include "tau/assets/texture.h"
 #include "tau/components/renderer.h"
 #include "tau/components/tag.h"
@@ -56,8 +62,6 @@ namespace tau::editor::asset_editors
 
         // mesh
 
-        constexpr const char* DEFAULT_MATERIAL = "engine://assets/materials/default.mat";
-
         void place_mesh(world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3_t& at)
         {
             const u64_t guid = guid::generate();
@@ -70,9 +74,7 @@ namespace tau::editor::asset_editors
             world.registry.emplace<tag_t>(entity, name);
             world.registry.emplace<transform_t>(entity).local_position = at;
 
-            mesh_renderer_t& renderer = world.registry.emplace<mesh_renderer_t>(entity);
-            renderer.mesh = assets::load<mesh_t>(vfs);
-            renderer.material = assets::load<material_t>(DEFAULT_MATERIAL);
+            world.registry.emplace<mesh_renderer_t>(entity).mesh = assets::load<mesh_t>(vfs);
 
             if (const ecs::entity_t root = prefab_stage::root(world); root != ecs::NULL_ENTITY)
             {
@@ -81,6 +83,78 @@ namespace tau::editor::asset_editors
 
             ctx.selection.set(guid);
             history::end(world);
+        }
+
+        std::vector<std::string> material_slots(const reflection::any_t& instance)
+        {
+            const mesh_renderer_t* renderer = instance.try_cast<const mesh_renderer_t>();
+            const mesh_t* mesh = renderer ? assets::get(renderer->mesh) : nullptr;
+            if (!mesh) { return {}; }
+
+            std::vector<std::string> labels;
+            for (std::size_t i = 0; i < mesh->submeshes.size(); i++)
+            {
+                const std::string& name = mesh->submeshes[i].material_name;
+                labels.push_back(name.empty() ? "Submesh " + std::to_string(i) : name);
+            }
+            return labels;
+        }
+
+        std::string model_prefab(const std::string& vfs)
+        {
+            const model_t* model = assets::get(assets::load<model_t>(vfs));
+            if (!model) { return {}; }
+            for (const model_sub_asset_t& sub : model->sub_assets)
+            {
+                if (sub.type_id == get_type_id<prefab_t>()) { return vfs + "/" + sub.name; }
+            }
+            return {};
+        }
+
+        void place_model(world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3_t& at)
+        {
+            const std::string prefab = model_prefab(vfs);
+            if (!prefab.empty()) { prefab_edit::instantiate(world, ctx, prefab, ecs::NULL_ENTITY, &at); }
+        }
+
+        bool reload_model(world_t& world, const std::string& vfs)
+        {
+            const bool ok = assets::reload(vfs);
+
+            const auto order = [](const std::string& path)
+            {
+                const asset_type_t* type = assets::type_by_path(path);
+                const u64_t id = type ? type->id : 0;
+                if (id == get_type_id<texture_t>()) { return 0; }
+                if (id == get_type_id<material_t>()) { return 1; }
+                if (id == get_type_id<prefab_t>()) { return 3; }
+                return 2;
+            };
+
+            std::vector<std::string> parts;
+            for (const auto& [path, guid] : assets::locations(vfs + "/"))
+            {
+                if (assets::find(path).is_valid()) { parts.push_back(path); }
+            }
+            std::stable_sort(parts.begin(), parts.end(),
+                             [&](const std::string& a, const std::string& b) { return order(a) < order(b); });
+
+            for (const std::string& part : parts)
+            {
+                const asset_editor_t* editor = of_path(part);
+                if (editor && editor->reload) { editor->reload(world, part); }
+                else
+                {
+                    assets::reload(part);
+                }
+            }
+            return ok;
+        }
+
+        void drop_model_on(world_t& world, editor_context_t& ctx, const std::string& vfs, ecs::entity_t parent)
+        {
+            const std::string prefab = model_prefab(vfs);
+            if (!prefab.empty()) { prefab_edit::instantiate(world, ctx, prefab, parent, nullptr); }
         }
 
         // scene: only the project's open in the editor
@@ -125,6 +199,8 @@ namespace tau::editor::asset_editors
 
     void register_builtin(editor_context_t&)
     {
+        panels::add_slot_labels(hash_string(type_name<mesh_renderer_t>()), hash_string("materials"), &material_slots);
+
         add({
             .type_id = get_type_id<texture_t>(),
             .color = IM_COL32(90, 150, 210, 255),
@@ -137,6 +213,21 @@ namespace tau::editor::asset_editors
             .type_id = get_type_id<mesh_t>(),
             .color = IM_COL32(120, 190, 110, 255),
             .drop_in_viewport = &place_mesh,
+        });
+        add({
+            .type_id = get_type_id<model_t>(),
+            .color = IM_COL32(150, 200, 120, 255),
+            .drop_in_viewport = &place_model,
+            .drop_on_entity = &drop_model_on,
+            .reload = &reload_model,
+        });
+        add({
+            .type_id = get_type_id<skeleton_t>(),
+            .color = IM_COL32(200, 160, 220, 255),
+        });
+        add({
+            .type_id = get_type_id<clip_t>(),
+            .color = IM_COL32(220, 180, 120, 255),
         });
         add({
             .type_id = get_type_id<shader_t>(),

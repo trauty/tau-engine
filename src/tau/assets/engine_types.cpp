@@ -1,22 +1,29 @@
 #include "tau/asset_types.h"
+#include "tau/assets/clip.h"
 #include "tau/assets/import_settings.h"
 #include "tau/assets/material.h"
 #include "tau/assets/mesh.h"
+#include "tau/assets/model.h"
 #include "tau/assets/prefab.h"
 #include "tau/assets/scene.h"
 #include "tau/assets/shader.h"
+#include "tau/assets/skeleton.h"
 #include "tau/assets/texture.h"
 
 namespace tau::assets
 {
     void register_engine_types()
     {
-        reg<mesh_t>({
-            .display_name = "Mesh",
-            .cooked_extension = ".taumesh",
+        reg<model_t>({
+            .display_name = "Model",
+            .cooked_extension = ".taumodel",
             .source_extensions = {".gltf", ".glb"},
-            .import_type = hash_string(type_name<mesh_import_t>())
+            .import_type = hash_string(type_name<model_import_t>()),
+            .has_sub_assets = true,
         });
+        reg<mesh_t>({.display_name = "Mesh", .cooked_extension = ".taumesh", .sub_extension = ".mesh"});
+        reg<skeleton_t>({.display_name = "Skeleton", .cooked_extension = ".tauskel", .sub_extension = ".skeleton"});
+        reg<clip_t>({.display_name = "Clip", .cooked_extension = ".tauclip", .sub_extension = ".clip"});
         reg<material_t>({.display_name = "Material",
                          .cooked_extension = ".taumat",
                          .source_extensions = {".mat"},
@@ -24,7 +31,7 @@ namespace tau::assets
         reg<texture_t>({
             .display_name = "Texture",
             .cooked_extension = ".ktx2",
-            .source_extensions = {".png", ".jpg", ".jpeg"},
+            .source_extensions = {".png", ".jpg", ".jpeg", ".ktx2"},
             .import_type = hash_string(type_name<texture_import_t>())
         });
         reg<shader_t>({.display_name = "Shader", .cooked_extension = ".taushader", .source_extensions = {".slang"}});

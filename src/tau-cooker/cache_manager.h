@@ -86,7 +86,10 @@ namespace tau::cooker
         bool is_known_non_output(const std::string& source_path) const;
         void mark_non_output(const std::string& source_path, const std::vector<std::filesystem::path>& deps);
         void update_cache(const std::string& out_path, const std::vector<std::filesystem::path>& deps,
-                          const std::string& source_path = {}, const std::string& settings = {});
+                          const std::string& source_path = {}, const std::string& settings = {},
+                          const std::vector<std::filesystem::path>& outputs = {});
+        // files the cook of out_path wrote besides it
+        std::vector<std::string> outputs_of(const std::string& out_path) const;
 
         // sources whose last cook read any of `files`, via the reverse of the recorded deps
         // outputs cooked before sources were recorded are missed until the next full cook

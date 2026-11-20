@@ -183,7 +183,7 @@ target("tau-cooker")
     if is_mode("debug") then
         add_defines("TAU_COOK_SHADER_DEBUG")
     end
-    add_files("lib/tinygltf/tiny_gltf.cpp", {warnings = "none"})
+    add_files("lib/cgltf/cgltf.cpp", {warnings = "none"})
     add_files("lib/stb/*.cpp", {warnings = "none"})
     add_files("lib/meshoptimizer/*.cpp", {warnings = "none"})
 
