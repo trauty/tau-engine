@@ -17,27 +17,8 @@ namespace tau::serialization
 {
     using namespace detail;
 
-    namespace
+    namespace detail
     {
-        nlohmann::json tagged(scene_value_type_e type, nlohmann::json value)
-        {
-            return {
-                {"ty", static_cast<u8_t>(type)},
-                {"v",  std::move(value)       }
-            };
-        }
-
-        std::string_view enumerator_name(const tau::reflection::type_t& type, i32 value)
-        {
-            for (auto [id, data] : type.data())
-            {
-                const tau::reflection::any_t constant = data.get({});
-                const tau::reflection::any_t as_int = constant.allow_cast<i32>();
-                if (as_int && as_int.cast<i32>() == value) { return data.name(); }
-            }
-            return {};
-        }
-
         template <typename T>
         nlohmann::json scalar_json(const u8_t* at)
         {
@@ -109,6 +90,28 @@ namespace tau::serialization
                 if (!one(value[i], out + i * scalar_size(layout.scalar))) { return false; }
             }
             return true;
+        }
+    } // namespace detail
+
+    namespace
+    {
+        nlohmann::json tagged(scene_value_type_e type, nlohmann::json value)
+        {
+            return {
+                {"ty", static_cast<u8_t>(type)},
+                {"v",  std::move(value)       }
+            };
+        }
+
+        std::string_view enumerator_name(const tau::reflection::type_t& type, i32 value)
+        {
+            for (auto [id, data] : type.data())
+            {
+                const tau::reflection::any_t constant = data.get({});
+                const tau::reflection::any_t as_int = constant.allow_cast<i32>();
+                if (as_int && as_int.cast<i32>() == value) { return data.name(); }
+            }
+            return {};
         }
 
         template <typename T>

@@ -10,6 +10,7 @@
 #include "tau-editor/game_code.h"
 #include "tau-editor/handles.h"
 #include "tau-editor/history.h"
+#include "tau-editor/import_edit.h"
 #include "tau-editor/material_edit.h"
 #include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/panels/console.h"
@@ -25,6 +26,7 @@
 #include "tau-editor/prefab_stage.h"
 #include "tau-editor/project_manager.h"
 #include "tau-editor/project_open.h"
+#include "tau-editor/project_settings.h"
 #include "tau-editor/scene_io.h"
 #include "tau-editor/settings.h"
 #include "tau-editor/systems/camera.h"
@@ -199,6 +201,7 @@ static void update_editor_ui(tau::editor_context_t& ctx)
     tau::editor::panels::draw_asset_browser(world, ctx);
 
     for (tau::panel_draw_func custom_panel : ctx.custom_panels) { custom_panel(world, ctx); }
+    tau::editor::project_settings::draw(world, ctx);
     tau::editor::commands::draw_unsaved_prompt(world, ctx);
 
     tau::editor::handles::update(world, ctx);
@@ -273,6 +276,7 @@ int main(i32 argc, char** argv)
     tau::editor::history::init(editor_ctx);
     tau::editor::asset_editors::register_builtin(editor_ctx);
     tau::editor::material_edit::init(editor_ctx);
+    tau::editor::import_edit::init(editor_ctx);
     tau::editor::asset_files::init(editor_ctx);
     tau::editor::prefab_edit::init(editor_ctx);
     tau::editor::prefab_stage::init(editor_ctx);

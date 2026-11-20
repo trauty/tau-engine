@@ -2,6 +2,7 @@
 
 #include "defines.h"
 
+#include "json/json.hpp"
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -29,10 +30,15 @@ namespace tau
         std::filesystem::path lib_path;
         std::filesystem::path trigger_path;
 
+        nlohmann::json import_defaults = nlohmann::json::object();
+
         TAU_ENGINE_API static bool load(const std::filesystem::path& project_file, project_t& out);
         // rewrites the file as the current schema, keeping its other fields and their order
         TAU_ENGINE_API static bool set_engine_version(const std::filesystem::path& project_file,
                                                       const std::string& version);
+
+        TAU_ENGINE_API static bool set_import_defaults(const std::filesystem::path& project_file,
+                                                       const nlohmann::json& defaults);
     };
 
     namespace project

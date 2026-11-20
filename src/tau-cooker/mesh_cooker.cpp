@@ -12,7 +12,7 @@
 
 namespace tau::cooker::mesh
 {
-    bool cook_mesh(const std::string& input_path, const std::string& output_path)
+    bool cook_mesh(const std::string& input_path, const std::string& output_path, const mesh_import_t& settings)
     {
         TAU_LOG_INFO("MESH_COOKER", "Cooking Mesh: {} -> {}", input_path, output_path);
 
@@ -61,7 +61,10 @@ namespace tau::cooker::mesh
         std::vector<vertex_t> vertex_data(pos_accessor.count);
         for (size_t i = 0; i < vertex_data.size(); ++i)
         {
-            std::memcpy(vertex_data[i].position, &positions[i * 3], 3 * sizeof(f32));
+            for (u32_t axis = 0; axis < 3; axis++)
+            {
+                vertex_data[i].position[axis] = positions[i * 3 + axis] * settings.scale;
+            }
             if (normals) { std::memcpy(vertex_data[i].normal, &normals[i * 3], 3 * sizeof(f32)); }
             if (uvs) { std::memcpy(vertex_data[i].uv, &uvs[i * 2], 2 * sizeof(f32)); }
         }

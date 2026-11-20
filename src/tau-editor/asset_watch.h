@@ -47,6 +47,9 @@ namespace tau::editor::asset_watch
     // not reloaded, memory already holds them; their dependents are
     void cook_saved(std::span<const std::filesystem::path> sources);
 
+    // sources whose import changed (their .meta), cooked with the next batch and reloaded
+    void cook_edited(std::span<const std::filesystem::path> sources);
+
     void flush();
 
     // the open scene is cooked but never reloaded, memory holds the newer copy

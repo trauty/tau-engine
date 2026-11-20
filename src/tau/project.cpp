@@ -7,6 +7,7 @@
 #include "json/json.hpp"
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <utility>
 
 namespace
@@ -49,6 +50,10 @@ namespace tau
         p.project_name = data.value("project_name", "tau-game");
         p.game_lib_name = data.value("game_lib_name", "tau-game-logic");
         p.startup_scene = data.value("startup_scene", "");
+        if (const auto it = data.find("import_defaults"); it != data.end() && it->is_object())
+        {
+            p.import_defaults = *it;
+        }
 
         if (data.contains("tauproject_version"))
         {
@@ -88,32 +93,58 @@ namespace tau
         return true;
     }
 
+    namespace
+    {
+        bool rewrite_project(const std::filesystem::path& project_file,
+                             const std::function<void(nlohmann::ordered_json&)>& edit)
+        {
+            nlohmann::ordered_json data;
+            {
+                std::ifstream file(project_file);
+                data = nlohmann::ordered_json::parse(file, nullptr, false);
+            }
+            if (data.is_discarded() || !data.is_object())
+            {
+                TAU_LOG_ERROR("PROJECT", "Project file is not valid: {}", project_file.string());
+                return false;
+            }
+
+            edit(data);
+
+            std::ofstream out(project_file, std::ios::trunc);
+            if (!out.is_open())
+            {
+                TAU_LOG_ERROR("PROJECT", "Could not write project file: {}", project_file.string());
+                return false;
+            }
+            out << data.dump(4) << "\n";
+            return true;
+        }
+    } // namespace
+
     bool project_t::set_engine_version(const std::filesystem::path& project_file, const std::string& version)
     {
-        nlohmann::ordered_json data;
-        {
-            std::ifstream file(project_file);
-            data = nlohmann::ordered_json::parse(file, nullptr, false);
-        }
-        if (data.is_discarded() || !data.is_object())
-        {
-            TAU_LOG_ERROR("PROJECT", "Project file is not valid: {}", project_file.string());
-            return false;
-        }
+        return rewrite_project(project_file,
+                               [&](nlohmann::ordered_json& data)
+                               {
+                                   data["tauproject_version"] = std::to_string(TAU_PROJECT_VERSION);
+                                   data["engine"] = nlohmann::ordered_json{
+                                       {"version", major_minor(version)}
+                                   };
+                               });
+    }
 
-        data["tauproject_version"] = std::to_string(TAU_PROJECT_VERSION);
-        data["engine"] = nlohmann::ordered_json{
-            {"version", major_minor(version)}
-        };
-
-        std::ofstream out(project_file, std::ios::trunc);
-        if (!out.is_open())
-        {
-            TAU_LOG_ERROR("PROJECT", "Could not write project file: {}", project_file.string());
-            return false;
-        }
-        out << data.dump(4) << "\n";
-        return true;
+    bool project_t::set_import_defaults(const std::filesystem::path& project_file, const nlohmann::json& defaults)
+    {
+        return rewrite_project(project_file,
+                               [&](nlohmann::ordered_json& data)
+                               {
+                                   if (defaults.empty()) { data.erase("import_defaults"); }
+                                   else
+                                   {
+                                       data["import_defaults"] = nlohmann::ordered_json::parse(defaults.dump());
+                                   }
+                               });
     }
 
     namespace project
@@ -121,11 +152,17 @@ namespace tau
         void mount(const project_t& project, bool engine_assets)
         {
             const std::filesystem::path& cooked = project.cooked_assets_dir;
-            if (engine_assets) { vfs::mount(vfs::asset_prefix(vfs::ENGINE_NS), (cooked / "engine").generic_string() + "/"); }
+            if (engine_assets)
+            {
+                vfs::mount(vfs::asset_prefix(vfs::ENGINE_NS), (cooked / "engine").generic_string() + "/");
+            }
             vfs::mount(vfs::asset_prefix(vfs::GAME_NS), (cooked / "game").generic_string() + "/");
 
             // stale game:// entries from another project
-            for (const auto& [path, guid] : assets::locations(vfs::asset_prefix(vfs::GAME_NS))) { assets::remove_location(path); }
+            for (const auto& [path, guid] : assets::locations(vfs::asset_prefix(vfs::GAME_NS)))
+            {
+                assets::remove_location(path);
+            }
             assets::read_guid_map((cooked / "guid_map.json").generic_string());
         }
 

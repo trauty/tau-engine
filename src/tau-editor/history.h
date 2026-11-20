@@ -26,6 +26,8 @@ namespace tau::editor::history
         FILES,
         // id: the open prefab's guid, keys: entity guids
         STAGE,
+        // id: a foreign sources guid, its .meta import settingsn the asset need not be loaded
+        IMPORT,
     };
 
     struct doc_t
@@ -65,6 +67,10 @@ namespace tau::editor::history
     target_t asset_target(u64_t type_id, asset_handle_t handle);
     doc_t asset_doc(const std::string& vfs_path);
 
+    void reg_import(capture_fn_t capture, apply_fn_t apply, write_fn_t write);
+    target_t import_target(asset_guid_t guid);
+    doc_t import_doc(const std::string& vfs_path);
+
     void init(editor_context_t& ctx);
     void clear();
 
@@ -95,9 +101,10 @@ namespace tau::editor::history
     bool is_dirty(doc_t doc);
     bool any_dirty();
     std::vector<doc_t> dirty_docs();
+    // asset and import docs
     std::string asset_path(doc_t doc);
     void mark_saved(doc_t doc);
-    // sources first, then one cook per tree: project and engine
+    // asset and import docs: sources first, then one cook per tree: project and engine
     bool save_assets();
     bool save_asset(doc_t doc);
     // back to what is on disk, its undo steps go

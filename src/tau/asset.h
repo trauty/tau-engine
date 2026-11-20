@@ -79,6 +79,8 @@ namespace tau
         // foreign formats: guid in a .meta beside them
         bool guid_in_source = false;
 
+        u32_t import_type = 0;
+
         u64_t id = 0;
 
         void* (*create)() = nullptr;

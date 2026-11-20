@@ -4,7 +4,10 @@
 #include "tau/asset.h"
 #include "tau/asset_sources.h"
 #include "tau/asset_types.h"
+#include "tau/assets/import_settings.h"
 #include "tau/log.h"
+#include "tau/project.h"
+#include "tau/reflection.h"
 #include "tau/vfs.h"
 
 #include <algorithm>
@@ -46,6 +49,8 @@ namespace
         // where to write the sources this run cooked, dependents included, for the editor to reload
         std::string report_path;
 
+        std::string project_file;
+
         std::vector<source_t> sources;
         std::vector<fs::path> changed_includes;
 
@@ -73,6 +78,7 @@ namespace
             else if ((arg == "-n" || arg == "--namespace") && i + 1 < argc) { run.env.name_space = argv[++i]; }
             else if (arg == "--file" && i + 1 < argc) { run.single_files.emplace_back(argv[++i]); }
             else if (arg == "--report" && i + 1 < argc) { run.report_path = argv[++i]; }
+            else if (arg == "--project" && i + 1 < argc) { run.project_file = argv[++i]; }
         }
     }
 
@@ -255,8 +261,8 @@ namespace
             const tau::asset_type_t* type = tau::assets::type_by_path(source.rel_path);
             if (type == nullptr) { continue; }
 
-            const tau::cooker::cook_fn_t cook = tau::cooker::cooker_for(type->key);
-            if (cook == nullptr) { continue; }
+            const tau::cooker::cooker_t cooker = tau::cooker::cooker_for(type->key);
+            if (cooker.cook == nullptr) { continue; }
 
             // last cook produced nothing and nothing it reads changed
             if (cache.is_known_non_output(path))
@@ -269,7 +275,13 @@ namespace
             out_path.replace_extension(std::string(type->cooked_extension));
             const std::string out = out_path.generic_string();
 
-            if (!cache.needs_cooking(out, {fs::path(path)}))
+            const nlohmann::json meta = cooker.prepare         ? cooker.prepare(run.env, path)
+                                        : type->guid_in_source ? nlohmann::json::object()
+                                                               : tau::asset_sources::read_meta(path);
+            const std::string settings =
+                tau::import_settings::fingerprint(type->id, run.env.import_defaults, meta, path);
+
+            if (!cache.needs_cooking(out, {fs::path(path)}, settings))
             {
                 // entries from before sources were recorded get them here, so dependents are found without a recook
                 cache.remember_source(out, path);
@@ -277,7 +289,16 @@ namespace
                 continue;
             }
 
-            const tau::cooker::cook_result_t result = cook(run.env, path, out);
+            tau::cooker::cook_result_t result = cooker.cook(run.env, path, out);
+
+            if (!type->guid_in_source)
+            {
+                const fs::path meta_dep = tau::asset_sources::meta_path(path);
+                if (std::find(result.deps.begin(), result.deps.end(), meta_dep) == result.deps.end())
+                {
+                    result.deps.push_back(meta_dep);
+                }
+            }
 
             if (!result.ok)
             {
@@ -294,7 +315,7 @@ namespace
             }
 
             run.expected_outputs.insert(out);
-            cache.update_cache(out, result.deps, path);
+            cache.update_cache(out, result.deps, path, settings);
             run.cooked_sources.push_back(path);
         }
     }
@@ -373,13 +394,21 @@ int main(i32 argc, char** argv)
     // logging needs init() first: TAU_LOG_* queues onto the worker it starts
     tau::log::init();
     tau::assets::register_engine_types();
+    tau::reflection::register_types();
 
     // the namespace is the vfs scheme cooked assets are keyed under
     if (run.env.input_dirs.empty() || run.env.name_space.empty())
     {
         TAU_LOG_ERROR("ASSET_COOKER", "usage: tau-cooker -i <cook_dir> [-I <include_dir>] -o <out_dir> "
-                                      "-n <namespace> [--file <source> ...] [--report <json>]");
+                                      "-n <namespace> [--project <file>] [--file <source> ...] [--report <json>]");
         return finish(1);
+    }
+
+    if (!run.project_file.empty())
+    {
+        tau::project_t project;
+        if (!tau::project_t::load(run.project_file, project)) { return finish(1); }
+        run.env.import_defaults = std::move(project.import_defaults);
     }
 
     canonicalize_dirs(run);

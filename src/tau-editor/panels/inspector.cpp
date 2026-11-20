@@ -5,6 +5,7 @@
 #include "tau-editor/asset_files.h"
 #include "tau-editor/commands.h"
 #include "tau-editor/history.h"
+#include "tau-editor/import_edit.h"
 #include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
@@ -476,13 +477,24 @@ namespace tau::editor::panels
             }
 
             const history::doc_t doc = {history::doc_kind_e::ASSET, inspected.handle.guid};
-            const bool unsaved = inspected.handle.is_valid() && history::is_dirty(doc);
+            const history::doc_t import_doc = history::import_doc(path);
+            const bool asset_unsaved = inspected.handle.is_valid() && history::is_dirty(doc);
+            const bool import_unsaved = import_doc.id != 0 && history::is_dirty(import_doc);
+            const bool unsaved = asset_unsaved || import_unsaved;
             ImGui::TextUnformatted((std::string(widgets::asset_file_name(path)) + (unsaved ? "*" : "")).c_str());
             if (ImGui::BeginPopupContextItem("##asset_menu"))
             {
                 const bool editing = ctx.cur_mode == editor_mode_e::EDIT;
-                if (ImGui::MenuItem("Save", nullptr, false, unsaved && editing)) { history::save_asset(doc); }
-                if (ImGui::MenuItem("Revert", nullptr, false, unsaved && editing)) { history::revert_asset(doc); }
+                if (ImGui::MenuItem("Save", nullptr, false, unsaved && editing))
+                {
+                    if (asset_unsaved) { history::save_asset(doc); }
+                    if (import_unsaved) { history::save_asset(import_doc); }
+                }
+                if (ImGui::MenuItem("Revert", nullptr, false, unsaved && editing))
+                {
+                    if (asset_unsaved) { history::revert_asset(doc); }
+                    if (import_unsaved) { import_edit::revert(path); }
+                }
                 ImGui::EndPopup();
             }
             ImGui::TextDisabled("%s, %s", std::string(type->display_name).c_str(), path.c_str());
@@ -490,6 +502,7 @@ namespace tau::editor::panels
             ImGui::TextDisabled("GUID %s", guid != 0 ? assets::guid_text(guid).c_str() : "none yet");
             ImGui::Separator();
 
+            import_edit::draw(world, path);
             if (editor && editor->draw_inspector) { editor->draw_inspector(world, ctx, path, inspected.handle); }
         }
 
@@ -569,6 +582,9 @@ namespace tau::editor::panels
             }
         }
     } // namespace
+
+    bool draw_fields(world_t& world, reflection::any_t& value)
+    { return draw_meta_any(world, value, value.type(), nullptr); }
 
     void draw_inspector(world_t& world, editor_context_t& ctx)
     {

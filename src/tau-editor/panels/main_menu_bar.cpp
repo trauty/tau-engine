@@ -54,6 +54,10 @@ namespace tau::editor::panels
             ImGui::Separator();
 
             if (ImGui::MenuItem("Settings...")) { ctx.show_settings = true; }
+            if (ImGui::MenuItem("Project Settings...", nullptr, false, ctx.project_loaded))
+            {
+                ctx.show_project_settings = true;
+            }
             ImGui::EndMenu();
         }
 

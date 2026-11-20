@@ -148,13 +148,15 @@ after_build(function(target)
 
     local depfiles = os.files(path.join(proj.assets_dir, "**"))
     table.insert(depfiles, info.cooker)
+    -- import_defaults live in the project file
+    table.insert(depfiles, proj.file)
 
     local game_depfile = target:dependfile("tau.game.assets")
     force_if_missing(game_depfile, game_out)
 
     depend.on_changed(function()
         os.vrunv(info.cooker, { "-i", proj.assets_dir, "-I", info.engine_assets, "-I", info.shader_include,
-                                "-o", game_out, "-n", "game" })
+                                "-o", game_out, "-n", "game", "--project", proj.file })
     end, { files = depfiles, dependfile = game_depfile })
 
     if config.get("standalone") then

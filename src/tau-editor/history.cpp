@@ -68,6 +68,7 @@ namespace tau::editor::history
 
         editor_context_t* g_ctx = nullptr;
         std::unordered_map<u64_t, editable_t> editables;
+        editable_t import_editable;
         std::vector<doc_entry_t> docs;
 
         std::vector<step_t> steps;
@@ -123,6 +124,12 @@ namespace tau::editor::history
             const doc_entry_t* entry = find_doc(doc);
             if (!entry) { return nullptr; }
 
+            if (doc.kind == doc_kind_e::IMPORT)
+            {
+                out_handle = asset_handle_t{doc.id};
+                return import_editable.capture ? &import_editable : nullptr;
+            }
+
             const auto it = editables.find(entry->asset_type);
             if (it == editables.end()) { return nullptr; }
 
@@ -142,6 +149,7 @@ namespace tau::editor::history
                 return nlohmann::json::to_cbor(serialization::serialize_entity(world, entity));
             }
             case doc_kind_e::ASSET:
+            case doc_kind_e::IMPORT:
             {
                 asset_handle_t handle;
                 const editable_t* editable = editable_of(target.doc, handle);
@@ -174,6 +182,7 @@ namespace tau::editor::history
                     }
                     break;
                 case doc_kind_e::ASSET:
+                case doc_kind_e::IMPORT:
                 {
                     asset_handle_t handle;
                     const editable_t* editable = editable_of(c.target.doc, handle);
@@ -277,6 +286,18 @@ namespace tau::editor::history
     { editables[type_id] = {capture, apply, write}; }
 
     doc_t asset_doc(const std::string& vfs_path) { return {doc_kind_e::ASSET, assets::guid_of(vfs_path)}; }
+
+    void reg_import(capture_fn_t capture, apply_fn_t apply, write_fn_t write)
+    { import_editable = {capture, apply, write}; }
+
+    target_t import_target(asset_guid_t guid)
+    {
+        const doc_t doc = {doc_kind_e::IMPORT, guid};
+        doc_entry(doc);
+        return {doc, 0};
+    }
+
+    doc_t import_doc(const std::string& vfs_path) { return {doc_kind_e::IMPORT, assets::guid_of(vfs_path)}; }
 
     target_t asset_target(u64_t type_id, asset_handle_t handle)
     {
@@ -404,6 +425,7 @@ namespace tau::editor::history
         {
             bool ok = true;
             std::vector<std::filesystem::path> sources;
+            std::vector<std::filesystem::path> reimported;
 
             for (const doc_t doc : to_save)
             {
@@ -416,11 +438,12 @@ namespace tau::editor::history
                     continue;
                 }
 
-                sources.push_back(source);
+                (doc.kind == doc_kind_e::IMPORT ? reimported : sources).push_back(source);
                 mark_saved(doc);
             }
 
             asset_watch::cook_saved(sources);
+            asset_watch::cook_edited(reimported);
             return ok;
         }
     } // namespace
@@ -500,7 +523,7 @@ namespace tau::editor::history
     std::string asset_path(doc_t doc)
     {
         const doc_entry_t* entry = find_doc(doc);
-        if (!entry || doc.kind != doc_kind_e::ASSET) { return {}; }
+        if (!entry || (doc.kind != doc_kind_e::ASSET && doc.kind != doc_kind_e::IMPORT)) { return {}; }
         return assets::path_of(asset_handle_t{doc.id});
     }
 
@@ -515,7 +538,7 @@ namespace tau::editor::history
     bool save_assets()
     {
         std::vector<doc_t> dirty = dirty_docs();
-        std::erase_if(dirty, [](doc_t doc) { return doc.kind != doc_kind_e::ASSET; });
+        std::erase_if(dirty, [](doc_t doc) { return doc.kind != doc_kind_e::ASSET && doc.kind != doc_kind_e::IMPORT; });
         return save_docs(dirty);
     }
 

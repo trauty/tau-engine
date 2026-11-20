@@ -23,14 +23,20 @@ namespace tau::cooker
         out << data.dump(4);
     }
 
-    std::string asset_cache_t::combined_dep_hash(const std::vector<std::filesystem::path>& deps)
+    std::string asset_cache_t::combined_dep_hash(const std::vector<std::filesystem::path>& deps,
+                                                 const std::string& settings)
     {
         std::string combined_hash = cook_identity();
+        if (!settings.empty())
+        {
+            combined_hash += "_s" + std::to_string(XXH3_64bits(settings.data(), settings.size()));
+        }
         for (const std::filesystem::path& dep : deps) { combined_hash += "_" + std::to_string(hash_file(dep)); }
         return combined_hash;
     }
 
-    bool asset_cache_t::needs_cooking(const std::string& out_path, const std::vector<std::filesystem::path>& deps)
+    bool asset_cache_t::needs_cooking(const std::string& out_path, const std::vector<std::filesystem::path>& deps,
+                                      const std::string& settings)
     {
         if (!std::filesystem::exists(out_path)) { return true; }
         if (!data.contains(out_path)) { return true; }
@@ -42,22 +48,19 @@ namespace tau::cooker
         if (entry.contains("deps") && entry["deps"].is_array())
         {
             effective.clear();
-            for (const nlohmann::json& dep : entry["deps"])
-            {
-                effective.emplace_back(dep.get<std::string>());
-            }
+            for (const nlohmann::json& dep : entry["deps"]) { effective.emplace_back(dep.get<std::string>()); }
         }
 
-        return entry.value("hash", std::string{}) != combined_dep_hash(effective);
+        return entry.value("hash", std::string{}) != combined_dep_hash(effective, settings);
     }
 
     void asset_cache_t::update_cache(const std::string& out_path, const std::vector<std::filesystem::path>& deps,
-                                     const std::string& source_path)
+                                     const std::string& source_path, const std::string& settings)
     {
         nlohmann::json dep_list = nlohmann::json::array();
         for (const std::filesystem::path& dep : deps) { dep_list.push_back(dep.generic_string()); }
 
-        data[out_path]["hash"] = combined_dep_hash(deps);
+        data[out_path]["hash"] = combined_dep_hash(deps, settings);
         data[out_path]["deps"] = std::move(dep_list);
         if (!source_path.empty()) { data[out_path]["source"] = source_path; }
     }
@@ -133,11 +136,10 @@ namespace tau::cooker
             deps.emplace_back(source_path);
         }
 
-        return it->value("hash", std::string{}) == combined_dep_hash(deps);
+        return it->value("hash", std::string{}) == combined_dep_hash(deps, {});
     }
 
-    void asset_cache_t::mark_non_output(const std::string& source_path,
-                                        const std::vector<std::filesystem::path>& deps)
+    void asset_cache_t::mark_non_output(const std::string& source_path, const std::vector<std::filesystem::path>& deps)
     {
         update_cache(source_path, deps);
         data[source_path]["non_output"] = true;

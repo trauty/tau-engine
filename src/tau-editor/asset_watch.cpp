@@ -128,6 +128,7 @@ namespace tau::editor::asset_watch
             std::unordered_map<std::string, pending_t> settling;
             std::unordered_set<std::string> self_written;
             std::vector<fs::path> saved;
+            std::vector<fs::path> edited;
             std::string open_scene; // as a vfs name
 
             std::future<cook_outcome_t> cook;
@@ -171,6 +172,15 @@ namespace tau::editor::asset_watch
         }
 
         bool is_cookable(const fs::path& path) { return tau::assets::type_by_path(path.generic_string()) != nullptr; }
+
+        fs::path source_of_meta(const fs::path& path)
+        {
+            if (path.extension() != ".meta") { return {}; }
+
+            fs::path source = path;
+            source.replace_extension();
+            return is_cookable(source) ? source : fs::path{};
+        }
 
         void take_settled(std::vector<fs::path>& out)
         {
@@ -369,7 +379,13 @@ namespace tau::editor::asset_watch
             {
                 TAU_LOG_INFO("ASSET_WATCH", "{} asset(s) changed on disk, reimporting", changed.size());
             }
-            for (const fs::path& path : changed) { add(path); }
+            for (const fs::path& path : changed)
+            {
+                const fs::path source = source_of_meta(path);
+                add(source.empty() ? path : fs::path(normalise(source)));
+            }
+            for (const fs::path& path : g_state.edited) { add(path); }
+            g_state.edited.clear();
 
             for (const fs::path& path : g_state.saved)
             {
@@ -386,7 +402,7 @@ namespace tau::editor::asset_watch
         }
     } // namespace
 
-    bool is_cooking() { return g_state.cook.valid() || !g_state.saved.empty(); }
+    bool is_cooking() { return g_state.cook.valid() || !g_state.saved.empty() || !g_state.edited.empty(); }
 
     void cook_saved(std::span<const fs::path> sources)
     {
@@ -409,10 +425,30 @@ namespace tau::editor::asset_watch
         }
     }
 
+    void cook_edited(std::span<const fs::path> sources)
+    {
+        if (!g_state.running)
+        {
+            std::vector<fs::path> files(sources.begin(), sources.end());
+            std::string err;
+            if (!asset_cook::cook_assets(files, err)) { TAU_LOG_ERROR("ASSET_WATCH", "Could not cook: {}", err); }
+            return;
+        }
+
+        for (const fs::path& source : sources)
+        {
+            const fs::path key = normalise(source);
+            if (std::find(g_state.edited.begin(), g_state.edited.end(), key) == g_state.edited.end())
+            {
+                g_state.edited.push_back(key);
+            }
+        }
+    }
+
     void flush()
     {
         if (g_state.cook.valid()) { finish_cook(); }
-        if (!g_state.saved.empty()) { start_cook({}, true); }
+        if (!g_state.saved.empty() || !g_state.edited.empty()) { start_cook({}, true); }
     }
 
     void tick()
@@ -435,7 +471,7 @@ namespace tau::editor::asset_watch
         // the backend only nominates, the stat decides, which keeps coalesced or duplicate events harmless
         for (const fs::path& candidate : g_candidates)
         {
-            if (!is_cookable(candidate)) { continue; }
+            if (!is_cookable(candidate) && source_of_meta(candidate).empty()) { continue; }
 
             std::error_code ec;
             const stamp_t stamp = {fs::last_write_time(candidate, ec).time_since_epoch().count(),

@@ -77,7 +77,8 @@ namespace tau::cooker
 
         // uses the deps the previous cook recorded, else `deps`
         // a cook that finds more than predicted passes the real list to update_cache
-        bool needs_cooking(const std::string& out_path, const std::vector<std::filesystem::path>& deps);
+        bool needs_cooking(const std::string& out_path, const std::vector<std::filesystem::path>& deps,
+                           const std::string& settings = {});
         void forget(const std::string& out_path);
 
         // a source that cooked to nothing on purpose, e.g. an import only .slang
@@ -85,7 +86,7 @@ namespace tau::cooker
         bool is_known_non_output(const std::string& source_path) const;
         void mark_non_output(const std::string& source_path, const std::vector<std::filesystem::path>& deps);
         void update_cache(const std::string& out_path, const std::vector<std::filesystem::path>& deps,
-                          const std::string& source_path = {});
+                          const std::string& source_path = {}, const std::string& settings = {});
 
         // sources whose last cook read any of `files`, via the reverse of the recorded deps
         // outputs cooked before sources were recorded are missed until the next full cook
@@ -96,6 +97,7 @@ namespace tau::cooker
         size_t retain_only(const std::unordered_set<std::string>& keys);
 
       private:
-        static std::string combined_dep_hash(const std::vector<std::filesystem::path>& deps);
+        static std::string combined_dep_hash(const std::vector<std::filesystem::path>& deps,
+                                             const std::string& settings);
     };
 } // namespace tau::cooker

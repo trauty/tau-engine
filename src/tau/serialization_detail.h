@@ -48,4 +48,7 @@ namespace tau::serialization::detail
                       std::vector<std::string>* unknown = nullptr);
 
     bool first_warning(const std::string& key);
+
+    nlohmann::json pod_to_json(pod_layout_t layout, const u8_t* bytes);
+    bool pod_from_json(pod_layout_t layout, const nlohmann::json& value, u8_t* out);
 } // namespace tau::serialization::detail

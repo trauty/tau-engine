@@ -134,6 +134,7 @@ namespace tau::editor::asset_cook
             fs::path input;
             fs::path output;
             const char* name_space;
+            fs::path project_file;
         };
 
         // unique per run, the watcher and an inspector save can cook concurrently
@@ -204,7 +205,7 @@ namespace tau::editor::asset_cook
             return false;
         }
 
-        out = {project.assets_dir, project.cooked_assets_dir / "game", "game"};
+        out = {project.assets_dir, project.cooked_assets_dir / "game", "game", g_project_file};
         return true;
     }
 
@@ -224,7 +225,7 @@ namespace tau::editor::asset_cook
         if (source_files.empty()) { return true; }
 
         // the tree vfs::init mounted engine:// on, the one this editor draws from
-        const cook_target_t target = {engine_assets_dir(), fs::path(tau::vfs::cooked_root()) / "engine", "engine"};
+        const cook_target_t target = {engine_assets_dir(), fs::path(tau::vfs::cooked_root()) / "engine", "engine", {}};
         return run_cooker(target, source_files, out_err, out_cooked);
     }
 
@@ -277,6 +278,12 @@ namespace tau::editor::asset_cook
         args.emplace_back(target.output.generic_string());
         args.emplace_back("-n");
         args.emplace_back(target.name_space);
+
+        if (!target.project_file.empty())
+        {
+            args.emplace_back("--project");
+            args.emplace_back(target.project_file.generic_string());
+        }
 
         for (const fs::path& source : source_files)
         {

@@ -1,56 +1,133 @@
 #include "texture_cooker.h"
 
 #include "tau/asset_sources.h"
+#include "tau/assets/texture.h"
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/rendering/vulkan.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <json/json.hpp>
 #include <ktx.h>
 #include <stb/stb_image.h>
 #include <stb/stb_image_resize2.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace tau::cooker::texture
 {
-    std::string to_lower(std::string s)
+    namespace
     {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-        return s;
+        std::string to_lower(std::string s)
+        {
+            std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+            return s;
+        }
+
+        texture_kind_e kind_from_name(const std::string& path)
+        {
+            const std::string lower = to_lower(std::filesystem::path(path).filename().string());
+            if (lower.find("_normal") != std::string::npos || lower.find("_n.") != std::string::npos)
+            {
+                return texture_kind_e::NORMAL;
+            }
+            if (lower.find("_orm") != std::string::npos || lower.find("_mask") != std::string::npos ||
+                lower.find("_roughness") != std::string::npos || lower.find("_metallic") != std::string::npos)
+            {
+                return texture_kind_e::DATA;
+            }
+            return texture_kind_e::COLOR;
+        }
+
+        const char* kind_key(texture_kind_e kind)
+        {
+            switch (kind)
+            {
+            case texture_kind_e::COLOR: return "color";
+            case texture_kind_e::NORMAL: return "normal";
+            case texture_kind_e::DATA: return "data";
+            }
+            return "color";
+        }
+
+        struct image_t
+        {
+            u32_t width = 0;
+            u32_t height = 0;
+            std::vector<u8_t> rgba;
+        };
+
+        image_t half_size(const image_t& from, bool srgb)
+        {
+            image_t to{std::max(1u, from.width / 2), std::max(1u, from.height / 2), {}};
+            to.rgba.resize(static_cast<std::size_t>(to.width) * to.height * 4);
+
+            if (srgb)
+            {
+                stbir_resize_uint8_srgb(from.rgba.data(), static_cast<i32>(from.width), static_cast<i32>(from.height),
+                                        0, to.rgba.data(), static_cast<i32>(to.width), static_cast<i32>(to.height), 0,
+                                        STBIR_RGBA);
+            }
+            else
+            {
+                stbir_resize_uint8_linear(from.rgba.data(), static_cast<i32>(from.width), static_cast<i32>(from.height),
+                                          0, to.rgba.data(), static_cast<i32>(to.width), static_cast<i32>(to.height), 0,
+                                          STBIR_RGBA);
+            }
+            return to;
+        }
+
+        void add_kv(ktxTexture2* tex, const char* key, const std::string& value)
+        { ktxHashList_AddKVPair(&tex->kvDataHead, key, static_cast<u32_t>(value.length()) + 1, value.c_str()); }
+    } // namespace
+
+    nlohmann::json prepare_meta(const std::string& input_path, const nlohmann::json& project_defaults)
+    {
+        nlohmann::json meta = asset_sources::read_meta(input_path);
+        if (meta.contains(import_settings::META_KEY)) { return meta; }
+
+        const u64_t type_id = get_type_id<texture_t>();
+        const reflection::any_t base = import_settings::base(type_id, project_defaults);
+        reflection::any_t value = base;
+        texture_import_t& settings = value.cast<texture_import_t&>();
+
+        const bool migrating = meta.contains("type") || meta.contains("srgb");
+        if (migrating)
+        {
+            const std::string type = meta.value("type", std::string("color"));
+            settings.kind = type == "normal" ? texture_kind_e::NORMAL
+                            : type == "data" ? texture_kind_e::DATA
+                                             : texture_kind_e::COLOR;
+            settings.srgb = meta.value("srgb", settings.kind == texture_kind_e::COLOR);
+            meta.erase("type");
+            meta.erase("srgb");
+        }
+        else
+        {
+            settings.kind = kind_from_name(input_path);
+            if (settings.kind != texture_kind_e::COLOR) { settings.srgb = false; }
+        }
+
+        meta[import_settings::META_KEY] = import_settings::meta_object(value, base);
+        asset_sources::write_meta(input_path, meta);
+        TAU_LOG_INFO("TEXTURE_COOKER", "{} import settings of {}", migrating ? "Migrated the" : "Wrote first",
+                     input_path);
+        return meta;
     }
 
-    bool cook_texture(const std::string& input_path, const std::string& output_path)
+    bool cook_texture(const std::string& input_path, const std::string& output_path, const texture_import_t& settings)
     {
         TAU_LOG_INFO("TEXTURE_COOKER", "Cooking texture: {} -> {}", input_path, output_path);
 
-        nlohmann::json meta = tau::asset_sources::read_meta(input_path);
+        const bool srgb = settings.kind == texture_kind_e::COLOR && settings.srgb;
 
-        if (!meta.contains("type") || !meta.contains("srgb"))
-        {
-            std::string lower_path = to_lower(input_path);
-            bool is_normal =
-                lower_path.find("_normal") != std::string::npos || lower_path.find("_n.") != std::string::npos;
-            bool is_data =
-                lower_path.find("_orm") != std::string::npos || lower_path.find("_mask") != std::string::npos ||
-                lower_path.find("_roughness") != std::string::npos || lower_path.find("_metallic") != std::string::npos;
-
-            if (!meta.contains("type")) { meta["type"] = is_normal ? "normal" : (is_data ? "data" : "color"); }
-            if (!meta.contains("srgb")) { meta["srgb"] = (!is_normal && !is_data); }
-
-            tau::asset_sources::write_meta(input_path, meta);
-            TAU_LOG_INFO("TEXTURE_COOKER", "Updated metadata: {}", tau::asset_sources::meta_path(input_path));
-        }
-
-        std::string tex_type = meta.value("type", "color");
-        bool is_srgb = meta.value("srgb", true);
-
-        i32 width, height, channels;
+        i32 width = 0;
+        i32 height = 0;
+        i32 channels = 0;
         stbi_uc* pixels = stbi_load(input_path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
         if (!pixels)
         {
@@ -58,13 +135,25 @@ namespace tau::cooker::texture
             return false;
         }
 
-        u32_t mip_count = static_cast<u32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+        image_t top{static_cast<u32_t>(width), static_cast<u32_t>(height), {}};
+        top.rgba.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
+        stbi_image_free(pixels);
 
-        ktxTexture2* tex;
-        ktxTextureCreateInfo tex_create_info = {
-            .vkFormat = static_cast<u32_t>(is_srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM),
-            .baseWidth = static_cast<u32_t>(width),
-            .baseHeight = static_cast<u32_t>(height),
+        if (settings.max_size > 0)
+        {
+            while (std::max(top.width, top.height) > settings.max_size && std::max(top.width, top.height) > 1)
+            {
+                top = half_size(top, srgb);
+            }
+        }
+
+        const u32_t mip_count =
+            settings.mips ? static_cast<u32_t>(std::floor(std::log2(std::max(top.width, top.height)))) + 1 : 1;
+
+        const ktxTextureCreateInfo create_info = {
+            .vkFormat = static_cast<u32_t>(srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM),
+            .baseWidth = top.width,
+            .baseHeight = top.height,
             .baseDepth = 1,
             .numDimensions = 2,
             .numLevels = mip_count,
@@ -74,89 +163,59 @@ namespace tau::cooker::texture
             .generateMipmaps = KTX_FALSE,
         };
 
-        if (ktxTexture2_Create(&tex_create_info, KTX_TEXTURE_CREATE_ALLOC_STORAGE, &tex) != KTX_SUCCESS)
+        ktxTexture2* tex = nullptr;
+        if (ktxTexture2_Create(&create_info, KTX_TEXTURE_CREATE_ALLOC_STORAGE, &tex) != KTX_SUCCESS)
         {
             TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to create ktx2 texture: {}", input_path);
-            stbi_image_free(pixels);
             return false;
         }
 
-        u32_t mip_w = width;
-        u32_t mip_h = height;
-        std::vector<u8_t> cur_mip_data(width * height * 4);
-        std::memcpy(cur_mip_data.data(), pixels, width * height * 4);
-
+        image_t level = std::move(top);
         for (u32_t i = 0; i < mip_count; i++)
         {
-            ktxTexture_SetImageFromMemory(ktxTexture(tex), i, 0, 0, cur_mip_data.data(), mip_w * mip_h * 4);
-
-            if (i < mip_count - 1)
-            {
-                u32_t next_w = std::max(1u, mip_w / 2);
-                u32_t next_h = std::max(1u, mip_h / 2);
-                std::vector<u8_t> next_mip_data(next_w * next_h * 4);
-
-                if (is_srgb)
-                {
-                    stbir_resize_uint8_srgb(cur_mip_data.data(), mip_w, mip_h, 0, next_mip_data.data(), next_w, next_h,
-                                            0, stbir_pixel_layout::STBIR_RGBA);
-                }
-                else
-                {
-                    stbir_resize_uint8_linear(cur_mip_data.data(), mip_w, mip_h, 0, next_mip_data.data(), next_w,
-                                              next_h, 0, stbir_pixel_layout::STBIR_RGBA);
-                }
-
-                cur_mip_data = std::move(next_mip_data);
-                mip_w = next_w;
-                mip_h = next_h;
-            }
+            if (i > 0) { level = half_size(level, srgb); }
+            ktxTexture_SetImageFromMemory(ktxTexture(tex), i, 0, 0, level.rgba.data(), level.rgba.size());
         }
 
-        ktxTexture_SetImageFromMemory(ktxTexture(tex), 0, 0, 0, pixels, width * height * 4);
-        stbi_image_free(pixels);
+        add_kv(tex, "tau_tex_type", kind_key(settings.kind));
+        add_kv(tex, "tau_tex_channels", std::to_string(channels));
 
-        ktxHashList_AddKVPair(&tex->kvDataHead, "tau_tex_type", static_cast<u32_t>(tex_type.length()) + 1,
-                              tex_type.c_str());
-
-        std::string chan_str = std::to_string(channels);
-        ktxHashList_AddKVPair(&tex->kvDataHead, "tau_tex_channels", static_cast<u32_t>(chan_str.length()) + 1,
-                              chan_str.c_str());
-
-        ktxBasisParams params = {0};
+        ktxBasisParams params = {};
         params.structSize = sizeof(params);
         params.threadCount = 2;
 
-        if (tex_type == "color")
+        switch (settings.kind)
         {
+        case texture_kind_e::COLOR:
             params.uastc = KTX_FALSE;
             params.compressionLevel = KTX_ETC1S_DEFAULT_COMPRESSION_LEVEL;
-        }
-        else if (tex_type == "normal")
-        {
+            break;
+        case texture_kind_e::NORMAL:
             params.uastc = KTX_TRUE;
             params.normalMap = KTX_TRUE;
-        }
-        else
-        {
-            params.uastc = KTX_TRUE;
-            params.normalMap = KTX_FALSE;
+            break;
+        case texture_kind_e::DATA: params.uastc = KTX_TRUE; break;
         }
 
-        if (ktx_error_code_e res = ktxTexture2_CompressBasisEx(tex, &params); res != KTX_SUCCESS)
+        bool ok = true;
+        if (const ktx_error_code_e res = ktxTexture2_CompressBasisEx(tex, &params); res != KTX_SUCCESS)
         {
             TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to compress ktx2 texture '{}': {}", input_path,
                           ktxErrorString(res));
-            return false;
+            ok = false;
         }
 
-        std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
-        if (ktxTexture_WriteToNamedFile(ktxTexture(tex), output_path.c_str()) != KTX_SUCCESS)
+        if (ok)
         {
-            TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to save ktx2 texture '{}' to '{}'", input_path, output_path);
+            std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
+            if (ktxTexture_WriteToNamedFile(ktxTexture(tex), output_path.c_str()) != KTX_SUCCESS)
+            {
+                TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to save ktx2 texture '{}' to '{}'", input_path, output_path);
+                ok = false;
+            }
         }
 
         ktxTexture_Destroy(ktxTexture(tex));
-        return true;
+        return ok;
     }
 } // namespace tau::cooker::texture

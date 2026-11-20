@@ -1,6 +1,7 @@
 #include "reflection.h"
 
 #include "tau/asset.h"
+#include "tau/assets/import_settings.h"
 #include "tau/color.h"
 #include "tau/components/reflect.h"
 #include "tau/ecs_fwd.h"
@@ -110,6 +111,7 @@ namespace tau::reflection
         reflect_physics(ctx);
         reflect_post_process(ctx);
         reflect_mesh_renderer(ctx);
+        reflect_import_settings(ctx);
     }
 
     void shutdown() { entt::meta_reset(get_engine_context()); }

@@ -1,4 +1,5 @@
 #include "tau/asset_types.h"
+#include "tau/assets/import_settings.h"
 #include "tau/assets/material.h"
 #include "tau/assets/mesh.h"
 #include "tau/assets/prefab.h"
@@ -11,14 +12,20 @@ namespace tau::assets
     void register_engine_types()
     {
         reg<mesh_t>({
-            .display_name = "Mesh", .cooked_extension = ".taumesh", .source_extensions = {".gltf", ".glb"}
+            .display_name = "Mesh",
+            .cooked_extension = ".taumesh",
+            .source_extensions = {".gltf", ".glb"},
+            .import_type = hash_string(type_name<mesh_import_t>())
         });
         reg<material_t>({.display_name = "Material",
                          .cooked_extension = ".taumat",
                          .source_extensions = {".mat"},
                          .guid_in_source = true});
         reg<texture_t>({
-            .display_name = "Texture", .cooked_extension = ".ktx2", .source_extensions = {".png", ".jpg", ".jpeg"}
+            .display_name = "Texture",
+            .cooked_extension = ".ktx2",
+            .source_extensions = {".png", ".jpg", ".jpeg"},
+            .import_type = hash_string(type_name<texture_import_t>())
         });
         reg<shader_t>({.display_name = "Shader", .cooked_extension = ".taushader", .source_extensions = {".slang"}});
         reg<scene_t>({.display_name = "Scene",

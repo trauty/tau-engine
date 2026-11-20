@@ -78,6 +78,7 @@ namespace tau::editor::commands
         std::string doc_label(const editor_context_t& ctx, history::doc_t doc)
         {
             if (doc.kind == history::doc_kind_e::ASSET) { return history::asset_path(doc); }
+            if (doc.kind == history::doc_kind_e::IMPORT) { return history::asset_path(doc) + " (import settings)"; }
             return ctx.current_scene_path.empty() ? "Untitled scene"
                                                   : std::filesystem::path(ctx.current_scene_path).filename().string();
         }
@@ -169,11 +170,12 @@ namespace tau::editor::commands
         for (const history::doc_t doc : history::dirty_docs())
         {
             if (doc.kind == history::doc_kind_e::SCENE) { scene.push_back(doc_label(ctx, doc)); }
-            else if (doc.kind == history::doc_kind_e::ASSET && discards == discards_e::EVERYTHING)
+            else if ((doc.kind == history::doc_kind_e::ASSET || doc.kind == history::doc_kind_e::IMPORT) &&
+                     discards == discards_e::EVERYTHING)
             {
                 const std::string path = history::asset_path(doc);
                 const std::optional<vfs::asset_path_parts_t> parts = vfs::split_asset_path(path);
-                (parts && parts->ns == vfs::ENGINE_NS ? engine_assets : project_assets).push_back(path);
+                (parts && parts->ns == vfs::ENGINE_NS ? engine_assets : project_assets).push_back(doc_label(ctx, doc));
             }
         }
 
