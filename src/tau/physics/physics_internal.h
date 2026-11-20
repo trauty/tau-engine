@@ -15,6 +15,7 @@ namespace tau::physics::detail
     void begin_step(world_t& world);
     // transforms in, simulate, transforms and contacts out
     void step(world_t& world, f32 dt);
+    void interpolate(world_t& world);
     void end_frame(world_t& world);
     void stop(world_t& world);
 } // namespace tau::physics::detail

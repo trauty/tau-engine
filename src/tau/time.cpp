@@ -9,6 +9,7 @@ namespace tau::time
     f64 time = 0.0;
     f64 dt = 0.0;
     f64 fixed_dt = 0.0;
+    f64 fixed_alpha = 0.0;
 
     static u64_t start_ticks = 0;
     static u64_t last_ticks = 0;
@@ -34,4 +35,5 @@ namespace tau::time
     f64 get_time() { return time; }
     f64 get_dt() { return dt; }
     f64 get_fixed_dt() { return fixed_dt; }
+    f64 get_fixed_alpha() { return fixed_alpha; }
 } // namespace tau::time

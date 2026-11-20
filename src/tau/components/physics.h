@@ -26,6 +26,7 @@ namespace tau
         f32 linear_damping = 0.05f;
         f32 angular_damping = 0.05f;
         f32 gravity_scale = 1.0f;
+        bool interpolate = true;
     };
 
     // one collider per body, a rigidbody without gets a unit box

@@ -11,6 +11,7 @@
 #include "tau/physics/physics_internal.h"
 #include "tau/rendering/overlay.h"
 #include "tau/systems/transform.h"
+#include "tau/time.h"
 #include "tau/world.h"
 
 #include <Jolt/Core/Factory.h>
@@ -140,6 +141,12 @@ namespace tau::physics::detail
         JPH::PhysicsSystem system;
     };
 
+    struct pose_t
+    {
+        vec3_t position;
+        quat_t rotation;
+    };
+
     // simulated side of a rigidbody, not reflected
     struct body_t
     {
@@ -152,6 +159,9 @@ namespace tau::physics::detail
         vec3_t position;
         quat_t rotation;
         bool was_active = false;
+
+        pose_t previous;
+        pose_t current;
 
         bool set_linear = false;
         bool set_angular = false;
@@ -257,28 +267,38 @@ namespace tau::physics::detail
             return mix(key, rb.gravity_scale);
         }
 
-        struct pose_t
+        quat_t rotation_of(mat4_t m)
         {
-            vec3_t position;
+            mat4 axes;
+            glm_mat4_copy(m, axes);
+            glm_vec3_normalize(axes[0]);
+            glm_vec3_normalize(axes[1]);
+            glm_vec3_normalize(axes[2]);
             quat_t rotation;
-        };
+            glm_mat4_quat(axes, rotation);
+            return rotation;
+        }
 
         pose_t world_pose(ecs::registry_t& reg, const transform_t& transform)
         {
             const ecs::entity_t parent = transform.get_parent();
             if (parent == ecs::NULL_ENTITY) { return {transform.local_position, transform.local_rotation}; }
 
-            const transform_t& parent_transform = reg.get<transform_t>(parent);
+            mat4_t parent_world = transform_system::compose_world(reg, parent);
             vec3_t position;
-            glm_mat4_mulv3(parent_transform.world_mat, transform.local_position, 1.0f, position);
-            return {position, transform_system::get_world_rotation(reg, parent) * transform.local_rotation};
+            glm_mat4_mulv3(parent_world, transform.local_position, 1.0f, position);
+            return {position, rotation_of(parent_world) * transform.local_rotation};
         }
 
         vec3_t world_scale(ecs::registry_t& reg, const transform_t& transform)
         {
             const ecs::entity_t parent = transform.get_parent();
             if (parent == ecs::NULL_ENTITY) { return transform.local_scale; }
-            return transform_system::get_world_scale(reg, parent) * transform.local_scale;
+
+            mat4_t parent_world = transform_system::compose_world(reg, parent);
+            const vec3_t parent_scale = {glm_vec3_norm(parent_world[0]), glm_vec3_norm(parent_world[1]),
+                                         glm_vec3_norm(parent_world[2])};
+            return parent_scale * transform.local_scale;
         }
 
         void set_local_pose(ecs::registry_t& reg, transform_t& transform, const pose_t& world)
@@ -291,14 +311,35 @@ namespace tau::physics::detail
                 return;
             }
 
-            const transform_t& parent_transform = reg.get<transform_t>(parent);
+            mat4_t parent_world = transform_system::compose_world(reg, parent);
             mat4 parent_inverse;
-            glm_mat4_inv(parent_transform.world_mat, parent_inverse);
+            glm_mat4_inv(parent_world, parent_inverse);
             glm_mat4_mulv3(parent_inverse, world.position, 1.0f, transform.local_position);
 
-            quat_t parent_rotation = transform_system::get_world_rotation(reg, parent);
+            quat_t parent_rotation = rotation_of(parent_world);
             glm_quat_inv(parent_rotation, parent_rotation);
             transform.local_rotation = quat_t::normalize(parent_rotation * world.rotation);
+        }
+
+        pose_t local_pose(const transform_t& transform) { return {transform.local_position, transform.local_rotation}; }
+
+        bool same_pose(const pose_t& a, const pose_t& b)
+        {
+            return std::memcmp(&a.position, &b.position, sizeof(vec3_t)) == 0 &&
+                   std::memcmp(&a.rotation, &b.rotation, sizeof(quat_t)) == 0;
+        }
+
+        pose_t blend(const pose_t& from, const pose_t& to, f32 t)
+        {
+            const quat_t& q0 = from.rotation;
+            const quat_t& q1 = to.rotation;
+
+            const f32 sign = q0.x * q1.x + q0.y * q1.y + q0.z * q1.z + q0.w * q1.w < 0.0f ? -1.0f : 1.0f;
+            const f32 u = 1.0f - t;
+            const f32 v = t * sign;
+            const quat_t rotation = {q0.x * u + q1.x * v, q0.y * u + q1.y * v, q0.z * u + q1.z * v,
+                                     q0.w * u + q1.w * v};
+            return {from.position + (to.position - from.position) * t, quat_t::normalize(rotation)};
         }
 
         f32 max_abs(f32 a, f32 b) { return std::max(std::abs(a), std::abs(b)); }
@@ -420,6 +461,7 @@ namespace tau::physics::detail
             body.position = rb.type == body_type_e::KINEMATIC ? pose.position : transform.local_position;
             body.rotation = rb.type == body_type_e::KINEMATIC ? pose.rotation : transform.local_rotation;
             body.was_active = moving;
+            body.previous = body.current = local_pose(transform);
 
             if (rb.type == body_type_e::DYNAMIC)
             {
@@ -561,6 +603,7 @@ namespace tau::physics::detail
             if (!reg.all_of<rigidbody_t, transform_t>(entity)) { orphans.push_back(entity); }
         }
         reg.remove<body_t>(orphans.begin(), orphans.end());
+        reg.remove<shown_pose_t>(orphans.begin(), orphans.end());
 
         for (auto [entity, rb, transform] : reg.view<rigidbody_t, transform_t>().each())
         {
@@ -591,6 +634,8 @@ namespace tau::physics::detail
                                                                : JPH::EActivation::Activate);
                 body.shape_key = shape;
             }
+
+            body.previous = local_pose(transform);
         }
 
         state->in_fixed_step = true;
@@ -633,6 +678,8 @@ namespace tau::physics::detail
                                                                              : JPH::EActivation::Activate);
                 body.position = transform.local_position;
                 body.rotation = transform.local_rotation;
+
+                body.previous = local_pose(transform);
             }
         }
 
@@ -656,6 +703,11 @@ namespace tau::physics::detail
             body.was_active = active;
         }
 
+        for (auto [entity, transform, body] : reg.view<transform_t, body_t>().each())
+        {
+            body.current = local_pose(transform);
+        }
+
         std::vector<raw_contact_t> raw;
         {
             std::scoped_lock lock(state->listener.mutex);
@@ -673,6 +725,29 @@ namespace tau::physics::detail
                                      state->step_contacts.end());
     }
 
+    void interpolate(world_t& world)
+    {
+        if (!state_of(world)) { return; }
+
+        ecs::registry_t& reg = world.registry;
+        const f32 alpha = static_cast<f32>(std::clamp(time::get_fixed_alpha(), 0.0, 1.0));
+        std::vector<ecs::entity_t> snapped;
+
+        for (auto [entity, rb, transform, body] : reg.view<rigidbody_t, transform_t, body_t>().each())
+        {
+            if (!rb.interpolate || rb.type == body_type_e::STATIC || body.id.IsInvalid() ||
+                !same_pose(local_pose(transform), body.current))
+            {
+                snapped.push_back(entity);
+                continue;
+            }
+
+            const pose_t shown = blend(body.previous, body.current, alpha);
+            reg.emplace_or_replace<shown_pose_t>(entity, shown.position, shown.rotation);
+        }
+        reg.remove<shown_pose_t>(snapped.begin(), snapped.end());
+    }
+
     void end_frame(world_t& world)
     {
         if (state_t* state = state_of(world)) { state->frame_contacts.clear(); }
@@ -684,6 +759,7 @@ namespace tau::physics::detail
         if (!state) { return; }
 
         world.registry.clear<body_t>();
+        world.registry.clear<shown_pose_t>();
         state->step_contacts.clear();
         state->frame_contacts.clear();
         state->in_fixed_step = false;

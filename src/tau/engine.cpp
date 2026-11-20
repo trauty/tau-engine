@@ -181,7 +181,7 @@ namespace tau::engine
 
             if (user_ui_cb) { user_ui_cb(); }
 
-            // tau::physics::interpolation_alpha = static_cast<f32>(accumulator / fixed_timestep);
+            tau::time::fixed_alpha = accumulator / fixed_timestep;
             active_world->update();
 
             tau::renderer::render(active_world->registry);

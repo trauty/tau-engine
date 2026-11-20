@@ -19,7 +19,8 @@ namespace tau::reflection
             .field<&rigidbody_t::restitution>("Restitution")
             .field<&rigidbody_t::linear_damping>("Linear Damping")
             .field<&rigidbody_t::angular_damping>("Angular Damping")
-            .field<&rigidbody_t::gravity_scale>("Gravity Scale");
+            .field<&rigidbody_t::gravity_scale>("Gravity Scale")
+            .field<&rigidbody_t::interpolate>("Interpolate");
 
         component<box_collider_t>(ctx, "Box Collider")
             .field<&box_collider_t::extents>("Extents")

@@ -43,6 +43,16 @@ namespace tau::transform_system
         template <typename T>
         bool same_bits(const T& a, const T& b)
         { return std::memcmp(&a, &b, sizeof(T)) == 0; }
+
+        void build_local(const vec3_t& position, const quat_t& rotation, const vec3_t& scale, mat4_t& out)
+        {
+            mat4_t t, r, s, rs;
+            glm_translate_make(t, position);
+            glm_quat_mat4(rotation, r);
+            glm_scale_make(s, scale);
+            glm_mat4_mul(r, s, rs);
+            glm_mat4_mul(t, rs, out);
+        }
     } // namespace
 
     struct internal_t
@@ -237,24 +247,24 @@ namespace tau::transform_system
             if (order.dirty) { rebuild_hierarchy(reg); }
 
             auto view = reg.view<transform_t>();
+            auto& shown = reg.storage<shown_pose_t>();
 
             for (ecs::entity_t entity : order.sorted)
             {
                 transform_t& transform = view.get<transform_t>(entity);
 
-                if (transform.is_dirty || !same_bits(transform.local_position, transform.built_position) ||
-                    !same_bits(transform.local_rotation, transform.built_rotation) ||
+                const shown_pose_t* pose = shown.contains(entity) ? &shown.get(entity) : nullptr;
+                const vec3_t& position = pose ? pose->position : transform.local_position;
+                const quat_t& rotation = pose ? pose->rotation : transform.local_rotation;
+
+                if (transform.is_dirty || !same_bits(position, transform.built_position) ||
+                    !same_bits(rotation, transform.built_rotation) ||
                     !same_bits(transform.local_scale, transform.built_scale))
                 {
-                    mat4_t t, r, s, trs;
-                    glm_translate_make(t, transform.local_position);
-                    glm_quat_mat4(transform.local_rotation, r);
-                    glm_scale_make(s, transform.local_scale);
-                    glm_mat4_mul(r, s, trs);
-                    glm_mat4_mul(t, trs, transform.local_mat);
+                    build_local(position, rotation, transform.local_scale, transform.local_mat);
 
-                    transform.built_position = transform.local_position;
-                    transform.built_rotation = transform.local_rotation;
+                    transform.built_position = position;
+                    transform.built_rotation = rotation;
                     transform.built_scale = transform.local_scale;
                     transform.is_dirty = true;
                 }
@@ -389,6 +399,22 @@ namespace tau::transform_system
         auto ratio = [](f32 a, f32 b) { return std::fabs(b) > 1e-6f ? a / b : a; };
         reg.get<transform_t>(child).local_scale = {ratio(scale.x, parent_scale.x), ratio(scale.y, parent_scale.y),
                                                    ratio(scale.z, parent_scale.z)};
+    }
+
+    mat4_t compose_world(const ecs::registry_t& reg, ecs::entity_t entity)
+    {
+        mat4_t world;
+        glm_mat4_identity(world);
+        for (ecs::entity_t e = entity; e != ecs::NULL_ENTITY;)
+        {
+            const transform_t& t = reg.get<transform_t>(e);
+            mat4_t local, combined;
+            build_local(t.local_position, t.local_rotation, t.local_scale, local);
+            glm_mat4_mul(local, world, combined);
+            glm_mat4_copy(combined, world);
+            e = t.get_parent();
+        }
+        return world;
     }
 
     ecs::entity_t first_root(const ecs::registry_t& reg)

@@ -75,6 +75,7 @@ namespace tau
         {
             tween::update(*this, static_cast<f32>(time::get_dt()));
             for (system_func_t system : update_systems) { system(*this); }
+            physics::detail::interpolate(*this);
             physics::detail::end_frame(*this);
         }
 

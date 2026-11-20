@@ -9,13 +9,19 @@ namespace tau
 {
     namespace transform_system { struct internal_t; }
 
+    struct shown_pose_t
+    {
+        vec3_t position;
+        quat_t rotation;
+    };
+
     struct TAU_ENGINE_API transform_t
     {
         vec3_t local_position;
         quat_t local_rotation;
         vec3_t local_scale = {1.0f, 1.0f, 1.0f};
 
-        // read only, the transform system writes it
+        // read only, the transform system writes it, use it for visual only
         mat4_t world_mat;
 
         ecs::entity_t get_parent() const { return parent; }
