@@ -32,8 +32,8 @@ namespace tau
         }
 
         ktxTexture2* k_tex;
-        if (ktxTexture_CreateFromMemory((ktx_uint8_t*)file_data.data(), file_data.size(), KTX_TEXTURE_CREATE_NO_FLAGS,
-                                        (ktxTexture**)&k_tex) != KTX_SUCCESS)
+        if (ktxTexture_CreateFromMemory((ktx_uint8_t*)file_data.data(), file_data.size(),
+                                        KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, (ktxTexture**)&k_tex) != KTX_SUCCESS)
         {
             TAU_LOG_ERROR("TEXTURE", "Texture not found: {}", cooked_path);
             return std::nullopt;

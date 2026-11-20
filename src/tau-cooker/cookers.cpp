@@ -111,6 +111,12 @@ namespace tau::cooker
             return out;
         }
 
+        std::string model_other_settings(const cook_env_t& env)
+        {
+            return import_settings::fingerprint(get_type_id<texture_t>(), env.import_defaults, nlohmann::json::object(),
+                                                {});
+        }
+
         struct entry_t
         {
             std::string_view key;
@@ -118,12 +124,12 @@ namespace tau::cooker
         };
 
         constexpr entry_t COOKERS[] = {
-            {"shader",   {&shader_asset}                            },
-            {"model",    {&model_asset, &model_prepare, &model_list}},
-            {"material", {&simple<&material::cook_material>}        },
-            {"scene",    {&scene_asset}                             },
-            {"prefab",   {&simple<&scene::cook_prefab>}             },
-            {"texture",  {&texture_asset, &texture_prepare}         },
+            {"shader",   {&shader_asset}                                                   },
+            {"model",    {&model_asset, &model_prepare, &model_list, &model_other_settings}},
+            {"material", {&simple<&material::cook_material>}                               },
+            {"scene",    {&scene_asset}                                                    },
+            {"prefab",   {&simple<&scene::cook_prefab>}                                    },
+            {"texture",  {&texture_asset, &texture_prepare}                                },
         };
     } // namespace
 

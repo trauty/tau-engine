@@ -18,12 +18,21 @@ namespace tau
         DATA,
     };
 
+    enum class texture_compression_e : u8_t
+    {
+        UASTC,
+        ETC1S,
+        // RGBA8 as decoded, for reference renders
+        NONE,
+    };
+
     struct texture_import_t
     {
         texture_kind_e kind = texture_kind_e::COLOR;
         bool srgb = true;
         u32_t max_size = 0;
         bool mips = true;
+        texture_compression_e compression = texture_compression_e::UASTC;
     };
 
     struct material_t;

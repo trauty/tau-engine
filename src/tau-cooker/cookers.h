@@ -36,11 +36,15 @@ namespace tau::cooker
     // a source with sub assets: their names and guids, before any cook so references resolve
     using list_fn_t = std::vector<std::pair<std::string, u64_t>> (*)(const cook_env_t& env, const std::string& in);
 
+    // settings of other types a cook reads, for the cache key
+    using other_settings_fn_t = std::string (*)(const cook_env_t& env);
+
     struct cooker_t
     {
         cook_fn_t cook = nullptr;
         prepare_fn_t prepare = nullptr;
         list_fn_t list = nullptr;
+        other_settings_fn_t other_settings = nullptr;
     };
 
     cooker_t cooker_for(std::string_view type_key);

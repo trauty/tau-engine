@@ -17,6 +17,7 @@
 #include <stb/stb_image.h>
 #include <stb/stb_image_resize2.h>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -63,28 +64,71 @@ namespace tau::cooker::texture
             std::vector<u8_t> rgba;
         };
 
+        // box filter from the previous level, sRGB in linear light, alpha unweighted
         image_t half_size(const image_t& from, bool srgb)
         {
             image_t to{std::max(1u, from.width / 2), std::max(1u, from.height / 2), {}};
             to.rgba.resize(static_cast<std::size_t>(to.width) * to.height * 4);
-
-            if (srgb)
-            {
-                stbir_resize_uint8_srgb(from.rgba.data(), static_cast<i32>(from.width), static_cast<i32>(from.height),
-                                        0, to.rgba.data(), static_cast<i32>(to.width), static_cast<i32>(to.height), 0,
-                                        STBIR_RGBA);
-            }
-            else
-            {
-                stbir_resize_uint8_linear(from.rgba.data(), static_cast<i32>(from.width), static_cast<i32>(from.height),
-                                          0, to.rgba.data(), static_cast<i32>(to.width), static_cast<i32>(to.height), 0,
-                                          STBIR_RGBA);
-            }
+            stbir_resize(from.rgba.data(), static_cast<i32>(from.width), static_cast<i32>(from.height), 0,
+                         to.rgba.data(), static_cast<i32>(to.width), static_cast<i32>(to.height), 0, STBIR_RGBA_NO_AW,
+                         srgb ? STBIR_TYPE_UINT8_SRGB : STBIR_TYPE_UINT8, STBIR_EDGE_CLAMP, STBIR_FILTER_BOX);
             return to;
         }
 
         void add_kv(ktxTexture2* tex, const char* key, const std::string& value)
         { ktxHashList_AddKVPair(&tex->kvDataHead, key, static_cast<u32_t>(value.length()) + 1, value.c_str()); }
+
+        constexpr u32_t ZSTD_LEVEL = 18;
+
+        bool deflate(ktxTexture2* tex, const std::string& owner)
+        {
+            if (tex->supercompressionScheme != KTX_SS_NONE) { return true; }
+            if (const ktx_error_code_e res = ktxTexture2_DeflateZstd(tex, ZSTD_LEVEL); res != KTX_SUCCESS)
+            {
+                TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to zstd '{}': {}", owner, ktxErrorString(res));
+                return false;
+            }
+            return true;
+        }
+
+        bool encode(ktxTexture2* tex, const texture_import_t& settings, const std::string& owner)
+        {
+            if (settings.compression == texture_compression_e::NONE) { return deflate(tex, owner); }
+
+            ktxBasisParams params = {};
+            params.structSize = sizeof(params);
+            params.threadCount = std::max(1u, std::thread::hardware_concurrency());
+            params.normalMap = settings.kind == texture_kind_e::NORMAL ? KTX_TRUE : KTX_FALSE;
+
+            switch (settings.compression)
+            {
+            case texture_compression_e::ETC1S:
+                params.uastc = KTX_FALSE;
+                params.compressionLevel = KTX_ETC1S_DEFAULT_COMPRESSION_LEVEL;
+                break;
+            case texture_compression_e::UASTC:
+            case texture_compression_e::NONE:
+                params.uastc = KTX_TRUE;
+                params.uastcFlags = KTX_PACK_UASTC_LEVEL_DEFAULT;
+                break;
+            }
+
+            if (const ktx_error_code_e res = ktxTexture2_CompressBasisEx(tex, &params); res != KTX_SUCCESS)
+            {
+                TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to compress '{}': {}", owner, ktxErrorString(res));
+                return false;
+            }
+            return settings.compression == texture_compression_e::ETC1S || deflate(tex, owner);
+        }
+
+        bool save(ktxTexture2* tex, const std::string& output_path, const std::string& owner)
+        {
+            std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
+            const bool ok = ktxTexture_WriteToNamedFile(ktxTexture(tex), output_path.c_str()) == KTX_SUCCESS;
+            if (!ok) { TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to save '{}' to '{}'", owner, output_path); }
+            return ok;
+        }
+
         // already Basis (KHR_texture_basisu) or GPU-ready
         bool pass_through(std::span<const u8_t> bytes, const std::string& output_path, const texture_import_t& settings,
                           const std::string& owner)
@@ -100,9 +144,7 @@ namespace tau::cooker::texture
             ktxHashList_DeleteKVPair(&tex->kvDataHead, "tau_tex_type");
             add_kv(tex, "tau_tex_type", kind_key(settings.kind));
 
-            std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
-            const bool ok = ktxTexture_WriteToNamedFile(ktxTexture(tex), output_path.c_str()) == KTX_SUCCESS;
-            if (!ok) { TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to save '{}' to '{}'", owner, output_path); }
+            const bool ok = deflate(tex, owner) && save(tex, output_path, owner);
             ktxTexture_Destroy(ktxTexture(tex));
             return ok;
         }
@@ -222,41 +264,7 @@ namespace tau::cooker::texture
         add_kv(tex, "tau_tex_type", kind_key(settings.kind));
         add_kv(tex, "tau_tex_channels", std::to_string(channels));
 
-        ktxBasisParams params = {};
-        params.structSize = sizeof(params);
-        params.threadCount = 2;
-
-        switch (settings.kind)
-        {
-        case texture_kind_e::COLOR:
-            params.uastc = KTX_FALSE;
-            params.compressionLevel = KTX_ETC1S_DEFAULT_COMPRESSION_LEVEL;
-            break;
-        case texture_kind_e::NORMAL:
-            params.uastc = KTX_TRUE;
-            params.normalMap = KTX_TRUE;
-            break;
-        case texture_kind_e::DATA: params.uastc = KTX_TRUE; break;
-        }
-
-        bool ok = true;
-        if (const ktx_error_code_e res = ktxTexture2_CompressBasisEx(tex, &params); res != KTX_SUCCESS)
-        {
-            TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to compress ktx2 texture '{}': {}", input_path,
-                          ktxErrorString(res));
-            ok = false;
-        }
-
-        if (ok)
-        {
-            std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
-            if (ktxTexture_WriteToNamedFile(ktxTexture(tex), output_path.c_str()) != KTX_SUCCESS)
-            {
-                TAU_LOG_ERROR("TEXTURE_COOKER", "Failed to save ktx2 texture '{}' to '{}'", input_path, output_path);
-                ok = false;
-            }
-        }
-
+        const bool ok = encode(tex, settings, input_path) && save(tex, output_path, input_path);
         ktxTexture_Destroy(ktxTexture(tex));
         return ok;
     }

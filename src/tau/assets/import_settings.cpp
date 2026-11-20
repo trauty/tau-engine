@@ -77,12 +77,14 @@ namespace tau::reflection
     void reflect_import_settings(ctx_t& ctx)
     {
         enumeration<texture_kind_e>(ctx, "Texture Kind");
+        enumeration<texture_compression_e>(ctx, "Texture Compression");
 
         structure<texture_import_t>(ctx, "Texture Import")
             .field<&texture_import_t::kind>("Kind")
             .field<&texture_import_t::srgb>("sRGB")
             .field<&texture_import_t::max_size>("Max Size")
-            .field<&texture_import_t::mips>("Mips");
+            .field<&texture_import_t::mips>("Mips")
+            .field<&texture_import_t::compression>("Compression");
 
         structure<material_remap_t>(ctx, "Material Remap")
             .field<&material_remap_t::name>("Model Material")

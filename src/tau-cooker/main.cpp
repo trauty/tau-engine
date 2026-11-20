@@ -324,7 +324,8 @@ namespace
                                         : type->guid_in_source          ? nlohmann::json::object()
                                                                         : tau::asset_sources::read_meta(path);
             const std::string settings =
-                tau::import_settings::fingerprint(type->id, run.env.import_defaults, meta, path);
+                tau::import_settings::fingerprint(type->id, run.env.import_defaults, meta, path) +
+                (cooker.other_settings ? cooker.other_settings(run.env) : std::string{});
 
             if (!cache.needs_cooking(out, {fs::path(path)}, settings))
             {
