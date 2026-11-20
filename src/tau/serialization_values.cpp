@@ -27,6 +27,17 @@ namespace tau::serialization
             };
         }
 
+        std::string_view enumerator_name(const tau::reflection::type_t& type, i32 value)
+        {
+            for (auto [id, data] : type.data())
+            {
+                const tau::reflection::any_t constant = data.get({});
+                const tau::reflection::any_t as_int = constant.allow_cast<i32>();
+                if (as_int && as_int.cast<i32>() == value) { return data.name(); }
+            }
+            return {};
+        }
+
         template <typename T>
         nlohmann::json scalar_json(const u8_t* at)
         {
@@ -165,7 +176,15 @@ namespace tau::serialization
             if (type.is_enum())
             {
                 const tau::reflection::any_t as_int = std::as_const(value).allow_cast<i32>();
-                if (as_int) { return tagged(scene_value_type_e::I32, as_int.cast<i32>()); }
+                if (as_int)
+                {
+                    nlohmann::json out = tagged(scene_value_type_e::I32, as_int.cast<i32>());
+                    if (const std::string_view name = enumerator_name(type, as_int.cast<i32>()); !name.empty())
+                    {
+                        out["n"] = name;
+                    }
+                    return out;
+                }
             }
             else if (type.is_sequence_container())
             {
@@ -197,6 +216,17 @@ namespace tau::serialization
                                             const entity_refs_t& refs, const std::string& owner)
         {
             tau::reflection::ctx_t& ctx = *world.reflection_ctx;
+
+            if (prop.enum_name != 0 && type.is_enum())
+            {
+                if (const tau::reflection::data_t enumerator = type.data(prop.enum_name)) { return enumerator.get({}); }
+                if (type.data().begin() != type.data().end() &&
+                    first_warning(owner + ".enum." + std::to_string(prop.enum_name)))
+                {
+                    TAU_LOG_WARN("SCENE", "Saved enum value '{}' on '{}' matches no enumerator, loaded by its number",
+                                 describe_key(prop.str, prop.enum_name), owner);
+                }
+            }
 
             if (const pod_layout_t layout = pod_layout(prop.type); layout.count > 0)
             {
@@ -348,7 +378,16 @@ namespace tau::serialization
 
             if (const pod_layout_t layout = pod_layout(prop.type); layout.count > 0)
             {
-                if (pod_from_json(layout, v, prop.pod.data())) { return true; }
+                if (pod_from_json(layout, v, prop.pod.data()))
+                {
+                    if (const auto name = val.find("n"); prop.type == scene_value_type_e::I32 && name != val.end() &&
+                                                         name->is_string() && !name->get<std::string>().empty())
+                    {
+                        prop.str = name->get<std::string>();
+                        prop.enum_name = tau::hash_string(prop.str);
+                    }
+                    return true;
+                }
                 TAU_LOG_WARN("SCENE", "Property '{}' does not hold the value its type names -- skipped", prop_key);
                 return false;
             }

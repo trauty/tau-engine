@@ -5,7 +5,7 @@
 namespace tau
 {
     constexpr u32_t TAU_SCENE_MAGIC = 0x4e435354; // "TSCN"
-    constexpr u32_t TAU_SCENE_VERSION = 5;
+    constexpr u32_t TAU_SCENE_VERSION = 6;
 
     enum class scene_value_type_e : u8_t
     {
@@ -27,6 +27,7 @@ namespace tau
         I64 = 15,
         U64 = 16,
         F64 = 17,
+        ENUM = 18,
     };
 
     enum class scalar_e : u8_t

@@ -38,6 +38,13 @@ namespace tau
             }
             prop.type = static_cast<scene_value_type_e>(type_raw);
 
+            if (prop.type == scene_value_type_e::ENUM)
+            {
+                prop.type = scene_value_type_e::I32;
+                return SDL_ReadIO(stream, prop.pod.data(), sizeof(i32_t)) == sizeof(i32_t) &&
+                       read_pod(stream, prop.enum_name);
+            }
+
             if (const u32_t size = pod_size(pod_layout(prop.type)); size > 0)
             {
                 return SDL_ReadIO(stream, prop.pod.data(), size) == size;
@@ -171,6 +178,15 @@ namespace tau::serialization
         void write_property(std::ofstream& out, const scene_property_t& prop)
         {
             write_pod(out, prop.prop_hash);
+
+            if (prop.type == scene_value_type_e::I32 && prop.enum_name != 0)
+            {
+                write_pod(out, static_cast<u8_t>(scene_value_type_e::ENUM));
+                out.write(reinterpret_cast<const char*>(prop.pod.data()), sizeof(i32_t));
+                write_pod(out, prop.enum_name);
+                return;
+            }
+
             write_pod(out, static_cast<u8_t>(prop.type));
 
             if (const u32_t size = pod_size(pod_layout(prop.type)); size > 0)

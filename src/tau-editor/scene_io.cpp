@@ -22,6 +22,7 @@
 #include <fstream>
 #include <json/json.hpp>
 #include <map>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -197,7 +198,7 @@ namespace tau::editor::scene_io
 
         const fs::path root = ctx.project_assets_dir;
         const prefab::lookup_t lookup = prefab::asset_lookup();
-        std::map<std::pair<std::string, std::string>, std::vector<std::string>> files_of;
+        std::map<std::tuple<std::string, std::string, std::string>, std::vector<std::string>> files_of;
 
         std::error_code ec;
         for (const fs::directory_entry& entry : fs::recursive_directory_iterator(root, ec))
@@ -216,27 +217,34 @@ namespace tau::editor::scene_io
             const std::string rel = entry.path().lexically_relative(root).generic_string();
             for (const serialization::unknown_key_t& key : serialization::unknown_keys(world, scene))
             {
-                files_of[{key.component, key.field}].push_back(rel);
+                files_of[{key.component, key.field, key.enum_value}].push_back(rel);
             }
         }
 
         for (const auto& [key, files] : files_of)
         {
+            const auto& [component, field, enum_value] = key;
             std::string where = files.front();
             for (std::size_t i = 1; i < std::min<std::size_t>(files.size(), 3); i++) { where += ", " + files[i]; }
             if (files.size() > 3) { where += std::format(" and {} more", files.size() - 3); }
 
-            if (key.second.empty())
+            if (field.empty())
             {
                 TAU_LOG_WARN("SCENE", "Saved component '{}' matches no registered type ({}). Renamed or removed?",
-                             key.first, where);
+                             component, where);
+            }
+            else if (!enum_value.empty())
+            {
+                TAU_LOG_WARN("SCENE",
+                             "Saved value '{}' of '{}' on '{}' matches no enumerator ({}), it loads by its number",
+                             enum_value, field, component, where);
             }
             else
             {
                 TAU_LOG_WARN("SCENE",
                              "Saved field '{}' on '{}' matches no registered field ({}). Renamed? "
                              "stable_id{{\"{}\"}} on the new field loads the saved values",
-                             key.second, key.first, where, key.second);
+                             field, component, where, field);
             }
         }
     }

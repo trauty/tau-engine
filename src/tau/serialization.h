@@ -54,6 +54,7 @@ namespace tau::serialization
     {
         std::string component;
         std::string field;
+        std::string enum_value;
 
         bool operator==(const unknown_key_t&) const = default;
     };

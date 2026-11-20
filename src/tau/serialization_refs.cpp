@@ -1,11 +1,10 @@
-#include "tau/serialization.h"
-
 #include "tau/asset.h"
 #include "tau/assets/prefab.h"
 #include "tau/assets/scene_format.h"
 #include "tau/components/prefab.h"
 #include "tau/guid_json.h"
 #include "tau/prefab.h"
+#include "tau/serialization.h"
 #include "tau/serialization_detail.h"
 
 #include <algorithm>
@@ -248,6 +247,11 @@ namespace tau::serialization
                 const std::string key = prefix + describe_key(prop.prop_name, prop.prop_hash);
                 const tau::reflection::data_t data = type.data(prop.prop_hash);
                 if (!data) { out.push_back({component, key}); }
+                else if (prop.enum_name != 0 && data.type().is_enum() &&
+                         data.type().data().begin() != data.type().data().end() && !data.type().data(prop.enum_name))
+                {
+                    out.push_back({component, key, describe_key(prop.str, prop.enum_name)});
+                }
                 else if (prop.type == scene_value_type_e::STRUCT)
                 {
                     unknown_fields(data.type(), prop.children, component, key + ".", out);
@@ -273,8 +277,9 @@ namespace tau::serialization
             }
         }
 
-        std::sort(out.begin(), out.end(), [](const unknown_key_t& a, const unknown_key_t& b)
-                  { return std::tie(a.component, a.field) < std::tie(b.component, b.field); });
+        std::sort(
+            out.begin(), out.end(), [](const unknown_key_t& a, const unknown_key_t& b)
+            { return std::tie(a.component, a.field, a.enum_value) < std::tie(b.component, b.field, b.enum_value); });
         out.erase(std::unique(out.begin(), out.end()), out.end());
         return out;
     }

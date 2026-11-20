@@ -1,5 +1,7 @@
 #include "tween.h"
 
+#include "tau/world.h"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -36,13 +38,7 @@ namespace tau::tween
             return N * t * t + 0.984375f;
         }
 
-        enum class value_kind_e : u8_t
-        {
-            F32,
-            VEC2,
-            VEC3,
-            COLOR,
-        };
+        using detail::value_kind_e;
 
         constexpr u32_t MAX_COMPONENTS = 4;
 
@@ -60,7 +56,8 @@ namespace tau::tween
 
         struct tween_t
         {
-            f32* target = nullptr;
+            ecs::entity_t entity = ecs::NULL_ENTITY;
+            detail::resolve_fn_t resolve = nullptr;
             value_kind_e kind = value_kind_e::F32;
             ease_e ease = ease_e::LINEAR;
 
@@ -84,95 +81,70 @@ namespace tau::tween
             bool active = false;
         };
 
-        std::vector<tween_t> g_tweens;
-        std::vector<u32_t> g_free_slots;
-        u32_t g_next_generation = 1;
-
-        tween_t* resolve(handle_t handle)
+        struct pool_t
         {
-            if (handle.generation == 0 || handle.index >= g_tweens.size()) { return nullptr; }
+            std::vector<tween_t> tweens;
+            std::vector<u32_t> free_slots;
+            u32_t next_generation = 1;
+        };
 
-            tween_t& tween = g_tweens[handle.index];
+        pool_t& pool_of(world_t& world)
+        {
+            if (pool_t* pool = world.registry.ctx().find<pool_t>()) { return *pool; }
+            return world.registry.ctx().emplace<pool_t>();
+        }
+
+        tween_t* find(world_t& world, handle_t handle)
+        {
+            pool_t& pool = pool_of(world);
+            if (handle.generation == 0 || handle.index >= pool.tweens.size()) { return nullptr; }
+
+            tween_t& tween = pool.tweens[handle.index];
             if (!tween.active || tween.generation != handle.generation) { return nullptr; }
 
             return &tween;
         }
 
-        void release(tween_t& tween)
+        void release(pool_t& pool, tween_t& tween)
         {
             tween.active = false;
-            tween.target = nullptr;
-            g_free_slots.push_back(static_cast<u32_t>(&tween - g_tweens.data()));
+            tween.resolve = nullptr;
+            pool.free_slots.push_back(static_cast<u32_t>(&tween - pool.tweens.data()));
         }
 
-        void write(const tween_t& tween, f32 progress)
+        // false when the entity or its component is gone
+        bool write(ecs::registry_t& reg, const tween_t& tween, f32 progress)
         {
-            const u32_t count = component_count(tween.kind);
-            for (u32_t i = 0; i < count; i++)
-            {
-                tween.target[i] = tween.from[i] + (tween.to[i] - tween.from[i]) * progress;
-            }
-        }
-
-        void capture(tween_t& tween)
-        {
-            if (!tween.capture_from) { return; }
+            f32* target = tween.resolve(reg, tween.entity);
+            if (target == nullptr) { return false; }
 
             const u32_t count = component_count(tween.kind);
-            for (u32_t i = 0; i < count; i++) { tween.from[i] = tween.target[i]; }
+            for (u32_t i = 0; i < count; i++) { target[i] = tween.from[i] + (tween.to[i] - tween.from[i]) * progress; }
+            return true;
         }
 
-        handle_t create(f32* target, value_kind_e kind, const f32* destination, f32 duration, ease_e ease)
+        bool capture(ecs::registry_t& reg, tween_t& tween)
         {
-            if (target == nullptr) { return handle_t{}; }
+            f32* target = tween.resolve(reg, tween.entity);
+            if (target == nullptr) { return false; }
+            if (!tween.capture_from) { return true; }
 
-            u32_t index;
-            if (!g_free_slots.empty())
-            {
-                index = g_free_slots.back();
-                g_free_slots.pop_back();
-            }
-            else
-            {
-                index = static_cast<u32_t>(g_tweens.size());
-                g_tweens.emplace_back();
-            }
-
-            tween_t& tween = g_tweens[index];
-            tween = tween_t{};
-            tween.target = target;
-            tween.kind = kind;
-            tween.ease = ease;
-            tween.duration = duration;
-            tween.generation = g_next_generation++;
-            if (g_next_generation == 0) { g_next_generation = 1; }
-            tween.active = true;
-
-            const u32_t count = component_count(kind);
-            for (u32_t i = 0; i < count; i++) { tween.to[i] = destination[i]; }
-
-            if (duration <= 0.0f)
-            {
-                capture(tween);
-                write(tween, 1.0f);
-                const handle_t dead{index, tween.generation};
-                release(tween);
-                return dead;
-            }
-
-            return handle_t{index, tween.generation};
+            const u32_t count = component_count(tween.kind);
+            for (u32_t i = 0; i < count; i++) { tween.from[i] = target[i]; }
+            return true;
         }
 
-        bool step(tween_t& tween, f32 dt)
+        // false once finished or its target is gone
+        bool step(ecs::registry_t& reg, tween_t& tween, f32 dt)
         {
-            if (tween.paused) { return true; }
+            if (tween.paused) { return tween.resolve(reg, tween.entity) != nullptr; }
 
             f32 scaled = dt * tween.speed;
 
             if (tween.delay > 0.0f)
             {
                 tween.delay -= scaled;
-                if (tween.delay > 0.0f) { return true; }
+                if (tween.delay > 0.0f) { return tween.resolve(reg, tween.entity) != nullptr; }
 
                 scaled = -tween.delay;
                 tween.delay = 0.0f;
@@ -180,7 +152,7 @@ namespace tau::tween
 
             if (!tween.started)
             {
-                capture(tween);
+                if (!capture(reg, tween)) { return false; }
                 tween.started = true;
             }
 
@@ -191,7 +163,7 @@ namespace tau::tween
                 const bool infinite = tween.loops_total == INFINITE_LOOPS;
                 if (!infinite && tween.loops_done + 1 >= tween.loops_total)
                 {
-                    write(tween, tween.ping_pong && (tween.loops_done % 2 == 1) ? 0.0f : 1.0f);
+                    write(reg, tween, tween.ping_pong && (tween.loops_done % 2 == 1) ? 0.0f : 1.0f);
                     return false;
                 }
 
@@ -202,8 +174,7 @@ namespace tau::tween
             f32 t = tween.elapsed / tween.duration;
             if (tween.ping_pong && (tween.loops_done % 2 == 1)) { t = 1.0f - t; }
 
-            write(tween, evaluate(tween.ease, t));
-            return true;
+            return write(reg, tween, evaluate(tween.ease, t));
         }
     } // namespace
 
@@ -279,163 +250,163 @@ namespace tau::tween
         return t;
     }
 
+    namespace detail
+    {
+        handle_t create(world_t& world, ecs::entity_t entity, resolve_fn_t resolve, value_kind_e kind,
+                        const f32* destination, f32 duration, ease_e ease)
+        {
+            if (resolve == nullptr || resolve(world.registry, entity) == nullptr) { return handle_t{}; }
+
+            pool_t& pool = pool_of(world);
+
+            u32_t index;
+            if (!pool.free_slots.empty())
+            {
+                index = pool.free_slots.back();
+                pool.free_slots.pop_back();
+            }
+            else
+            {
+                index = static_cast<u32_t>(pool.tweens.size());
+                pool.tweens.emplace_back();
+            }
+
+            tween_t& tween = pool.tweens[index];
+            tween = tween_t{};
+            tween.entity = entity;
+            tween.resolve = resolve;
+            tween.kind = kind;
+            tween.ease = ease;
+            tween.duration = duration;
+            tween.generation = pool.next_generation++;
+            if (pool.next_generation == 0) { pool.next_generation = 1; }
+            tween.active = true;
+
+            const u32_t count = component_count(kind);
+            for (u32_t i = 0; i < count; i++) { tween.to[i] = destination[i]; }
+
+            if (duration <= 0.0f)
+            {
+                capture(world.registry, tween);
+                write(world.registry, tween, 1.0f);
+                const handle_t dead{index, tween.generation};
+                release(pool, tween);
+                return dead;
+            }
+
+            return handle_t{index, tween.generation};
+        }
+    } // namespace detail
+
     builder_t& builder_t::delay(f32 seconds)
     {
-        if (tween_t* tween = resolve(m_handle)) { tween->delay = seconds; }
+        if (tween_t* tween = find(*m_world, m_handle)) { tween->delay = seconds; }
         return *this;
     }
 
     builder_t& builder_t::loops(u32_t count)
     {
-        if (tween_t* tween = resolve(m_handle)) { tween->loops_total = std::max(1u, count); }
+        if (tween_t* tween = find(*m_world, m_handle)) { tween->loops_total = std::max(1u, count); }
         return *this;
     }
 
     builder_t& builder_t::ping_pong(bool enabled)
     {
-        if (tween_t* tween = resolve(m_handle)) { tween->ping_pong = enabled; }
+        if (tween_t* tween = find(*m_world, m_handle)) { tween->ping_pong = enabled; }
         return *this;
     }
 
     builder_t& builder_t::speed(f32 scale)
     {
-        if (tween_t* tween = resolve(m_handle)) { tween->speed = scale; }
+        if (tween_t* tween = find(*m_world, m_handle)) { tween->speed = scale; }
         return *this;
     }
 
-    builder_t& builder_t::from(f32 value)
+    builder_t& builder_t::from_values(const f32* values, u32_t count)
     {
-        if (tween_t* tween = resolve(m_handle))
+        if (tween_t* tween = find(*m_world, m_handle))
         {
-            tween->from[0] = value;
+            for (u32_t i = 0; i < count; i++) { tween->from[i] = values[i]; }
             tween->capture_from = false;
         }
         return *this;
     }
+
+    builder_t& builder_t::from(f32 value) { return from_values(&value, 1); }
 
     builder_t& builder_t::from(vec2_t value)
     {
-        if (tween_t* tween = resolve(m_handle))
-        {
-            tween->from[0] = value.x;
-            tween->from[1] = value.y;
-            tween->capture_from = false;
-        }
-        return *this;
+        const f32 values[2] = {value.x, value.y};
+        return from_values(values, 2);
     }
 
     builder_t& builder_t::from(vec3_t value)
     {
-        if (tween_t* tween = resolve(m_handle))
-        {
-            tween->from[0] = value.x;
-            tween->from[1] = value.y;
-            tween->from[2] = value.z;
-            tween->capture_from = false;
-        }
-        return *this;
+        const f32 values[3] = {value.x, value.y, value.z};
+        return from_values(values, 3);
     }
 
     builder_t& builder_t::from(color_t value)
     {
-        if (tween_t* tween = resolve(m_handle))
-        {
-            tween->from[0] = value.r;
-            tween->from[1] = value.g;
-            tween->from[2] = value.b;
-            tween->from[3] = value.a;
-            tween->capture_from = false;
-        }
-        return *this;
+        const f32 values[4] = {value.r, value.g, value.b, value.a};
+        return from_values(values, 4);
     }
 
-    builder_t to(f32* target, f32 destination, f32 duration, ease_e ease)
-    { return builder_t{create(target, value_kind_e::F32, &destination, duration, ease)}; }
+    bool is_active(world_t& world, handle_t handle) { return find(world, handle) != nullptr; }
 
-    builder_t to(vec2_t* target, vec2_t destination, f32 duration, ease_e ease)
+    void cancel(world_t& world, handle_t handle)
     {
-        const f32 dest[2] = {destination.x, destination.y};
-        return builder_t{create(target ? &target->x : nullptr, value_kind_e::VEC2, dest, duration, ease)};
+        if (tween_t* tween = find(world, handle)) { release(pool_of(world), *tween); }
     }
 
-    builder_t to(vec3_t* target, vec3_t destination, f32 duration, ease_e ease)
+    void complete(world_t& world, handle_t handle)
     {
-        const f32 dest[3] = {destination.x, destination.y, destination.z};
-        return builder_t{create(target ? &target->x : nullptr, value_kind_e::VEC3, dest, duration, ease)};
-    }
-
-    builder_t to(color_t* target, color_t destination, f32 duration, ease_e ease)
-    {
-        const f32 dest[4] = {destination.r, destination.g, destination.b, destination.a};
-        return builder_t{create(target ? &target->r : nullptr, value_kind_e::COLOR, dest, duration, ease)};
-    }
-
-    bool is_active(handle_t handle) { return resolve(handle) != nullptr; }
-
-    void cancel(handle_t handle)
-    {
-        if (tween_t* tween = resolve(handle)) { release(*tween); }
-    }
-
-    void complete(handle_t handle)
-    {
-        tween_t* tween = resolve(handle);
+        tween_t* tween = find(world, handle);
         if (tween == nullptr) { return; }
 
-        capture(*tween);
-
-        const bool ends_at_start =
-            tween->ping_pong && tween->loops_total != INFINITE_LOOPS && (tween->loops_total % 2 == 0);
-        write(*tween, ends_at_start ? 0.0f : 1.0f);
-
-        release(*tween);
-    }
-
-    void pause(handle_t handle, bool paused)
-    {
-        if (tween_t* tween = resolve(handle)) { tween->paused = paused; }
-    }
-
-    void cancel_target(const void* address, u64_t size)
-    {
-        const u8_t* begin = static_cast<const u8_t*>(address);
-        const u8_t* end = begin + size;
-
-        for (tween_t& tween : g_tweens)
+        if (capture(world.registry, *tween))
         {
-            if (!tween.active) { continue; }
+            const bool ends_at_start =
+                tween->ping_pong && tween->loops_total != INFINITE_LOOPS && (tween->loops_total % 2 == 0);
+            write(world.registry, *tween, ends_at_start ? 0.0f : 1.0f);
+        }
 
-            const u8_t* target = reinterpret_cast<const u8_t*>(tween.target);
-            if (target >= begin && target < end) { release(tween); }
+        release(pool_of(world), *tween);
+    }
+
+    void pause(world_t& world, handle_t handle, bool paused)
+    {
+        if (tween_t* tween = find(world, handle)) { tween->paused = paused; }
+    }
+
+    void cancel_all(world_t& world)
+    {
+        pool_t& pool = pool_of(world);
+        for (tween_t& tween : pool.tweens)
+        {
+            if (tween.active) { release(pool, tween); }
         }
     }
 
-    void cancel_all()
-    {
-        for (tween_t& tween : g_tweens)
-        {
-            if (tween.active) { release(tween); }
-        }
-    }
-
-    u32_t active_count()
+    u32_t active_count(world_t& world)
     {
         u32_t count = 0;
-        for (const tween_t& tween : g_tweens)
+        for (const tween_t& tween : pool_of(world).tweens)
         {
             if (tween.active) { count++; }
         }
         return count;
     }
 
-    void update(f32 dt)
+    void update(world_t& world, f32 dt)
     {
         if (dt == 0.0f) { return; }
 
-        for (u32_t i = 0; i < g_tweens.size(); i++)
+        pool_t& pool = pool_of(world);
+        for (u32_t i = 0; i < pool.tweens.size(); i++)
         {
-            if (!g_tweens[i].active) { continue; }
-            if (!step(g_tweens[i], dt)) { release(g_tweens[i]); }
+            if (!pool.tweens[i].active) { continue; }
+            if (!step(world.registry, pool.tweens[i], dt)) { release(pool, pool.tweens[i]); }
         }
     }
 } // namespace tau::tween

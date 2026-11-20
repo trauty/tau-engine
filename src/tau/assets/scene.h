@@ -30,6 +30,8 @@ namespace tau
         u64_t ref = 0;
         bool ref_is_index = false;
 
+        u32_t enum_name = 0;
+
         // STRUCT fields, LIST elements
         std::vector<scene_property_t> children;
     };

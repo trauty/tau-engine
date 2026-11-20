@@ -31,6 +31,12 @@ namespace tau::prefab
         // euler/quat round trip float noise is no change
         bool same(const nlohmann::json& a, const nlohmann::json& b)
         {
+            if (a.is_object() && b.is_object() && a.contains("ty") && a.contains("v") && b.contains("ty") &&
+                b.contains("v") && (a.contains("n") || b.contains("n")))
+            {
+                if (a.contains("n") && b.contains("n")) { return a["n"] == b["n"]; }
+                return a["ty"] == b["ty"] && same(a["v"], b["v"]);
+            }
             if (a.is_number() && b.is_number())
             {
                 const f64 x = a.get<f64>();

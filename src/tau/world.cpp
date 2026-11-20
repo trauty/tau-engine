@@ -65,7 +65,7 @@ namespace tau
         for (system_func_t system : shutdown_systems) { system(*this); }
         is_simulating = false;
         physics::detail::stop(*this);
-        tween::cancel_all();
+        tween::cancel_all(*this);
     }
 
     void world_t::update()
@@ -73,7 +73,7 @@ namespace tau
         ZoneScoped;
         if (is_simulating)
         {
-            tween::update(static_cast<f32>(time::get_dt()));
+            tween::update(*this, static_cast<f32>(time::get_dt()));
             for (system_func_t system : update_systems) { system(*this); }
             physics::detail::end_frame(*this);
         }
