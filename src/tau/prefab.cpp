@@ -28,7 +28,7 @@ namespace tau::prefab
             return (*prefab_data)["entities"];
         }
 
-        // euler/quat round trip float noise is no change
+        // numbers exactly: saved floats round-trip bit for bit, so any difference is an edit
         bool same(const nlohmann::json& a, const nlohmann::json& b)
         {
             if (a.is_object() && b.is_object() && a.contains("ty") && a.contains("v") && b.contains("ty") &&
@@ -37,12 +37,7 @@ namespace tau::prefab
                 if (a.contains("n") && b.contains("n")) { return a["n"] == b["n"]; }
                 return a["ty"] == b["ty"] && same(a["v"], b["v"]);
             }
-            if (a.is_number() && b.is_number())
-            {
-                const f64 x = a.get<f64>();
-                const f64 y = b.get<f64>();
-                return std::fabs(x - y) <= 1e-4 * std::max({1.0, std::fabs(x), std::fabs(y)});
-            }
+            if (a.is_number() && b.is_number()) { return a.get<f64>() == b.get<f64>(); }
             // asset ref = guid, path goes stale on rename
             // old guid spellings compared parsed
             if (a.is_object() && b.is_object() && a.contains("t") && a.contains("g") && b.contains("g"))
