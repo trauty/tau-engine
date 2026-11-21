@@ -98,7 +98,7 @@ void computeMain(uint3 thread_id: SV_DispatchThreadID)
         float3 tip = worldToView(light.position_range.xyz);
         if (!sphereTouchesCluster(tip, light.position_range.w, bounds)) { continue; }
 
-        float3 axis = normalize(mul(float4(light.direction_intensity.xyz, 0.0f), globals.view).xyz);
+        float3 axis = normalize(mul(globals.view, float4(light.direction_intensity.xyz, 0.0f)).xyz);
 
         if (!coneTouchesSphere(tip, axis, light.position_range.w, light.outer_cos.x, bounds_center, bounds_radius))
         {

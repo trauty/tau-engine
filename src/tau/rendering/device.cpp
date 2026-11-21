@@ -98,22 +98,40 @@ namespace tau::renderer::device
             }
         };
 
-        // geometryShader: PrimitiveId in fragment shaders (the visibility buffer prepass), no geometry shader runs
 #define TAU_FEATURES_10(X)                                                                                             \
     X(samplerAnisotropy)                                                                                               \
-    X(multiDrawIndirect) X(drawIndirectFirstInstance) X(shaderInt64) X(shaderStorageImageReadWithoutFormat)            \
-        X(shaderStorageImageWriteWithoutFormat) X(shaderStorageImageExtendedFormats) X(fragmentStoresAndAtomics)       \
-            X(depthClamp) X(geometryShader) X(imageCubeArray) X(dualSrcBlend)
+    X(multiDrawIndirect)                                                                                               \
+    X(drawIndirectFirstInstance)                                                                                       \
+    X(shaderInt64)                                                                                                     \
+    X(shaderStorageImageReadWithoutFormat)                                                                             \
+    X(shaderStorageImageWriteWithoutFormat)                                                                            \
+    X(shaderStorageImageExtendedFormats)                                                                               \
+    X(fragmentStoresAndAtomics)                                                                                        \
+    X(depthClamp)                                                                                                      \
+    X(geometryShader)                                                                                                  \
+    X(imageCubeArray)                                                                                                  \
+    X(dualSrcBlend)
 #define TAU_FEATURES_11(X) X(shaderDrawParameters)
 #define TAU_FEATURES_12(X)                                                                                             \
     X(drawIndirectCount)                                                                                               \
-    X(storageBuffer8BitAccess) X(shaderFloat16) X(shaderInt8) X(descriptorIndexing)                                    \
-        X(shaderSampledImageArrayNonUniformIndexing) X(shaderStorageBufferArrayNonUniformIndexing)                     \
-            X(shaderStorageImageArrayNonUniformIndexing) X(descriptorBindingSampledImageUpdateAfterBind)               \
-                X(descriptorBindingStorageImageUpdateAfterBind) X(descriptorBindingStorageBufferUpdateAfterBind)       \
-                    X(descriptorBindingUpdateUnusedWhilePending) X(descriptorBindingPartiallyBound)                    \
-                        X(descriptorBindingVariableDescriptorCount) X(runtimeDescriptorArray) X(scalarBlockLayout)     \
-                            X(hostQueryReset) X(timelineSemaphore) X(bufferDeviceAddress)
+    X(storageBuffer8BitAccess)                                                                                         \
+    X(shaderFloat16)                                                                                                   \
+    X(shaderInt8)                                                                                                      \
+    X(descriptorIndexing)                                                                                              \
+    X(shaderSampledImageArrayNonUniformIndexing)                                                                       \
+    X(shaderStorageBufferArrayNonUniformIndexing)                                                                      \
+    X(shaderStorageImageArrayNonUniformIndexing)                                                                       \
+    X(descriptorBindingSampledImageUpdateAfterBind)                                                                    \
+    X(descriptorBindingStorageImageUpdateAfterBind)                                                                    \
+    X(descriptorBindingStorageBufferUpdateAfterBind)                                                                   \
+    X(descriptorBindingUpdateUnusedWhilePending)                                                                       \
+    X(descriptorBindingPartiallyBound)                                                                                 \
+    X(descriptorBindingVariableDescriptorCount)                                                                        \
+    X(runtimeDescriptorArray)                                                                                          \
+    X(scalarBlockLayout)                                                                                               \
+    X(hostQueryReset)                                                                                                  \
+    X(timelineSemaphore)                                                                                               \
+    X(bufferDeviceAddress)
 // Slang lowers discard to demote
 #define TAU_FEATURES_13(X) X(synchronization2) X(dynamicRendering) X(maintenance4) X(shaderDemoteToHelperInvocation)
 

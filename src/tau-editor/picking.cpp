@@ -80,8 +80,7 @@ namespace tau::editor::picking
                     shader_t* shader = assets::get(selection_shader);
                     if (!shader) { return; }
 
-                    const renderer::push_constants_t pc = {0, selected_address, static_cast<u32_t>(selected_ids.size()),
-                                                           0};
+                    const gpu::PushConstants pc = {0, selected_address, static_cast<u32_t>(selected_ids.size()), 0};
                     renderer::draw_view_objects(cmd, VIEW, shader->get_pipeline(pipeline_variant_e::FORWARD),
                                                 shader->pipeline_layout, pc);
                 };
@@ -161,10 +160,10 @@ namespace tau::editor::picking
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 if (!renderer::bind_view_descriptors(cmd, shader->pipeline_layout, VIEW)) { return; }
 
-                const renderer::push_constants_t pc = {0, 0, 0, graph.get_bindless_id(mask)};
+                const gpu::PushConstants pc = {0, 0, 0, graph.get_bindless_id(mask)};
                 vkCmdPushConstants(cmd, shader->pipeline_layout,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(renderer::push_constants_t), &pc);
+                                   sizeof(gpu::PushConstants), &pc);
                 vkCmdDraw(cmd, 3, 1, 0, 0);
             };
         }

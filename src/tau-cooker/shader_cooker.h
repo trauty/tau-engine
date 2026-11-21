@@ -14,7 +14,7 @@ namespace tau::cooker::shader
     // false if Slang cannot run the way the cooker relies on, then no shader cooks
     bool init();
 
-    // fingerprints the shared struct layouts for the cook cache, see verify_core_layouts
+    // fingerprints the shared struct sizes (gpu_structs.h) for the cook cache
     u64_t core_layout_stamp();
 
     struct slang_compilation_res_t

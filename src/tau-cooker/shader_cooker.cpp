@@ -5,12 +5,10 @@
 #include "tau/assets/shader_format.h"
 #include "tau/hash.h"
 #include "tau/log.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rendering/gpu_structs.h"
 #include "tau/rendering/shader_shared.h"
 
 #define XXH_INLINE_ALL
-#include <xxhash.h>
-
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -26,6 +24,7 @@
 #include <system_error>
 #include <unordered_map>
 #include <vector>
+#include <xxhash.h>
 
 namespace tau::cooker::shader
 {
@@ -363,131 +362,31 @@ namespace tau::cooker::shader
         }
     }
 
-    // shared structs are declared in C++ and tau_globals.slang, so compare them
-    // C++ numbers come from offsetof and sizeof, Slang reflects its own layout, a mismatch fails the cook
+    // the shared structs are compiled from gpu_structs.h on both sides; C++ static_asserts each size there,
+    // here Slang's own layout of the same struct must give the same number
     namespace
     {
-        struct layout_field_t
+        struct gpu_size_t
         {
             const char* name;
-            u32_t offset;
             u32_t size;
         };
 
-        // what must match depends on how a struct crosses the boundary
-        // buffer address arrays need their stride, constant and push constant blocks their field offsets
-        // Slang rounds a block up to 16 bytes, so its size may exceed the C++ one by less than that
-        enum class layout_kind_e
-        {
-            BUFFER_ARRAY,
-            UNIFORM_BLOCK,
-        };
+#define TAU_GPU_SIZE_ENTRY(T, n) gpu_size_t{#T, n},
+        constexpr gpu_size_t GPU_SIZES[] = {TAU_GPU_STRUCT_SIZES(TAU_GPU_SIZE_ENTRY)};
+#undef TAU_GPU_SIZE_ENTRY
 
-        struct layout_check_t
-        {
-            const char* slang_name;
-            const char* cpp_name;
-            layout_kind_e kind;
-            u32_t cpp_size;
-            std::vector<layout_field_t> fields;
-        };
-
-// Slang and C++ field names are identical, so one token gives both sides
-#define TAU_FIELD(cpp_type, field)                                                                                     \
-    layout_field_t                                                                                                     \
-    { #field, static_cast<u32_t>(offsetof(cpp_type, field)), static_cast<u32_t>(sizeof(cpp_type::field)) }
-
-        std::vector<layout_check_t> core_layout_checks()
-        {
-            using namespace tau::renderer;
-
-            return {
-                {"PushConstants",
-                 "push_constants_t",  layout_kind_e::UNIFORM_BLOCK,
-                 sizeof(push_constants_t),
-                 {TAU_FIELD(push_constants_t, object_buffer), TAU_FIELD(push_constants_t, material_buffer),
-                  TAU_FIELD(push_constants_t, custom_data), TAU_FIELD(push_constants_t, texture_id)}},
-
-                {"ObjectData",
-                 "object_data_t",     layout_kind_e::BUFFER_ARRAY,
-                 sizeof(object_data_t),
-                 {TAU_FIELD(object_data_t, model_matrix), TAU_FIELD(object_data_t, normal_matrix),
-                  TAU_FIELD(object_data_t, vertex_buffer), TAU_FIELD(object_data_t, index_buffer),
-                  TAU_FIELD(object_data_t, material_offset), TAU_FIELD(object_data_t, entity),
-                  TAU_FIELD(object_data_t, _pad1), TAU_FIELD(object_data_t, _pad2)}                 },
-
-                {"CullData",
-                 "cull_data_t",       layout_kind_e::BUFFER_ARRAY,
-                 sizeof(cull_data_t),
-                 {TAU_FIELD(cull_data_t, bounding_sphere), TAU_FIELD(cull_data_t, index_count),
-                  TAU_FIELD(cull_data_t, pipeline_index), TAU_FIELD(cull_data_t, flags),
-                  TAU_FIELD(cull_data_t, draw_bin_offset)}                                          },
-
-                {"ShadowTile",
-                 "gpu_shadow_tile_t", layout_kind_e::BUFFER_ARRAY,
-                 sizeof(gpu_shadow_tile_t),
-                 {TAU_FIELD(gpu_shadow_tile_t, view_proj), TAU_FIELD(gpu_shadow_tile_t, uv_offset_scale),
-                  TAU_FIELD(gpu_shadow_tile_t, texel_world_size), TAU_FIELD(gpu_shadow_tile_t, normal_bias),
-                  TAU_FIELD(gpu_shadow_tile_t, depth_bias), TAU_FIELD(gpu_shadow_tile_t, split_far)}},
-
-                {"GlobalData",
-                 "global_data_t",     layout_kind_e::UNIFORM_BLOCK,
-                 sizeof(global_data_t),
-                 {TAU_FIELD(global_data_t, view),
-                  TAU_FIELD(global_data_t, projection),
-                  TAU_FIELD(global_data_t, view_proj),
-                  TAU_FIELD(global_data_t, camera_pos),
-                  TAU_FIELD(global_data_t, frustum_planes),
-                  TAU_FIELD(global_data_t, inv_view_proj),
-                  TAU_FIELD(global_data_t, dir_light_buffer),
-                  TAU_FIELD(global_data_t, point_light_buffer),
-                  TAU_FIELD(global_data_t, spot_light_buffer),
-                  TAU_FIELD(global_data_t, cluster_counts_buffer),
-                  TAU_FIELD(global_data_t, cluster_indices_buffer),
-                  TAU_FIELD(global_data_t, shadow_cascade_buffer),
-                  TAU_FIELD(global_data_t, time),
-                  TAU_FIELD(global_data_t, dir_light_count),
-                  TAU_FIELD(global_data_t, point_light_count),
-                  TAU_FIELD(global_data_t, spot_light_count),
-                  TAU_FIELD(global_data_t, object_count),
-                  TAU_FIELD(global_data_t, active_pipeline_count),
-                  TAU_FIELD(global_data_t, cull_flags),
-                  TAU_FIELD(global_data_t, debug_view),
-                  TAU_FIELD(global_data_t, shadow_atlas_id),
-                  TAU_FIELD(global_data_t, shadow_cascade_count),
-                  TAU_FIELD(global_data_t, shadow_fade_start),
-                  TAU_FIELD(global_data_t, shadow_fade_end),
-                  TAU_FIELD(global_data_t, cluster_z_near),
-                  TAU_FIELD(global_data_t, cluster_z_far),
-                  TAU_FIELD(global_data_t, cluster_tiles_x),
-                  TAU_FIELD(global_data_t, cluster_tiles_y),
-                  TAU_FIELD(global_data_t, punctual_shadow_buffer),
-                  TAU_FIELD(global_data_t, punctual_shadow_atlas_id),
-                  TAU_FIELD(global_data_t, punctual_shadow_count)}                                  },
-            };
-        }
-
-#undef TAU_FIELD
-
-        bool core_layouts_checked = false;
-        bool core_layouts_ok = true;
+        bool gpu_sizes_checked = false;
+        bool gpu_sizes_ok = true;
     } // namespace
 
     u64_t core_layout_stamp()
     {
         std::string described;
-        for (const layout_check_t& check : core_layout_checks())
+        for (const gpu_size_t& entry : GPU_SIZES)
         {
-            described += check.slang_name;
-            described += ":" + std::to_string(check.cpp_size);
-            for (const layout_field_t& field : check.fields)
-            {
-                described += "," + std::string(field.name) + "@" + std::to_string(field.offset) + "+" +
-                             std::to_string(field.size);
-            }
-            described += ";";
+            described += std::string(entry.name) + ":" + std::to_string(entry.size) + ";";
         }
-
         return XXH3_64bits(described.data(), described.size());
     }
 
@@ -495,14 +394,14 @@ namespace tau::cooker::shader
     bool verify_core_layouts(slang::ProgramLayout* layout)
     {
         if (layout == nullptr) { return true; }
-        if (core_layouts_checked)
+        if (gpu_sizes_checked)
         {
-            if (core_layouts_ok) { return true; }
+            if (gpu_sizes_ok) { return true; }
 
             // a shader that sees none of the shared types is unaffected
-            for (const layout_check_t& check : core_layout_checks())
+            for (const gpu_size_t& entry : GPU_SIZES)
             {
-                if (layout->findTypeByName(check.slang_name) != nullptr)
+                if (layout->findTypeByName(entry.name) != nullptr)
                 {
                     TAU_LOG_ERROR("SHADER_COOKER", "Not cooked: the shared struct layouts disagree (see above)");
                     return false;
@@ -513,91 +412,31 @@ namespace tau::cooker::shader
 
         bool all_ok = true;
         bool saw_any = false;
-
-        for (const layout_check_t& check : core_layout_checks())
+        for (const gpu_size_t& entry : GPU_SIZES)
         {
-            slang::TypeReflection* type = layout->findTypeByName(check.slang_name);
+            slang::TypeReflection* type = layout->findTypeByName(entry.name);
             if (type == nullptr) { continue; }
-
-            slang::TypeLayoutReflection* type_layout = layout->getTypeLayout(type);
+            slang::TypeLayoutReflection* type_layout = layout->getTypeLayout(type, slang::LayoutRules::Default);
             if (type_layout == nullptr) { continue; }
-
             saw_any = true;
 
-            if (check.kind == layout_kind_e::BUFFER_ARRAY)
+            const u32_t size = static_cast<u32_t>(type_layout->getSize());
+            const u32_t stride = static_cast<u32_t>(type_layout->getStride());
+            if (size != entry.size || stride != entry.size)
             {
-                const u32_t slang_stride = static_cast<u32_t>(type_layout->getStride());
-                if (slang_stride != check.cpp_size)
-                {
-                    TAU_LOG_ERROR("SHADER_COOKER",
-                                  "{} strides {} bytes in Slang but {} is {} bytes in C++ -- every element "
-                                  "after the first would be read from the wrong place",
-                                  check.slang_name, slang_stride, check.cpp_name, check.cpp_size);
-                    all_ok = false;
-                }
-            }
-            else
-            {
-                const u32_t slang_size = static_cast<u32_t>(type_layout->getSize());
-                if (slang_size < check.cpp_size || slang_size - check.cpp_size >= 16)
-                {
-                    TAU_LOG_ERROR("SHADER_COOKER",
-                                  "{} is {} bytes in Slang but {} is {} bytes in C++ (a block may only round "
-                                  "up to the next 16)",
-                                  check.slang_name, slang_size, check.cpp_name, check.cpp_size);
-                    all_ok = false;
-                }
-            }
-
-            for (const layout_field_t& field : check.fields)
-            {
-                slang::VariableLayoutReflection* found = nullptr;
-                for (u32_t i = 0; i < type_layout->getFieldCount(); i++)
-                {
-                    slang::VariableLayoutReflection* candidate = type_layout->getFieldByIndex(i);
-                    const char* candidate_name = candidate->getVariable()->getName();
-                    if (candidate_name != nullptr && std::strcmp(candidate_name, field.name) == 0)
-                    {
-                        found = candidate;
-                        break;
-                    }
-                }
-
-                if (found == nullptr)
-                {
-                    TAU_LOG_ERROR("SHADER_COOKER", "{}::{} exists in C++ ({}) but not in Slang's {}", check.cpp_name,
-                                  field.name, check.cpp_name, check.slang_name);
-                    all_ok = false;
-                    continue;
-                }
-
-                const u32_t slang_offset = static_cast<u32_t>(found->getOffset());
-                const u32_t field_size = static_cast<u32_t>(found->getTypeLayout()->getSize());
-
-                if (slang_offset != field.offset || field_size != field.size)
-                {
-                    TAU_LOG_ERROR("SHADER_COOKER",
-                                  "{}::{} disagrees -- Slang says offset {} size {}, C++ says offset {} size {}",
-                                  check.slang_name, field.name, slang_offset, field_size, field.offset, field.size);
-                    all_ok = false;
-                }
-            }
-
-            if (static_cast<u32_t>(type_layout->getFieldCount()) != check.fields.size())
-            {
-                TAU_LOG_ERROR("SHADER_COOKER", "{} has {} fields in Slang but {} are checked against {}",
-                              check.slang_name, static_cast<u32_t>(type_layout->getFieldCount()),
-                              static_cast<u32_t>(check.fields.size()), check.cpp_name);
+                TAU_LOG_ERROR("SHADER_COOKER",
+                              "{} is {} bytes (stride {}) in Slang but {} in gpu_structs.h: the shaders would read "
+                              "its fields from the wrong place",
+                              entry.name, size, stride, entry.size);
                 all_ok = false;
             }
         }
 
         if (!saw_any) { return true; }
 
-        core_layouts_checked = true;
-        core_layouts_ok = all_ok;
-        if (all_ok) { TAU_LOG_INFO("SHADER_COOKER", "Shared struct layouts agree between C++ and Slang"); }
-
+        gpu_sizes_checked = true;
+        gpu_sizes_ok = all_ok;
+        if (all_ok) { TAU_LOG_INFO("SHADER_COOKER", "Shared struct sizes agree between C++ and Slang"); }
         return all_ok;
     }
 
@@ -760,26 +599,22 @@ namespace tau::cooker::shader
             compiler_options.push_back(entry);
         };
 
+        // slangc rule: scalar layout, row-major matrices (shaders write mul(M, v)), entry points keep
+        // their names, SPIR-V 1.6, debug info in every cook (source in RenderDoc / Nsight)
         add_int_option(slang::CompilerOptionName::EmitSpirvDirectly, 1);
+        add_int_option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
+        add_int_option(slang::CompilerOptionName::MatrixLayoutRow, 1);
+        add_int_option(slang::CompilerOptionName::VulkanUseEntryPointName, 1);
+        add_int_option(slang::CompilerOptionName::DebugInformation, SLANG_DEBUG_INFO_LEVEL_STANDARD);
 
-        // debug builds keep source level debug info for RenderDoc
-        // skipping optimisation costs about 1% more machine code, the driver optimises anyway
-        if constexpr (COOK_SHADER_DEBUG)
-        {
-            add_int_option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_NONE);
-            add_int_option(slang::CompilerOptionName::DebugInformation, SLANG_DEBUG_INFO_LEVEL_STANDARD);
-        }
-        else
-        {
-            add_int_option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_MAXIMAL);
-        }
-
-        SlangCapabilityID spirv15_cap = global_session->findCapability("spirv_1_5");
-        if (spirv15_cap != 0) { add_int_option(slang::CompilerOptionName::Capability, spirv15_cap); }
+        // skipping optimisation in a debug cook costs about 1% more machine code, the driver optimises anyway
+        // (hopefully)
+        add_int_option(slang::CompilerOptionName::Optimization,
+                       COOK_SHADER_DEBUG ? SLANG_OPTIMIZATION_LEVEL_NONE : SLANG_OPTIMIZATION_LEVEL_MAXIMAL);
 
         slang::TargetDesc target_desc = {};
         target_desc.format = SLANG_SPIRV;
-        target_desc.profile = global_session->findProfile("sm_6_6");
+        target_desc.profile = global_session->findProfile("spirv_1_6");
         target_desc.compilerOptionEntryCount = static_cast<u32>(compiler_options.size());
         target_desc.compilerOptionEntries = compiler_options.data();
 
@@ -788,6 +623,15 @@ namespace tau::cooker::shader
         session_desc.searchPathCount = static_cast<SlangInt>(search_path_ptrs.size());
         session_desc.targets = &target_desc;
         session_desc.targetCount = 1;
+        session_desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_ROW_MAJOR;
+
+        // 41012: "profile implicitly upgraded", Slang adding the SPIR-V capabilities an entry point uses
+        slang::CompilerOptionEntry session_options[1] = {};
+        session_options[0].name = slang::CompilerOptionName::DisableWarning;
+        session_options[0].value.kind = slang::CompilerOptionValueKind::String;
+        session_options[0].value.stringValue0 = "41012";
+        session_desc.compilerOptionEntries = session_options;
+        session_desc.compilerOptionEntryCount = 1;
 
         global_session->createSession(session_desc, run_session.writeRef());
         return run_session.get();
@@ -873,7 +717,7 @@ namespace tau::cooker::shader
         components.push_back(module);
 
         Slang::ComPtr<slang::IEntryPoint> comp_entry;
-        module->findEntryPointByName("computeMain", comp_entry.writeRef());
+        module->findEntryPointByName(SHADER_ENTRY_COMPUTE, comp_entry.writeRef());
 
         if (comp_entry)
         {
@@ -883,7 +727,7 @@ namespace tau::cooker::shader
         else
         {
             Slang::ComPtr<slang::IEntryPoint> vert_entry;
-            module->findEntryPointByName("vertexMain", vert_entry.writeRef());
+            module->findEntryPointByName(SHADER_ENTRY_VERTEX, vert_entry.writeRef());
 
             // no vertexMain or computeMain: an import only module
             if (!vert_entry)
@@ -894,7 +738,7 @@ namespace tau::cooker::shader
             components.push_back(vert_entry);
 
             Slang::ComPtr<slang::IEntryPoint> frag_entry;
-            module->findEntryPointByName("fragmentMain", frag_entry.writeRef());
+            module->findEntryPointByName(SHADER_ENTRY_FRAGMENT, frag_entry.writeRef());
 
             // entry points are read back by position, a gap would shift gbuffer code into the fragment slot
             if (!frag_entry)
@@ -905,7 +749,7 @@ namespace tau::cooker::shader
             components.push_back(frag_entry);
 
             Slang::ComPtr<slang::IEntryPoint> gbuffer_entry;
-            module->findEntryPointByName("gbufferMain", gbuffer_entry.writeRef());
+            module->findEntryPointByName(SHADER_ENTRY_GBUFFER, gbuffer_entry.writeRef());
             if (gbuffer_entry)
             {
                 res.has_gbuffer_entry = true;
@@ -949,8 +793,8 @@ namespace tau::cooker::shader
             slang::EntryPointReflection* entry_point = layout->getEntryPointByIndex(ep_idx);
             std::string ep_name = entry_point->getName() ? entry_point->getName() : "";
 
-            const bool is_forward_ep = (ep_name == "fragmentMain");
-            const bool is_gbuffer_ep = (ep_name == "gbufferMain");
+            const bool is_forward_ep = (ep_name == SHADER_ENTRY_FRAGMENT);
+            const bool is_gbuffer_ep = (ep_name == SHADER_ENTRY_GBUFFER);
 
             if (is_forward_ep || is_gbuffer_ep)
             {

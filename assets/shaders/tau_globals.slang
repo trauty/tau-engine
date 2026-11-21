@@ -1,5 +1,7 @@
 module tau_globals;
 
+__exported import tau_gpu;
+
 #include "tau/rendering/shader_shared.h"
 
 [[vk::binding(0, 0)]]
@@ -8,8 +10,16 @@ public SamplerState global_samplers[];
 public SamplerComparisonState global_cmp_samplers[];
 [[vk::binding(1, 0)]]
 public Texture2D global_textures[];
+[[vk::binding(1, 0)]]
+public Texture3D global_textures_3d[];
+[[vk::binding(1, 0)]]
+public TextureCube global_textures_cube[];
 [[vk::binding(2, 0)]]
 public RWTexture2D<float4> global_storage_images[];
+[[vk::binding(2, 0)]]
+public RWTexture2D<uint> global_storage_images_uint[];
+[[vk::binding(2, 0)]]
+public RWTexture3D<float4> global_storage_images_3d[];
 
 [[vk::binding(0, 1)]]
 public ConstantBuffer<GlobalData> globals;
@@ -22,6 +32,12 @@ public static const uint SAMPLER_NEAREST_CLAMP = TAU_SAMPLER_NEAREST_CLAMP;
 public static const uint SAMPLER_SHADOW_CMP = TAU_SAMPLER_SHADOW_CMP;
 
 public Texture2D getTexture(uint id) { return global_textures[NonUniformResourceIndex(id)]; }
+public Texture3D getTexture3D(uint id) { return global_textures_3d[NonUniformResourceIndex(id)]; }
+public TextureCube getTextureCube(uint id) { return global_textures_cube[NonUniformResourceIndex(id)]; }
+public RWTexture2D<float4> getStorageImage(uint id) { return global_storage_images[NonUniformResourceIndex(id)]; }
+public RWTexture2D<uint> getStorageImageUint(uint id)
+{ return global_storage_images_uint[NonUniformResourceIndex(id)]; }
+public RWTexture3D<float4> getStorageImage3D(uint id) { return global_storage_images_3d[NonUniformResourceIndex(id)]; }
 public SamplerState getSampler(uint id) { return global_samplers[NonUniformResourceIndex(id)]; }
 public SamplerComparisonState getCmpSampler(uint id) { return global_cmp_samplers[NonUniformResourceIndex(id)]; }
 
@@ -76,87 +92,6 @@ public struct VertexOut
     public uint draw_id;
 };
 
-public struct ObjectData
-{
-    public float4x4 model_matrix;
-    public float4x4 normal_matrix;
-    public uint64_t vertex_buffer;
-    public uint64_t index_buffer;
-    public uint material_offset;
-    public uint entity;
-    public uint _pad1;
-    public uint _pad2;
-};
-
-public struct CullData
-{
-    public float4 bounding_sphere; // xyz = world centre, w = radius
-    public uint index_count;
-    public uint pipeline_index;
-    public uint flags;           // bit0 = shadow caster
-    public uint draw_bin_offset; // start of this pipeline's run in the indirect buffer
-};
-
-public struct ShadowTile
-{
-    public float4x4 view_proj;
-    public float4 uv_offset_scale; // xy = atlas uv offset, zw = atlas uv scale
-    public float texel_world_size; // world units per shadow texel
-    public float normal_bias;      // in shadow texels
-    public float depth_bias;       // in light space ndc depth
-    public float split_far;        // view space distance at which this cascade stops
-};
-
-public struct GlobalData
-{
-    public float4x4 view;
-    public float4x4 projection;
-    public float4x4 view_proj;
-    public float4 camera_pos;
-    public float4 frustum_planes[6];
-    public float4x4 inv_view_proj;
-    public uint64_t dir_light_buffer;
-    public uint64_t point_light_buffer;
-    public uint64_t spot_light_buffer;
-
-    public uint64_t cluster_counts_buffer;  // one uint per cluster
-    public uint64_t cluster_indices_buffer; // MAX_LIGHTS_PER_CLUSTER uints per cluster
-    public uint64_t shadow_cascade_buffer;
-
-    public float time;
-    public uint dir_light_count;
-    public uint point_light_count;
-    public uint spot_light_count;
-    public uint object_count;
-    public uint active_pipeline_count;
-    public uint cull_flags; // bit0 = shadow only view
-
-    public uint debug_view;
-
-    public uint shadow_atlas_id; // bindless texture id of the cascade atlas
-    public uint shadow_cascade_count;
-    public float shadow_fade_start; // view distance where shadows start fading out
-    public float shadow_fade_end;   // and where are fully faded
-
-    public float cluster_z_near;
-    public float cluster_z_far;
-
-    public uint cluster_tiles_x;
-    public uint cluster_tiles_y;
-
-    public uint64_t punctual_shadow_buffer;
-    public uint punctual_shadow_atlas_id;
-    public uint punctual_shadow_count;
-};
-
-public struct PushConstants
-{
-    public uint64_t object_buffer;
-    public uint64_t material_buffer;
-    public uint custom_data;
-    public uint texture_id;
-};
-
 [[vk::push_constant]]
 public ConstantBuffer<PushConstants> pc;
 
@@ -181,14 +116,14 @@ public VertexOut defaultVertexTransform(uint vertex_id, uint instance_id, uint b
 
     Vertex vertex = getIndexedVertex(obj.vertex_buffer, obj.index_buffer, vertex_id);
 
-    float4 world_pos = mul(float4(vertex.position, 1.0f), obj.model_matrix);
+    float4 world_pos = mul(obj.model_matrix, float4(vertex.position, 1.0f));
 
     VertexOut out;
-    out.position = mul(world_pos, globals.view_proj);
+    out.position = mul(globals.view_proj, world_pos);
     out.world_pos = world_pos.xyz;
 
     float3x3 normal_mat = float3x3(obj.normal_matrix[0].xyz, obj.normal_matrix[1].xyz, obj.normal_matrix[2].xyz);
-    out.normal = normalize(mul(vertex.normal, normal_mat));
+    out.normal = normalize(mul(normal_mat, vertex.normal));
     out.uv = vertex.uv;
     out.draw_id = actual_instance_id;
 
@@ -277,86 +212,61 @@ public interface ILight
     IncidentLight evaluate(float3 world_pos);
 };
 
-public struct PointLight : ILight
-{
-    public float4 position_radius; // xyz = pos, w = radius
-    public float4 color_intensity; // xyz = color, w = intensity
-    public float4 shadow_params;   // x = the punctual shadow tile this light owns, negative when it casts none
+public extension PointLight : ILight { public IncidentLight evaluate(float3 world_pos) { IncidentLight out_light;
+out_light.radiance = float(0.0f);
+out_light.direction = float3(0.0f, 1.0f, 0.0f);
 
-    public IncidentLight evaluate(float3 world_pos)
-    {
-        IncidentLight out_light;
-        out_light.radiance = float(0.0f);
-        out_light.direction = float3(0.0f, 1.0f, 0.0f);
+float3 light_vec = position_radius.xyz - world_pos;
+float distance_sq = dot(light_vec, light_vec);
+float distance = sqrt(max(distance_sq, 1e-8f));
 
-        float3 light_vec = position_radius.xyz - world_pos;
-        float distance_sq = dot(light_vec, light_vec);
-        float distance = sqrt(max(distance_sq, 1e-8f));
+float attenuation = distanceAttenuation(distance_sq, position_radius.w);
+if (attenuation <= 0.0f) { return out_light; }
 
-        float attenuation = distanceAttenuation(distance_sq, position_radius.w);
-        if (attenuation <= 0.0f) { return out_light; }
+out_light.direction = light_vec / distance;
+out_light.radiance = color_intensity.xyz * color_intensity.w * attenuation;
 
-        out_light.direction = light_vec / distance;
-        out_light.radiance = color_intensity.xyz * color_intensity.w * attenuation;
-
-        return out_light;
-    }
+return out_light;
+}
 };
 
-public struct DirectionalLight : ILight
-{
-    public float4 direction_intensity; // xyz = dir, w = intensity
-    public float4 color;               // xyz = color, w = padding
+public extension DirectionalLight : ILight { public IncidentLight evaluate(float3 world_pos) { IncidentLight out_light;
 
-    public IncidentLight evaluate(float3 world_pos)
-    {
-        IncidentLight out_light;
+out_light.direction = normalize(-direction_intensity.xyz);
+out_light.radiance = color.xyz * direction_intensity.w;
 
-        out_light.direction = normalize(-direction_intensity.xyz);
-        out_light.radiance = color.xyz * direction_intensity.w;
-
-        return out_light;
-    }
+return out_light;
+}
 };
 
-public struct SpotLight : ILight
-{
-    public float4 position_range;      // xyz = pos, w = range
-    public float4 direction_intensity; // xyz = dir, w = intensity
-    public float4 color_inner_cos;     // xyz = color, w = inner_cosine
-    public float4 outer_cos;           // x = outer_cosine, yzw = padding
-    public float4 shadow_params;       // x = the punctual shadow tile this light owns, negative when it casts none
+public extension SpotLight : ILight { public IncidentLight evaluate(float3 world_pos) { IncidentLight out_light;
+out_light.radiance = float(0.0f);
+out_light.direction = float3(0.0f, 1.0f, 0.0f);
 
-    public IncidentLight evaluate(float3 world_pos)
-    {
-        IncidentLight out_light;
-        out_light.radiance = float(0.0f);
-        out_light.direction = float3(0.0f, 1.0f, 0.0f);
+float3 light_vec = position_range.xyz - world_pos;
+float distance_sq = dot(light_vec, light_vec);
+float distance = sqrt(max(distance_sq, 1e-8f));
 
-        float3 light_vec = position_range.xyz - world_pos;
-        float distance_sq = dot(light_vec, light_vec);
-        float distance = sqrt(max(distance_sq, 1e-8f));
+float dist_attenuation = distanceAttenuation(distance_sq, position_range.w);
 
-        float dist_attenuation = distanceAttenuation(distance_sq, position_range.w);
+if (dist_attenuation <= 0.0f) { return out_light; }
 
-        if (dist_attenuation <= 0.0f) { return out_light; }
+float3 light_dir = light_vec / distance;
 
-        float3 light_dir = light_vec / distance;
+float theta = dot(light_dir, normalize(-direction_intensity.xyz));
+float inner_cos = color_inner_cos.w;
+float outer_cos = outer_cos.x;
 
-        float theta = dot(light_dir, normalize(-direction_intensity.xyz));
-        float inner_cos = color_inner_cos.w;
-        float outer_cos = outer_cos.x;
+float epsilon = inner_cos - outer_cos;
+float cone_attenuation = clamp((theta - outer_cos) / epsilon, 0.0f, 1.0f);
 
-        float epsilon = inner_cos - outer_cos;
-        float cone_attenuation = clamp((theta - outer_cos) / epsilon, 0.0f, 1.0f);
+if (cone_attenuation <= 0.0f) { return out_light; }
 
-        if (cone_attenuation <= 0.0f) { return out_light; }
+out_light.direction = light_dir;
+out_light.radiance = color_inner_cos.xyz * direction_intensity.w * dist_attenuation * cone_attenuation;
 
-        out_light.direction = light_dir;
-        out_light.radiance = color_inner_cos.xyz * direction_intensity.w * dist_attenuation * cone_attenuation;
-
-        return out_light;
-    }
+return out_light;
+}
 };
 
 // clustering
@@ -387,7 +297,7 @@ public uint clusterSliceFromDepth(float view_z)
 public uint clusterFlatIndex(uint tile_x, uint tile_y, uint slice)
 { return (slice * globals.cluster_tiles_y + tile_y) * globals.cluster_tiles_x + tile_x; }
 
-public float3 worldToView(float3 world_pos) { return mul(float4(world_pos, 1.0f), globals.view).xyz; }
+public float3 worldToView(float3 world_pos) { return mul(globals.view, float4(world_pos, 1.0f)).xyz; }
 
 public uint clusterFromViewPos(float3 view_pos)
 {

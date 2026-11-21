@@ -22,26 +22,6 @@ namespace tau::renderer
         constexpr const char* SCENE_SHADER_PATH = "engine://assets/shaders/overlay_scene.slang";
         constexpr const char* TOP_SHADER_PATH = "engine://assets/shaders/overlay_top.slang";
 
-        struct gpu_overlay_item_t
-        {
-            gpu_mat4_t model;
-            f32 color[4];
-            VkDeviceAddress vertices;
-            VkDeviceAddress indices;
-            u32_t mode;
-            f32 line_width;
-            f32 viewport_size[2];
-        };
-        static_assert(sizeof(gpu_overlay_item_t) == 112);
-
-        struct gpu_overlay_line_t
-        {
-            f32 a[4];
-            f32 b[4];
-            f32 color[4];
-        };
-        static_assert(sizeof(gpu_overlay_line_t) == 48);
-
         enum class item_mode_e : u32_t
         {
             MESH,
@@ -69,8 +49,8 @@ namespace tau::renderer
         };
 
         std::vector<pending_item_t> pending;
-        std::vector<gpu_overlay_line_t> pending_lines;
-        std::vector<gpu_overlay_item_t> gpu_items;
+        std::vector<gpu::OverlayLine> pending_lines;
+        std::vector<gpu::OverlayItem> gpu_items;
         VkDeviceAddress items_address = 0;
 
         std::vector<draw_t> scene_draws;
@@ -86,12 +66,12 @@ namespace tau::renderer
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-            const push_constants_t pc = {
+            const gpu::PushConstants pc = {
                 items_address,
                 res_system.material_heap.device_address,
             };
             vkCmdPushConstants(cmd, shader->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(push_constants_t), &pc);
+                               0, sizeof(gpu::PushConstants), &pc);
 
             u32_t bound_view = 0;
             bool view_found = false;
@@ -115,7 +95,7 @@ namespace tau::renderer
             if (pending.empty()) { return; }
 
             const VkDeviceAddress lines_address =
-                upload_frame_data(pending_lines.data(), pending_lines.size() * sizeof(gpu_overlay_line_t));
+                upload_frame_data(pending_lines.data(), pending_lines.size() * sizeof(gpu::OverlayLine));
 
             std::stable_sort(pending.begin(), pending.end(), [](const pending_item_t& a, const pending_item_t& b)
                              { return a.view_hash < b.view_hash; });
@@ -125,14 +105,14 @@ namespace tau::renderer
             for (u32_t i = 0; i < pending.size(); i++)
             {
                 const pending_item_t& item = pending[i];
-                gpu_overlay_item_t& gpu = gpu_items[i];
+                gpu::OverlayItem& gpu = gpu_items[i];
 
-                std::memcpy(gpu.model.data, &item.world, sizeof(mat4));
-                std::memcpy(gpu.color, &item.color, sizeof(gpu.color));
+                gpu.model = item.world;
+                gpu.color = item.color;
                 gpu.mode = static_cast<u32_t>(item.mode);
                 gpu.line_width = item.line_width;
-                gpu.viewport_size[0] = static_cast<f32>(ctx.render_extent.width);
-                gpu.viewport_size[1] = static_cast<f32>(ctx.render_extent.height);
+                gpu.viewport_size = {static_cast<f32>(ctx.render_extent.width),
+                                     static_cast<f32>(ctx.render_extent.height)};
 
                 u32_t vertex_count = 0;
                 if (item.mode == item_mode_e::MESH)
@@ -144,7 +124,7 @@ namespace tau::renderer
                 }
                 else
                 {
-                    gpu.vertices = lines_address + u64_t(item.first_line) * sizeof(gpu_overlay_line_t);
+                    gpu.vertices = lines_address + u64_t(item.first_line) * sizeof(gpu::OverlayLine);
                     gpu.indices = 0;
                     vertex_count = item.line_count * 6;
                 }
@@ -153,7 +133,7 @@ namespace tau::renderer
                 target.push_back({item.view_hash, vertex_count, i});
             }
 
-            items_address = upload_frame_data(gpu_items.data(), gpu_items.size() * sizeof(gpu_overlay_item_t));
+            items_address = upload_frame_data(gpu_items.data(), gpu_items.size() * sizeof(gpu::OverlayItem));
             pending.clear();
             pending_lines.clear();
 

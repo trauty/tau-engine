@@ -4,7 +4,12 @@
 namespace tau
 {
     constexpr u32_t TAU_SHADER_MAGIC = 0x44485354; // "TSHD"
-    constexpr u32_t TAU_SHADER_VERSION = 1;
+    constexpr u32_t TAU_SHADER_VERSION = 2;
+
+    inline constexpr const char* SHADER_ENTRY_COMPUTE = "computeMain";
+    inline constexpr const char* SHADER_ENTRY_VERTEX = "vertexMain";
+    inline constexpr const char* SHADER_ENTRY_FRAGMENT = "fragmentMain";
+    inline constexpr const char* SHADER_ENTRY_GBUFFER = "gbufferMain";
 
     enum class shader_domain_e : u32_t
     {

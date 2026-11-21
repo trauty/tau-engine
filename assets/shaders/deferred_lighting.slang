@@ -35,7 +35,7 @@ TAU_DEBUG_VIEW_LIST(TAU_DEBUG_VIEW_CONST)
 float3 worldFromDepth(float2 uv, float depth)
 {
     float4 clip = float4(uv * 2.0f - 1.0f, depth, 1.0f);
-    float4 world = mul(clip, globals.inv_view_proj);
+    float4 world = mul(globals.inv_view_proj, clip);
     return world.xyz / world.w;
 }
 

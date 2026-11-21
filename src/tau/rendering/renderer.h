@@ -45,7 +45,7 @@ namespace tau::renderer
 
     // every culled object in the view, one pipeline, fills object_buffer
     TAU_ENGINE_API void draw_view_objects(VkCommandBuffer cmd, u32_t view_name_hash, VkPipeline pipeline,
-                                          VkPipelineLayout layout, push_constants_t pc);
+                                          VkPipelineLayout layout, gpu::PushConstants pc);
 
     TAU_ENGINE_API rg_pass_t& add_compute_pass(rendergraph_t& graph, u32_t name_hash, const char* debug_name,
                                                tau::material_t* material, u32_t dispatch_x, u32_t dispatch_y,

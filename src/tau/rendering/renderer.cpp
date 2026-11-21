@@ -278,33 +278,23 @@ namespace tau::renderer
     static vec3 world_forward(const transform_t& transform)
     { return normalize({transform.world_mat[2][0], transform.world_mat[2][1], transform.world_mat[2][2]}); }
 
-    static void set_vec4(gpu_vec4_t& dst, f32 x, f32 y, f32 z, f32 w)
-    {
-        dst.data.x = x;
-        dst.data.y = y;
-        dst.data.z = z;
-        dst.data.w = w;
-    }
-
-    static void set_vec4(gpu_vec4_t& dst, const vec3& xyz, f32 w) { set_vec4(dst, xyz.x, xyz.y, xyz.z, w); }
-
     // x is the punctual tile this light owns, negative when it casts no shadow
-    static void set_shadow_params(gpu_vec4_t& dst, const flat_map_t<u32_t>& slots, ecs::entity_t entity)
+    static vec4 shadow_params(const flat_map_t<u32_t>& slots, ecs::entity_t entity)
     {
         const u32_t* slot = slots.find(static_cast<u32_t>(entity));
-        set_vec4(dst, slot ? static_cast<f32>(*slot) : -1.0f, 0.0f, 0.0f, 0.0f);
+        return {slot ? static_cast<f32>(*slot) : -1.0f, 0.0f, 0.0f, 0.0f};
     }
 
     // a cascade and a punctual tile are the same record, the caller derives texel_world_size
-    static void pack_shadow_tile(gpu_shadow_tile_t& dst, const render_view_t& sub, f32 atlas_w, f32 atlas_h,
+    static void pack_shadow_tile(gpu::ShadowTile& dst, const render_view_t& sub, f32 atlas_w, f32 atlas_h,
                                  f32 texel_world_size)
     {
-        std::memcpy(dst.view_proj.data, &sub.view_proj, sizeof(mat4));
+        dst.view_proj = sub.view_proj;
 
         const VkRect2D& rect = sub.shadow_atlas_rect;
-        set_vec4(dst.uv_offset_scale, static_cast<f32>(rect.offset.x) / atlas_w,
-                 static_cast<f32>(rect.offset.y) / atlas_h, static_cast<f32>(rect.extent.width) / atlas_w,
-                 static_cast<f32>(rect.extent.height) / atlas_h);
+        dst.uv_offset_scale = {static_cast<f32>(rect.offset.x) / atlas_w, static_cast<f32>(rect.offset.y) / atlas_h,
+                               static_cast<f32>(rect.extent.width) / atlas_w,
+                               static_cast<f32>(rect.extent.height) / atlas_h};
 
         dst.texel_world_size = texel_world_size;
         dst.normal_bias = sub.shadow_normal_bias;
@@ -314,7 +304,7 @@ namespace tau::renderer
 
     // every compute site: bind, both descriptor sets at the view's dynamic offset, the shader's own set, push, dispatch
     static void dispatch_compute(VkCommandBuffer cmd, const shader_t& shader, VkPipeline pipeline, u32_t view_offset,
-                                 shader_instance_t* instance, const push_constants_t& pc, u32_t groups_x,
+                                 shader_instance_t* instance, const gpu::PushConstants& pc, u32_t groups_x,
                                  u32_t groups_y = 1, u32_t groups_z = 1)
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
@@ -325,7 +315,8 @@ namespace tau::renderer
 
         if (instance != nullptr) { instance->bind(cmd); }
 
-        vkCmdPushConstants(cmd, shader.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push_constants_t), &pc);
+        vkCmdPushConstants(cmd, shader.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(gpu::PushConstants),
+                           &pc);
 
         vkCmdDispatch(cmd, groups_x, groups_y, groups_z);
     }
@@ -392,7 +383,7 @@ namespace tau::renderer
             view_gpu_resources_t& vgr = **found;
             if (vgr.indirect_buffer == VK_NULL_HANDLE || vgr.draw_counts_buffer == VK_NULL_HANDLE) { return; }
 
-            push_constants_t pc_data = {
+            gpu::PushConstants pc_data = {
                 fd.object_buffer_address,
                 res_system.material_heap.device_address,
             };
@@ -411,7 +402,7 @@ namespace tau::renderer
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p.layout, 0, 2, sets, 1,
                                         &vgr.global_data_offset);
                 vkCmdPushConstants(cmd, p.layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(push_constants_t), &pc_data);
+                                   sizeof(gpu::PushConstants), &pc_data);
 
                 u32_t indirect_offset = p.first_object * 16;
                 u32_t counts_offset = p.pipeline_index * sizeof(u32_t);
@@ -436,7 +427,7 @@ namespace tau::renderer
     }
 
     void draw_view_objects(VkCommandBuffer cmd, u32_t view_name_hash, VkPipeline pipeline, VkPipelineLayout layout,
-                           push_constants_t pc)
+                           gpu::PushConstants pc)
     {
         per_frame_t& fd = ctx.per_frame_objects[ctx.cur_frame];
         if (fd.object_counter == 0 || pipeline == VK_NULL_HANDLE) { return; }
@@ -451,7 +442,7 @@ namespace tau::renderer
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         bind_view_descriptors(cmd, layout, view_name_hash);
         vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                           sizeof(push_constants_t), &pc);
+                           sizeof(gpu::PushConstants), &pc);
 
         for (const active_pipeline_t& p : fd.active_pipelines)
         {
@@ -651,14 +642,14 @@ namespace tau::renderer
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
                                     &view_offset);
 
-            push_constants_t pc_data = {
+            gpu::PushConstants pc_data = {
                 frame_data.object_buffer_address,
                 res_system.material_heap.device_address,
                 material->heap_offset[ctx.cur_frame],
             };
 
             vkCmdPushConstants(cmd, shader->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(push_constants_t), &pc_data);
+                               0, sizeof(gpu::PushConstants), &pc_data);
 
             vkCmdDraw(cmd, 3, 1, 0, 0);
         };
@@ -692,7 +683,7 @@ namespace tau::renderer
 
             per_frame_t& frame_data = ctx.per_frame_objects[ctx.cur_frame];
 
-            const push_constants_t pc_data = {
+            const gpu::PushConstants pc_data = {
                 frame_data.object_buffer_address,
                 res_system.material_heap.device_address,
                 material->heap_offset[ctx.cur_frame],
@@ -749,8 +740,8 @@ namespace tau::renderer
             .subresourceRange = {
                                  .aspectMask = desc.aspect,
                                  .baseMipLevel = 0,
-                                 .levelCount = 1,
-                                 .baseArrayLayer = 0,
+                                 .levelCount = 1, // every shared struct with its size in bytes
+                .baseArrayLayer = 0,
                                  .layerCount = 1,
                                  }
         };
@@ -874,7 +865,7 @@ namespace tau::renderer
                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                            VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
-            const push_constants_t pc_data = {
+            const gpu::PushConstants pc_data = {
                 fd.object_buffer_address,
                 res_system.material_heap.device_address,
                 0,
@@ -1225,7 +1216,7 @@ namespace tau::renderer
 
         VkDeviceSize min_alignment = ctx.properties.limits.minUniformBufferOffsetAlignment;
         ctx.global_data_aligned_size =
-            static_cast<u32_t>((sizeof(global_data_t) + min_alignment - 1) & ~(min_alignment - 1));
+            static_cast<u32_t>((sizeof(gpu::GlobalData) + min_alignment - 1) & ~(min_alignment - 1));
 
         void* mapped_global_data;
         create_mapped_buffer(ctx.global_data_aligned_size * MAX_FRAMES_IN_FLIGHT * MAX_VIEWS_PER_FRAME,
@@ -1238,14 +1229,14 @@ namespace tau::renderer
         {
             u32_t base_offset = i * MAX_VIEWS_PER_FRAME * ctx.global_data_aligned_size;
             ctx.per_frame_objects[i].mapped_global_data =
-                reinterpret_cast<global_data_t*>(ctx.global_data_mapped + base_offset);
+                reinterpret_cast<gpu::GlobalData*>(ctx.global_data_mapped + base_offset);
             ctx.per_frame_objects[i].global_data_offset = base_offset;
         }
 
         VkDescriptorBufferInfo ubo_info = {
             .buffer = ctx.global_data_buffer,
             .offset = 0,
-            .range = sizeof(global_data_t),
+            .range = sizeof(gpu::GlobalData),
         };
 
         VkWriteDescriptorSet write_desc = {
@@ -1397,10 +1388,10 @@ namespace tau::renderer
 
     // walks the light components into the frame's mapped gpu buffers and returns the globals block describing them
     // the cascade caster goes first so it lands at index 0, the only directional light the shadow path looks at
-    static global_data_t upload_lights(ecs::registry_t& reg, per_frame_t& frame_data,
-                                       const flat_map_t<u32_t>& punctual_slots, ecs::entity_t cascade_light)
+    static gpu::GlobalData upload_lights(ecs::registry_t& reg, per_frame_t& frame_data,
+                                         const flat_map_t<u32_t>& punctual_slots, ecs::entity_t cascade_light)
     {
-        global_data_t globals{};
+        gpu::GlobalData globals{};
         globals.time = time::time;
         globals.shadow_atlas_id = BINDLESS_NULL_HANDLE;
         globals.shadow_cascade_count = 0;
@@ -1410,10 +1401,10 @@ namespace tau::renderer
         u32_t dir_count = 0;
         auto upload_dir_light = [&](const directional_light_t& light, const transform_t& transform)
         {
-            gpu_directional_light_t& gpu_light = frame_data.mapped_dir_lights[dir_count];
+            gpu::DirectionalLight& gpu_light = frame_data.mapped_dir_lights[dir_count];
 
-            set_vec4(gpu_light.direction_intensity, world_forward(transform), light.intensity);
-            set_vec4(gpu_light.color, light.color, 0.0f);
+            gpu_light.direction_intensity = vec4(world_forward(transform), light.intensity);
+            gpu_light.color = vec4(light.color, 0.0f);
 
             dir_count++;
         };
@@ -1434,9 +1425,9 @@ namespace tau::renderer
 
         if (dir_count == 0 && fallback_light.enabled)
         {
-            gpu_directional_light_t& gpu_light = frame_data.mapped_dir_lights[dir_count];
-            set_vec4(gpu_light.direction_intensity, fallback_light.direction, fallback_light.intensity);
-            set_vec4(gpu_light.color, fallback_light.color, 0.0f);
+            gpu::DirectionalLight& gpu_light = frame_data.mapped_dir_lights[dir_count];
+            gpu_light.direction_intensity = vec4(fallback_light.direction, fallback_light.intensity);
+            gpu_light.color = vec4(fallback_light.color, 0.0f);
             dir_count++;
         }
 
@@ -1445,11 +1436,11 @@ namespace tau::renderer
         {
             if (point_count >= MAX_LIGHTS) { break; }
 
-            gpu_point_light_t& gpu_light = frame_data.mapped_point_lights[point_count];
+            gpu::PointLight& gpu_light = frame_data.mapped_point_lights[point_count];
 
-            set_vec4(gpu_light.position_radius, world_position(transform), light.radius);
-            set_vec4(gpu_light.color_intensity, light.color, light.intensity);
-            set_shadow_params(gpu_light.shadow_params, punctual_slots, entity);
+            gpu_light.position_radius = vec4(world_position(transform), light.radius);
+            gpu_light.color_intensity = vec4(light.color, light.intensity);
+            gpu_light.shadow_params = shadow_params(punctual_slots, entity);
 
             point_count++;
         }
@@ -1459,13 +1450,13 @@ namespace tau::renderer
         {
             if (spot_count >= MAX_LIGHTS) { break; }
 
-            gpu_spot_light_t& gpu_light = frame_data.mapped_spot_lights[spot_count];
+            gpu::SpotLight& gpu_light = frame_data.mapped_spot_lights[spot_count];
 
-            set_vec4(gpu_light.position_range, world_position(transform), light.radius);
-            set_vec4(gpu_light.direction_intensity, world_forward(transform), light.intensity);
-            set_vec4(gpu_light.color_inner_cos, light.color, std::cos(radians(light.inner_angle)));
-            set_vec4(gpu_light.outer_cos, std::cos(radians(light.outer_angle)), 0.0f, 0.0f, 0.0f);
-            set_shadow_params(gpu_light.shadow_params, punctual_slots, entity);
+            gpu_light.position_range = vec4(world_position(transform), light.radius);
+            gpu_light.direction_intensity = vec4(world_forward(transform), light.intensity);
+            gpu_light.color_inner_cos = vec4(light.color, std::cos(radians(light.inner_angle)));
+            gpu_light.outer_cos = vec4(std::cos(radians(light.outer_angle)), 0.0f, 0.0f, 0.0f);
+            gpu_light.shadow_params = shadow_params(punctual_slots, entity);
 
             spot_count++;
         }
@@ -1612,11 +1603,9 @@ namespace tau::renderer
             const transform_t& transform = *item.transform;
             const mesh_t& mesh = *item.mesh;
 
-            object_data_t& obj_data = frame_data.mapped_object_data[cur_object_id];
-            std::memcpy(obj_data.model_matrix.data, &transform.world_mat, sizeof(mat4));
-
-            const mat4 normal_mat = transpose(inverse(transform.world_mat));
-            std::memcpy(obj_data.normal_matrix.data, &normal_mat, sizeof(mat4));
+            gpu::ObjectData& obj_data = frame_data.mapped_object_data[cur_object_id];
+            obj_data.model_matrix = transform.world_mat;
+            obj_data.normal_matrix = transpose(inverse(transform.world_mat));
 
             obj_data.material_offset = item.material->heap_offset[ctx.cur_frame];
             obj_data.entity = item.entity;
@@ -1636,11 +1625,8 @@ namespace tau::renderer
             const vec3 scale = scale_of(transform.world_mat);
             const f32 max_scale = std::max({scale.x, scale.y, scale.z});
 
-            cull_data_t& cull = frame_data.mapped_cull_data[cur_object_id];
-            cull.bounding_sphere.data.x = world_center.x;
-            cull.bounding_sphere.data.y = world_center.y;
-            cull.bounding_sphere.data.z = world_center.z;
-            cull.bounding_sphere.data.w = local_radius * max_scale;
+            gpu::CullData& cull = frame_data.mapped_cull_data[cur_object_id];
+            cull.bounding_sphere = vec4(world_center, local_radius * max_scale);
             cull.index_count = index_count;
             cull.pipeline_index = bin.pipeline_index;
             cull.flags = (item.casts_shadow && has_shadow) ? 1u : 0u;
@@ -1948,7 +1934,7 @@ namespace tau::renderer
         std::stable_partition(frame_views.begin(), frame_views.end(),
                               [](const render_view_t& v) { return v.kind == view_kind_e::DEPTH_ONLY; });
 
-        global_data_t frame_globals = upload_lights(reg, frame_data, frame_punctual_slots, frame_cascade_light);
+        gpu::GlobalData frame_globals = upload_lights(reg, frame_data, frame_punctual_slots, frame_cascade_light);
 
         const u32_t cur_object_id = build_draw_list(reg, frame_data);
         frame_globals.object_count = cur_object_id;
@@ -1980,28 +1966,21 @@ namespace tau::renderer
             vgr.kind = sub.kind;
             vgr.global_data_offset = view_offset;
 
-            global_data_t* slot = reinterpret_cast<global_data_t*>(ctx.global_data_mapped + view_offset);
+            gpu::GlobalData* slot = reinterpret_cast<gpu::GlobalData*>(ctx.global_data_mapped + view_offset);
             *slot = frame_globals;
 
-            std::memcpy(slot->view.data, &sub.view, sizeof(mat4));
-            std::memcpy(slot->projection.data, &sub.projection, sizeof(mat4));
+            slot->view = sub.view;
+            slot->projection = sub.projection;
 
             const mat4 final_view_proj = sub.kind == view_kind_e::COLOR ? pre_rot_mat * sub.view_proj : sub.view_proj;
-            std::memcpy(slot->view_proj.data, &final_view_proj, sizeof(mat4));
-
-            const mat4 inv_view_proj = inverse(final_view_proj);
-            std::memcpy(slot->inv_view_proj.data, &inv_view_proj, sizeof(mat4));
+            slot->view_proj = final_view_proj;
+            slot->inv_view_proj = inverse(final_view_proj);
 
             const debug_view_e* debug_view = view_debug_views.find(sub.name_hash);
             slot->debug_view = static_cast<u32_t>(debug_view ? *debug_view : debug_view_e::OFF);
 
-            vec4 planes[6];
-            frustum_planes(sub.view_proj, planes);
-            std::memcpy(slot->frustum_planes, planes, sizeof(planes));
-
-            slot->camera_pos.data.x = sub.position.x;
-            slot->camera_pos.data.y = sub.position.y;
-            slot->camera_pos.data.z = sub.position.z;
+            frustum_planes(sub.view_proj, slot->frustum_planes);
+            slot->camera_pos = vec4(sub.position, 0.0f);
 
             slot->cull_flags = (sub.kind == view_kind_e::DEPTH_ONLY) ? 1u : 0u;
 
@@ -2050,7 +2029,7 @@ namespace tau::renderer
                     vgr.cluster_instance.set_buffer("cluster_light_indices"_h, vgr.cluster_indices_buffer);
                     vgr.cluster_instance.sync();
 
-                    const push_constants_t cluster_pc = {
+                    const gpu::PushConstants cluster_pc = {
                         frame_data.object_buffer_address,
                         res_system.material_heap.device_address,
                         0,
@@ -2107,7 +2086,7 @@ namespace tau::renderer
             vgr.culling_instance.set_buffer("cull_inputs"_h, frame_data.cull_buffer);
             vgr.culling_instance.sync();
 
-            const push_constants_t pc_data = {
+            const gpu::PushConstants pc_data = {
                 frame_data.object_buffer_address,
                 res_system.material_heap.device_address,
                 0,
@@ -2511,7 +2490,7 @@ namespace tau::renderer
                 if (frame_views[view_idx].kind != view_kind_e::COLOR) { continue; }
 
                 u32_t view_offset = frame_data.global_data_offset + view_idx * ctx.global_data_aligned_size;
-                global_data_t* slot = reinterpret_cast<global_data_t*>(ctx.global_data_mapped + view_offset);
+                gpu::GlobalData* slot = reinterpret_cast<gpu::GlobalData*>(ctx.global_data_mapped + view_offset);
 
                 if (shadow_bindless != BINDLESS_NULL_HANDLE)
                 {
@@ -3062,12 +3041,12 @@ namespace tau::renderer
             mapped_mem = vma_alloc_info.pMappedData;
         };
 
-        create_mapped_buffer(sizeof(object_data_t) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer(sizeof(gpu::ObjectData) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.object_buffer, frame_data.object_allocation,
                              (void*&)frame_data.mapped_object_data);
         frame_data.object_buffer_address = get_buffer_address(frame_data.object_buffer);
 
-        create_mapped_buffer(sizeof(cull_data_t) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer(sizeof(gpu::CullData) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.cull_buffer, frame_data.cull_allocation, (void*&)frame_data.mapped_cull_data);
 
         create_mapped_buffer(MAX_MATERIAL_BUFFER_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.material_buffer,
@@ -3076,27 +3055,27 @@ namespace tau::renderer
         VkSemaphoreCreateInfo sem_info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VK_CHECK(vkCreateSemaphore(ctx.device, &sem_info, nullptr, &frame_data.swapchain_acquire_semaphore));
 
-        create_mapped_buffer(sizeof(gpu_directional_light_t) * MAX_DIR_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer(sizeof(gpu::DirectionalLight) * MAX_DIR_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.dir_light_buffer, frame_data.dir_light_allocation,
                              (void*&)frame_data.mapped_dir_lights);
         frame_data.dir_light_buffer_address = get_buffer_address(frame_data.dir_light_buffer);
 
-        create_mapped_buffer(sizeof(gpu_point_light_t) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer(sizeof(gpu::PointLight) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.point_light_buffer, frame_data.point_light_allocation,
                              (void*&)frame_data.mapped_point_lights);
         frame_data.point_light_buffer_address = get_buffer_address(frame_data.point_light_buffer);
 
-        create_mapped_buffer(sizeof(gpu_spot_light_t) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer(sizeof(gpu::SpotLight) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.spot_light_buffer, frame_data.spot_light_allocation,
                              (void*&)frame_data.mapped_spot_lights);
         frame_data.spot_light_buffer_address = get_buffer_address(frame_data.spot_light_buffer);
 
-        create_mapped_buffer(sizeof(gpu_shadow_tile_t) * SHADOW_CASCADE_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer(sizeof(gpu::ShadowTile) * SHADOW_CASCADE_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.shadow_cascade_buffer, frame_data.shadow_cascade_allocation,
                              (void*&)frame_data.mapped_shadow_cascades);
         frame_data.shadow_cascade_buffer_address = get_buffer_address(frame_data.shadow_cascade_buffer);
 
-        create_mapped_buffer(sizeof(gpu_shadow_tile_t) * MAX_PUNCTUAL_SHADOW_TILES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer(sizeof(gpu::ShadowTile) * MAX_PUNCTUAL_SHADOW_TILES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.punctual_shadow_buffer, frame_data.punctual_shadow_allocation,
                              (void*&)frame_data.mapped_punctual_shadows);
         frame_data.punctual_shadow_buffer_address = get_buffer_address(frame_data.punctual_shadow_buffer);

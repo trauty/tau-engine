@@ -102,7 +102,7 @@ float sampleShadowTile(Texture2D atlas, float4x4 tile_view_proj, float4 uv_offse
     float offset_scale = texel_world_size * tile_normal_bias;
     float3 biased_pos = world_pos + normal * (offset_scale * sin_theta);
 
-    float4 lp = mul(float4(biased_pos, 1.0f), tile_view_proj);
+    float4 lp = mul(tile_view_proj, float4(biased_pos, 1.0f));
     if (lp.w <= 0.0f) { return 1.0f; } // behind the light
 
     float3 ndc = lp.xyz / lp.w;

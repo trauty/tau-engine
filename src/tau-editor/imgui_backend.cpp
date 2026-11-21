@@ -433,7 +433,7 @@ namespace tau::editor::imgui
         VkViewport vp = {0, 0, (f32)vd.extent.width, (f32)vd.extent.height, 0.0f, 1.0f};
         vkCmdSetViewport(frame.cmd, 0, 1, &vp);
 
-        renderer::push_constants_t pc = {
+        gpu::PushConstants pc = {
             .material_buffer = frame.material_addr,
             .custom_data = 0,
         };
@@ -467,7 +467,7 @@ namespace tau::editor::imgui
 
                 pc.texture_id = (u32_t)(intptr_t)cmd_ptr->GetTexID();
                 vkCmdPushConstants(frame.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(renderer::push_constants_t), &pc);
+                                   sizeof(gpu::PushConstants), &pc);
                 vkCmdDrawIndexed(frame.cmd, cmd_ptr->ElemCount, 1, cmd_ptr->IdxOffset + global_index_offset, 0, 0);
             }
             global_index_offset += cmd_list->IdxBuffer.Size;
@@ -850,7 +850,7 @@ namespace tau::editor::imgui
 
                     vkCmdBindIndexBuffer(cmd, ctx.index_buffer[cur_frame], 0, VK_INDEX_TYPE_UINT32);
 
-                    renderer::push_constants_t pc = {
+                    gpu::PushConstants pc = {
                         .material_buffer = renderer::res_system.material_heap.device_address,
                         .custom_data = mat->heap_offset[cur_frame],
                     };
@@ -891,7 +891,7 @@ namespace tau::editor::imgui
                             pc.texture_id = (u32_t)(intptr_t)cmd_ptr->GetTexID();
                             vkCmdPushConstants(cmd, shader->pipeline_layout,
                                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                               sizeof(renderer::push_constants_t), &pc);
+                                               sizeof(gpu::PushConstants), &pc);
                             vkCmdDrawIndexed(cmd, cmd_ptr->ElemCount, 1, cmd_ptr->IdxOffset + global_index_offset, 0,
                                              0);
                         }

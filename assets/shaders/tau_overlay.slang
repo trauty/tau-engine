@@ -2,24 +2,6 @@ module tau_overlay;
 
 __exported import tau_globals;
 
-public struct OverlayItem
-{
-    public float4x4 model;
-    public float4 color;
-    public uint64_t vertices;
-    public uint64_t indices;
-    public uint mode; // 0 mesh, 1 lines
-    public float line_width;
-    public float2 viewport_size;
-};
-
-public struct OverlayLine
-{
-    public float4 a;
-    public float4 b;
-    public float4 color;
-};
-
 public struct OverlayVertexOut
 {
     public float4 position : SV_Position;
@@ -36,7 +18,7 @@ public OverlayVertexOut overlayVertex(uint vertex_id, uint instance_id, uint bas
     if (item.mode == 0)
     {
         Vertex vertex = getIndexedVertex(item.vertices, item.indices, vertex_id);
-        out.position = mul(mul(float4(vertex.position, 1.0f), item.model), globals.view_proj);
+        out.position = mul(globals.view_proj, mul(item.model, float4(vertex.position, 1.0f)));
         out.color = item.color;
         return out;
     }
@@ -45,8 +27,8 @@ public OverlayVertexOut overlayVertex(uint vertex_id, uint instance_id, uint bas
     OverlayLine line = getBufferAs<OverlayLine>(item.vertices)[vertex_id / 6];
     uint corner = vertex_id % 6;
 
-    float4 clip_a = mul(mul(float4(line.a.xyz, 1.0f), item.model), globals.view_proj);
-    float4 clip_b = mul(mul(float4(line.b.xyz, 1.0f), item.model), globals.view_proj);
+    float4 clip_a = mul(globals.view_proj, mul(item.model, float4(line.a.xyz, 1.0f)));
+    float4 clip_b = mul(globals.view_proj, mul(item.model, float4(line.b.xyz, 1.0f)));
 
     out.color = line.color * item.color;
     if (clip_a.w < NEAR_W && clip_b.w < NEAR_W)

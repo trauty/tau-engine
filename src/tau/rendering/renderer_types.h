@@ -11,6 +11,7 @@
 #include "tau/math.h"
 #include "tau/memory/linear_allocator.h"
 #include "tau/rendering/device.h"
+#include "tau/rendering/gpu_structs.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/shader_instance.h"
 #include "tau/rendering/shader_shared.h"
@@ -110,140 +111,6 @@ namespace tau::renderer
         VmaAllocation depth_allocation = VK_NULL_HANDLE;
         VkFormat depth_format;
     };
-
-    struct push_constants_t
-    {
-        VkDeviceAddress object_buffer = 0;
-        VkDeviceAddress material_buffer = 0;
-        u32_t custom_data = 0;
-        u32_t texture_id = 0;
-    };
-
-    struct alignas(16) gpu_mat4_t
-    { f32 data[16]; };
-
-    struct alignas(16) gpu_vec4_t
-    {
-        union
-        {
-            struct
-            { f32 x, y, z, w; };
-            f32 raw[4];
-        } data;
-    };
-
-    struct alignas(16) gpu_vec3_t
-    {
-        union
-        {
-            struct
-            { f32 x, y, z; };
-            f32 raw[3];
-        } data;
-    };
-
-    struct gpu_directional_light_t
-    {
-        gpu_vec4_t direction_intensity;
-        gpu_vec4_t color;
-    };
-
-    struct gpu_point_light_t
-    {
-        gpu_vec4_t position_radius;
-        gpu_vec4_t color_intensity;
-        gpu_vec4_t shadow_params;
-    };
-
-    struct gpu_spot_light_t
-    {
-        gpu_vec4_t position_range;
-        gpu_vec4_t direction_intensity;
-        gpu_vec4_t color_inner_cos;
-        gpu_vec4_t outer_cos;
-        gpu_vec4_t shadow_params;
-    };
-
-    // one tile of a shadow atlas, a cascade and a punctual tile are the same record, only split_far is cascade specific
-    struct gpu_shadow_tile_t
-    {
-        gpu_mat4_t view_proj;
-        gpu_vec4_t uv_offset_scale; // xy = atlas uv offset, zw = atlas uv scale
-        f32 texel_world_size;       // world units per shadow texel, scales the normal offset
-        f32 normal_bias;            // in shadow texels
-        f32 depth_bias;             // in light space ndc depth
-        f32 split_far;              // view space distance at which this cascade stops
-    };
-
-    struct global_data_t
-    {
-        gpu_mat4_t view;
-        gpu_mat4_t projection;
-        gpu_mat4_t view_proj;
-        gpu_vec4_t camera_pos;
-        gpu_vec4_t frustum_planes[6];
-        gpu_mat4_t inv_view_proj = {}; // reconstruct cam pos from depth
-
-        VkDeviceAddress dir_light_buffer = 0;
-        VkDeviceAddress point_light_buffer = 0;
-        VkDeviceAddress spot_light_buffer = 0;
-        VkDeviceAddress cluster_counts_buffer = 0;
-        VkDeviceAddress cluster_indices_buffer = 0;
-        VkDeviceAddress shadow_cascade_buffer = 0;
-
-        f32 time;
-
-        u32_t dir_light_count;
-        u32_t point_light_count;
-        u32_t spot_light_count;
-        u32_t object_count;
-        u32_t active_pipeline_count;
-        u32_t cull_flags; // bit0 = shadow only view
-
-        u32_t debug_view;
-
-        u32_t shadow_atlas_id; // bindless id of the cascade atlas
-        u32_t shadow_cascade_count;
-        f32 shadow_fade_start; // view distance where shadows start fading out
-        f32 shadow_fade_end;   // and where they are fully faded
-
-        f32 cluster_z_near;
-        f32 cluster_z_far;
-        u32_t cluster_tiles_x;
-        u32_t cluster_tiles_y;
-
-        VkDeviceAddress punctual_shadow_buffer = 0;
-        u32_t punctual_shadow_atlas_id = BINDLESS_NULL_HANDLE;
-        u32_t punctual_shadow_count = 0;
-    };
-
-    // what the draw path reads: one per object, fetched by the vertex shader through the object buffer address
-    // everything culling needs lives in cull_data_t, indexed alike so object i and cull input i are the same object
-    struct object_data_t
-    {
-        gpu_mat4_t model_matrix;
-        gpu_mat4_t normal_matrix;
-        VkDeviceAddress vertex_buffer;
-        VkDeviceAddress index_buffer;
-        u32_t material_offset;
-        u32_t entity;
-        u32_t _pad1;
-        u32_t _pad2;
-    };
-
-    // what the culling shader reads, kept apart from the 192 byte record
-    // so six objects fit per cache line instead of one
-    struct cull_data_t
-    {
-        gpu_vec4_t bounding_sphere; // xyz = world centre, w = radius
-        u32_t index_count;
-        u32_t pipeline_index;
-        u32_t flags;           // bit0 = shadow caster
-        u32_t draw_bin_offset; // start of this pipeline's run in the indirect buffer
-    };
-
-    // no offsetof assertions here: the cooker takes these layouts from offsetof
-    // and checks them against what Slang reflects, see verify_core_layouts in shader_cooker.cpp
 
     struct image_desc_t
     {
@@ -367,17 +234,17 @@ namespace tau::renderer
         VkCommandBuffer main_command_buffer = VK_NULL_HANDLE;
         VkSemaphore swapchain_acquire_semaphore = VK_NULL_HANDLE;
 
-        global_data_t* mapped_global_data = nullptr;
+        gpu::GlobalData* mapped_global_data = nullptr;
         u32_t global_data_offset = 0;
 
         VkBuffer object_buffer = VK_NULL_HANDLE;
         VmaAllocation object_allocation = VK_NULL_HANDLE;
-        object_data_t* mapped_object_data = nullptr;
+        gpu::ObjectData* mapped_object_data = nullptr;
         VkDeviceAddress object_buffer_address = 0;
 
         VkBuffer cull_buffer = VK_NULL_HANDLE;
         VmaAllocation cull_allocation = VK_NULL_HANDLE;
-        cull_data_t* mapped_cull_data = nullptr;
+        gpu::CullData* mapped_cull_data = nullptr;
 
         u32_t object_counter = 0;
 
@@ -393,27 +260,27 @@ namespace tau::renderer
 
         VkBuffer dir_light_buffer = VK_NULL_HANDLE;
         VmaAllocation dir_light_allocation = VK_NULL_HANDLE;
-        gpu_directional_light_t* mapped_dir_lights = nullptr;
+        gpu::DirectionalLight* mapped_dir_lights = nullptr;
         VkDeviceAddress dir_light_buffer_address = 0;
 
         VkBuffer point_light_buffer = VK_NULL_HANDLE;
         VmaAllocation point_light_allocation = VK_NULL_HANDLE;
-        gpu_point_light_t* mapped_point_lights = nullptr;
+        gpu::PointLight* mapped_point_lights = nullptr;
         VkDeviceAddress point_light_buffer_address = 0;
 
         VkBuffer spot_light_buffer = VK_NULL_HANDLE;
         VmaAllocation spot_light_allocation = VK_NULL_HANDLE;
-        gpu_spot_light_t* mapped_spot_lights = nullptr;
+        gpu::SpotLight* mapped_spot_lights = nullptr;
         VkDeviceAddress spot_light_buffer_address = 0;
 
         VkBuffer shadow_cascade_buffer = VK_NULL_HANDLE;
         VmaAllocation shadow_cascade_allocation = VK_NULL_HANDLE;
-        gpu_shadow_tile_t* mapped_shadow_cascades = nullptr;
+        gpu::ShadowTile* mapped_shadow_cascades = nullptr;
         VkDeviceAddress shadow_cascade_buffer_address = 0;
 
         VkBuffer punctual_shadow_buffer = VK_NULL_HANDLE;
         VmaAllocation punctual_shadow_allocation = VK_NULL_HANDLE;
-        gpu_shadow_tile_t* mapped_punctual_shadows = nullptr;
+        gpu::ShadowTile* mapped_punctual_shadows = nullptr;
         VkDeviceAddress punctual_shadow_buffer_address = 0;
 
         VkBuffer depth_bounds_buffer = VK_NULL_HANDLE;

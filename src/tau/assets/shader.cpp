@@ -293,7 +293,7 @@ namespace tau
                 shader.is_compute ? VK_SHADER_STAGE_COMPUTE_BIT
                                   : (VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)),
             .offset = 0,
-            .size = sizeof(renderer::push_constants_t),
+            .size = sizeof(gpu::PushConstants),
         };
 
         VkPipelineLayoutCreateInfo pipeline_layout_info = {
@@ -319,7 +319,7 @@ namespace tau
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = VK_SHADER_STAGE_COMPUTE_BIT,
                 .module = comp_module,
-                .pName = "main",
+                .pName = SHADER_ENTRY_COMPUTE,
             };
 
             VkComputePipelineCreateInfo comp_pipeline_info = {
@@ -367,12 +367,12 @@ namespace tau
             VkPipelineShaderStageCreateInfo vert_stage_info = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
             vert_stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
             vert_stage_info.module = vert_mod;
-            vert_stage_info.pName = "main";
+            vert_stage_info.pName = SHADER_ENTRY_VERTEX;
 
             VkPipelineShaderStageCreateInfo frag_stage_info = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
             frag_stage_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
             frag_stage_info.module = frag_mod;
-            frag_stage_info.pName = "main";
+            frag_stage_info.pName = SHADER_ENTRY_FRAGMENT;
 
             VkPipelineShaderStageCreateInfo shader_stages[] = {vert_stage_info, frag_stage_info};
 
@@ -484,7 +484,11 @@ namespace tau
 
                 // the gbuffer variant swaps in its own fragment stage
                 VkPipelineShaderStageCreateInfo variant_stages[2] = {shader_stages[0], shader_stages[1]};
-                if (cfg.variant == pipeline_variant_e::GBUFFER) { variant_stages[1].module = gbuffer_mod; }
+                if (cfg.variant == pipeline_variant_e::GBUFFER)
+                {
+                    variant_stages[1].module = gbuffer_mod;
+                    variant_stages[1].pName = SHADER_ENTRY_GBUFFER;
+                }
 
                 VkPipelineDepthStencilStateCreateInfo gbuffer_depth = variant_depth_stencil;
                 if (cfg.variant == pipeline_variant_e::GBUFFER)
