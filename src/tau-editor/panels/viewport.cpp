@@ -31,15 +31,15 @@ namespace tau::editor::panels
     {
         constexpr f32 MAX_GROUND_DISTANCE = 500.0f;
 
-        vec3_t drop_point(const editor_context_t& ctx, vec2_t pixel)
+        vec3 drop_point(const editor_context_t& ctx, vec2 pixel)
         {
             const viewport_input::ray_t ray = viewport_input::ray_through(ctx, pixel);
-            vec3_t at = ray.origin + ray.direction * 5.0f;
+            vec3 at = ray.origin + ray.direction * 5.0f;
 
-            vec3_t hit;
+            vec3 hit;
             if (handle_math::ray_plane(ray.origin, ray.direction, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, hit))
             {
-                const vec3_t to_hit = hit - ray.origin;
+                const vec3 to_hit = hit - ray.origin;
                 if (dot(to_hit, to_hit) < MAX_GROUND_DISTANCE * MAX_GROUND_DISTANCE) { at = hit; }
             }
             return at;
@@ -90,7 +90,7 @@ namespace tau::editor::panels
                         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))
                         {
                             const ImVec2 mouse = ImGui::GetMousePos();
-                            const vec2_t pixel = {mouse.x - viewport_pos.x, mouse.y - viewport_pos.y};
+                            const vec2 pixel = {mouse.x - viewport_pos.x, mouse.y - viewport_pos.y};
                             editor->drop_in_viewport(world, ctx, static_cast<const char*>(payload->Data),
                                                      drop_point(ctx, pixel));
                         }

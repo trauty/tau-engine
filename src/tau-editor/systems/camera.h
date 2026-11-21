@@ -6,8 +6,8 @@ namespace tau::editor
 {
     struct editor_camera_t
     {
-        vec3_t position = {0.0f, 0.0f, 5.0f};
-        quat_t rotation;
+        vec3 position = {0.0f, 0.0f, 5.0f};
+        quat rotation;
         f32 yaw = 0.0f;
         f32 pitch = 0.0f;
         f32 fov_deg = 45.0f;

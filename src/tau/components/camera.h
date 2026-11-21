@@ -16,9 +16,9 @@ namespace tau
         f32 far_plane = 1000.0f;
         f32 aspect = 16.0f / 9.0f;
 
-        mat4_t view;
-        mat4_t projection;
-        mat4_t view_proj;
+        mat4 view;
+        mat4 projection;
+        mat4 view_proj;
 
         bool is_dirty = true;
     };

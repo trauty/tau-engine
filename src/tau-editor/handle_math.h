@@ -8,9 +8,9 @@
 namespace tau::editor::handle_math
 {
     // closest points of a ray and a line, returns the line's parameter
-    inline bool ray_line_param(vec3_t ray_origin, vec3_t ray_dir, vec3_t line_origin, vec3_t line_dir, f32& out_t)
+    inline bool ray_line_param(vec3 ray_origin, vec3 ray_dir, vec3 line_origin, vec3 line_dir, f32& out_t)
     {
-        const vec3_t w = ray_origin - line_origin;
+        const vec3 w = ray_origin - line_origin;
         const f32 a = dot(ray_dir, ray_dir);
         const f32 b = dot(ray_dir, line_dir);
         const f32 c = dot(line_dir, line_dir);
@@ -24,7 +24,7 @@ namespace tau::editor::handle_math
         return true;
     }
 
-    inline bool ray_plane(vec3_t ray_origin, vec3_t ray_dir, vec3_t plane_origin, vec3_t plane_normal, vec3_t& out_hit)
+    inline bool ray_plane(vec3 ray_origin, vec3 ray_dir, vec3 plane_origin, vec3 plane_normal, vec3& out_hit)
     {
         const f32 denom = dot(plane_normal, ray_dir);
         if (std::fabs(denom) < 1e-6f) { return false; }
@@ -36,9 +36,9 @@ namespace tau::editor::handle_math
         return true;
     }
 
-    inline f32 signed_angle(vec3_t a, vec3_t b, vec3_t axis) { return std::atan2(dot(cross(a, b), axis), dot(a, b)); }
+    inline f32 signed_angle(vec3 a, vec3 b, vec3 axis) { return std::atan2(dot(cross(a, b), axis), dot(a, b)); }
 
-    inline f32 segment_distance(vec2_t p, vec2_t a, vec2_t b)
+    inline f32 segment_distance(vec2 p, vec2 a, vec2 b)
     {
         const f32 abx = b.x - a.x;
         const f32 aby = b.y - a.y;

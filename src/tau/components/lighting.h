@@ -6,7 +6,7 @@ namespace tau
 {
     struct directional_light_t
     {
-        vec3_t color = {1.0f, 1.0f, 1.0f};
+        vec3 color = {1.0f, 1.0f, 1.0f};
         float intensity = 1.0f;
         // only one/first directional light drives the cascades
         bool casts_shadow = true;
@@ -14,7 +14,7 @@ namespace tau
 
     struct point_light_t
     {
-        vec3_t color = {1.0f, 1.0f, 1.0f};
+        vec3 color = {1.0f, 1.0f, 1.0f};
         float intensity = 10.0f;
         float radius = 10.0f;
         bool casts_shadow = true;
@@ -22,7 +22,7 @@ namespace tau
 
     struct spot_light_t
     {
-        vec3_t color = {1.0f, 1.0f, 1.0f};
+        vec3 color = {1.0f, 1.0f, 1.0f};
         float intensity = 15.0f;
         float radius = 20.0f;
         float inner_angle = 12.5f;

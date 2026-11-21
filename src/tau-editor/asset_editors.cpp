@@ -62,7 +62,7 @@ namespace tau::editor::asset_editors
 
         // mesh
 
-        void place_mesh(world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3_t& at)
+        void place_mesh(world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3& at)
         {
             const u64_t guid = guid::generate();
             const history::target_t target = history::entity_target(guid);
@@ -111,7 +111,7 @@ namespace tau::editor::asset_editors
             return {};
         }
 
-        void place_model(world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3_t& at)
+        void place_model(world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3& at)
         {
             const std::string prefab = model_prefab(vfs);
             if (!prefab.empty()) { prefab_edit::instantiate(world, ctx, prefab, ecs::NULL_ENTITY, &at); }

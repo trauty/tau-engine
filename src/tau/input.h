@@ -131,7 +131,7 @@ namespace tau::input
 
     TAU_ENGINE_API float get_mouse_y();
 
-    TAU_ENGINE_API vec2_t get_mouse_delta();
+    TAU_ENGINE_API vec2 get_mouse_delta();
 
     TAU_ENGINE_API void set_mouse_relative_mode(bool is_relative);
 

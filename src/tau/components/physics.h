@@ -32,20 +32,20 @@ namespace tau
     // one collider per body, a rigidbody without gets a unit box
     struct TAU_ENGINE_API box_collider_t
     {
-        vec3_t extents = {0.5f, 0.5f, 0.5f};
-        vec3_t offset = {0.0f, 0.0f, 0.0f};
+        vec3 extents = {0.5f, 0.5f, 0.5f};
+        vec3 offset = {0.0f, 0.0f, 0.0f};
     };
 
     struct TAU_ENGINE_API sphere_collider_t
     {
         f32 radius = 0.5f;
-        vec3_t offset = {0.0f, 0.0f, 0.0f};
+        vec3 offset = {0.0f, 0.0f, 0.0f};
     };
 
     struct TAU_ENGINE_API capsule_collider_t
     {
         f32 radius = 0.5f;
         f32 height = 2.0f;
-        vec3_t offset = {0.0f, 0.0f, 0.0f};
+        vec3 offset = {0.0f, 0.0f, 0.0f};
     };
 } // namespace tau

@@ -334,13 +334,13 @@ namespace tau::tween
 
     builder_t& builder_t::from(f32 value) { return from_values(&value, 1); }
 
-    builder_t& builder_t::from(vec2_t value)
+    builder_t& builder_t::from(vec2 value)
     {
         const f32 values[2] = {value.x, value.y};
         return from_values(values, 2);
     }
 
-    builder_t& builder_t::from(vec3_t value)
+    builder_t& builder_t::from(vec3 value)
     {
         const f32 values[3] = {value.x, value.y, value.z};
         return from_values(values, 3);

@@ -14,7 +14,7 @@ namespace tau::physics
     {
         constexpr u32_t CIRCLE_SEGMENTS = 32;
 
-        vec4_t srgb(f32 r, f32 g, f32 b, f32 a)
+        vec4 srgb(f32 r, f32 g, f32 b, f32 a)
         {
             auto linear = [](f32 c)
             {
@@ -24,7 +24,7 @@ namespace tau::physics
             return {linear(r), linear(g), linear(b), a};
         }
 
-        vec4_t color_of(const rigidbody_t* rb)
+        vec4 color_of(const rigidbody_t* rb)
         {
             if (!rb) { return srgb(160, 160, 160, 0.6f); }
             if (rb->is_sensor) { return srgb(240, 220, 60, 1.0f); }
@@ -40,11 +40,11 @@ namespace tau::physics
         // rotation + position without scale, physics scales the shape
         struct frame_t
         {
-            vec3_t origin;
-            vec3_t axes[3];
-            vec3_t scale;
+            vec3 origin;
+            vec3 axes[3];
+            vec3 scale;
 
-            vec3_t at(const vec3_t& p) const { return origin + axes[0] * p.x + axes[1] * p.y + axes[2] * p.z; }
+            vec3 at(const vec3& p) const { return origin + axes[0] * p.x + axes[1] * p.y + axes[2] * p.z; }
         };
 
         frame_t frame_of(const transform_t& transform)
@@ -53,9 +53,9 @@ namespace tau::physics
             frame.origin = translation_of(transform.world_mat);
             for (u32_t i = 0; i < 3; i++)
             {
-                const vec3_t column = transform.world_mat[i].xyz();
+                const vec3 column = transform.world_mat[i].xyz();
                 const f32 length = tau::length(column);
-                frame.axes[i] = length > 0.0f ? column * (1.0f / length) : vec3_t{};
+                frame.axes[i] = length > 0.0f ? column * (1.0f / length) : vec3{};
                 (&frame.scale.x)[i] = length;
             }
             return frame;
@@ -65,19 +65,19 @@ namespace tau::physics
         {
             std::vector<renderer::overlay_line_t>& out;
             const frame_t& frame;
-            vec4_t color;
+            vec4 color;
 
-            void line(const vec3_t& a, const vec3_t& b) { out.push_back({frame.at(a), frame.at(b), color}); }
+            void line(const vec3& a, const vec3& b) { out.push_back({frame.at(a), frame.at(b), color}); }
 
-            void arc(const vec3_t& center, f32 radius, u32_t u, u32_t v, f32 from, f32 to)
+            void arc(const vec3& center, f32 radius, u32_t u, u32_t v, f32 from, f32 to)
             {
                 const u32_t segments =
                     std::max(1u, static_cast<u32_t>(CIRCLE_SEGMENTS * (to - from) / (2.0f * std::numbers::pi_v<f32>)));
-                vec3_t previous;
+                vec3 previous;
                 for (u32_t i = 0; i <= segments; i++)
                 {
                     const f32 angle = from + (to - from) * static_cast<f32>(i) / static_cast<f32>(segments);
-                    vec3_t point = center;
+                    vec3 point = center;
                     (&point.x)[u] += std::cos(angle) * radius;
                     (&point.x)[v] += std::sin(angle) * radius;
                     if (i > 0) { line(previous, point); }
@@ -85,21 +85,21 @@ namespace tau::physics
                 }
             }
 
-            void circle(const vec3_t& center, f32 radius, u32_t u, u32_t v)
+            void circle(const vec3& center, f32 radius, u32_t u, u32_t v)
             { arc(center, radius, u, v, 0.0f, 2.0f * std::numbers::pi_v<f32>); }
         };
 
-        void add_box(lines_t& lines, const vec3_t& extents, const vec3_t& offset)
+        void add_box(lines_t& lines, const vec3& extents, const vec3& offset)
         {
-            const vec3_t scale = lines.frame.scale;
-            const vec3_t half = {std::abs(extents.x * scale.x), std::abs(extents.y * scale.y),
-                                 std::abs(extents.z * scale.z)};
-            const vec3_t center = offset * scale;
+            const vec3 scale = lines.frame.scale;
+            const vec3 half = {std::abs(extents.x * scale.x), std::abs(extents.y * scale.y),
+                               std::abs(extents.z * scale.z)};
+            const vec3 center = offset * scale;
 
             auto corner = [&](u32_t i)
             {
                 return center +
-                       vec3_t{(i & 1) ? half.x : -half.x, (i & 2) ? half.y : -half.y, (i & 4) ? half.z : -half.z};
+                       vec3{(i & 1) ? half.x : -half.x, (i & 2) ? half.y : -half.y, (i & 4) ? half.z : -half.z};
             };
             for (u32_t i = 0; i < 8; i++)
             {
@@ -110,24 +110,24 @@ namespace tau::physics
             }
         }
 
-        void add_sphere(lines_t& lines, f32 radius, const vec3_t& offset)
+        void add_sphere(lines_t& lines, f32 radius, const vec3& offset)
         {
-            const vec3_t scale = lines.frame.scale;
+            const vec3 scale = lines.frame.scale;
             const f32 r = radius * std::max({std::abs(scale.x), std::abs(scale.y), std::abs(scale.z)});
-            const vec3_t center = offset * scale;
+            const vec3 center = offset * scale;
             lines.circle(center, r, 0, 1);
             lines.circle(center, r, 0, 2);
             lines.circle(center, r, 1, 2);
         }
 
-        void add_capsule(lines_t& lines, f32 radius, f32 height, const vec3_t& offset)
+        void add_capsule(lines_t& lines, f32 radius, f32 height, const vec3& offset)
         {
-            const vec3_t scale = lines.frame.scale;
+            const vec3 scale = lines.frame.scale;
             const f32 r = radius * std::max(std::abs(scale.x), std::abs(scale.z));
             const f32 half = std::max(height * std::abs(scale.y) * 0.5f - r, 0.0f);
-            const vec3_t center = offset * scale;
-            const vec3_t top = center + vec3_t{0.0f, half, 0.0f};
-            const vec3_t bottom = center - vec3_t{0.0f, half, 0.0f};
+            const vec3 center = offset * scale;
+            const vec3 top = center + vec3{0.0f, half, 0.0f};
+            const vec3 bottom = center - vec3{0.0f, half, 0.0f};
             constexpr f32 pi = std::numbers::pi_v<f32>;
 
             lines.circle(top, r, 0, 2);
@@ -136,10 +136,10 @@ namespace tau::physics
             lines.arc(bottom, r, 0, 1, pi, 2.0f * pi);
             lines.arc(top, r, 2, 1, 0.0f, pi);
             lines.arc(bottom, r, 2, 1, pi, 2.0f * pi);
-            lines.line(top + vec3_t{r, 0.0f, 0.0f}, bottom + vec3_t{r, 0.0f, 0.0f});
-            lines.line(top - vec3_t{r, 0.0f, 0.0f}, bottom - vec3_t{r, 0.0f, 0.0f});
-            lines.line(top + vec3_t{0.0f, 0.0f, r}, bottom + vec3_t{0.0f, 0.0f, r});
-            lines.line(top - vec3_t{0.0f, 0.0f, r}, bottom - vec3_t{0.0f, 0.0f, r});
+            lines.line(top + vec3{r, 0.0f, 0.0f}, bottom + vec3{r, 0.0f, 0.0f});
+            lines.line(top - vec3{r, 0.0f, 0.0f}, bottom - vec3{r, 0.0f, 0.0f});
+            lines.line(top + vec3{0.0f, 0.0f, r}, bottom + vec3{0.0f, 0.0f, r});
+            lines.line(top - vec3{0.0f, 0.0f, r}, bottom - vec3{0.0f, 0.0f, r});
         }
     } // namespace
 

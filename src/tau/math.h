@@ -18,152 +18,152 @@ namespace tau
     constexpr f32 radians(f32 degrees) { return degrees * (PI / 180.0f); }
     constexpr f32 degrees(f32 radians) { return radians * (180.0f / PI); }
 
-    struct vec2_t
+    struct vec2
     {
         f32 x = 0.0f, y = 0.0f;
 
-        constexpr vec2_t() = default;
-        constexpr vec2_t(f32 x_, f32 y_) : x(x_), y(y_) {}
+        constexpr vec2() = default;
+        constexpr vec2(f32 x_, f32 y_) : x(x_), y(y_) {}
 
         f32& operator[](int i) { return (&x)[i]; }
         f32 operator[](int i) const { return (&x)[i]; }
     };
 
-    struct vec3_t
+    struct vec3
     {
         f32 x = 0.0f, y = 0.0f, z = 0.0f;
 
-        constexpr vec3_t() = default;
-        constexpr vec3_t(f32 x_, f32 y_, f32 z_) : x(x_), y(y_), z(z_) {}
+        constexpr vec3() = default;
+        constexpr vec3(f32 x_, f32 y_, f32 z_) : x(x_), y(y_), z(z_) {}
 
         f32& operator[](int i) { return (&x)[i]; }
         f32 operator[](int i) const { return (&x)[i]; }
     };
 
-    struct alignas(16) vec4_t
+    struct alignas(16) vec4
     {
         f32 x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
 
-        constexpr vec4_t() = default;
-        constexpr vec4_t(f32 x_, f32 y_, f32 z_, f32 w_) : x(x_), y(y_), z(z_), w(w_) {}
-        constexpr vec4_t(vec3_t v, f32 w_) : x(v.x), y(v.y), z(v.z), w(w_) {}
+        constexpr vec4() = default;
+        constexpr vec4(f32 x_, f32 y_, f32 z_, f32 w_) : x(x_), y(y_), z(z_), w(w_) {}
+        constexpr vec4(vec3 v, f32 w_) : x(v.x), y(v.y), z(v.z), w(w_) {}
 
         f32& operator[](int i) { return (&x)[i]; }
         f32 operator[](int i) const { return (&x)[i]; }
-        constexpr vec3_t xyz() const { return {x, y, z}; }
+        constexpr vec3 xyz() const { return {x, y, z}; }
     };
 
-    struct alignas(16) quat_t
+    struct alignas(16) quat
     {
         f32 x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f;
 
-        constexpr quat_t() = default;
-        constexpr quat_t(f32 x_, f32 y_, f32 z_, f32 w_) : x(x_), y(y_), z(z_), w(w_) {}
+        constexpr quat() = default;
+        constexpr quat(f32 x_, f32 y_, f32 z_, f32 w_) : x(x_), y(y_), z(z_), w(w_) {}
     };
 
-    struct alignas(16) mat4_t
+    struct alignas(16) mat4
     {
-        vec4_t cols[4] = {
+        vec4 cols[4] = {
             {1.0f, 0.0f, 0.0f, 0.0f},
             {0.0f, 1.0f, 0.0f, 0.0f},
             {0.0f, 0.0f, 1.0f, 0.0f},
             {0.0f, 0.0f, 0.0f, 1.0f}
         };
 
-        vec4_t& operator[](int c) { return cols[c]; }
-        const vec4_t& operator[](int c) const { return cols[c]; }
+        vec4& operator[](int c) { return cols[c]; }
+        const vec4& operator[](int c) const { return cols[c]; }
 
-        static constexpr mat4_t zero()
+        static constexpr mat4 zero()
         {
-            mat4_t m;
-            for (vec4_t& c : m.cols) { c = {}; }
+            mat4 m;
+            for (vec4& c : m.cols) { c = {}; }
             return m;
         }
     };
 
     // row-major affine 3x4 (VkTransformMatrixKHR, GPU instance transforms)
-    struct alignas(16) mat3x4_t
+    struct alignas(16) mat3x4
     {
-        vec4_t rows[3] = {
+        vec4 rows[3] = {
             {1.0f, 0.0f, 0.0f, 0.0f},
             {0.0f, 1.0f, 0.0f, 0.0f},
             {0.0f, 0.0f, 1.0f, 0.0f}
         };
     };
 
-    static_assert(sizeof(vec2_t) == 8 && alignof(vec2_t) == 4);
-    static_assert(sizeof(vec3_t) == 12 && alignof(vec3_t) == 4);
-    static_assert(sizeof(vec4_t) == 16 && alignof(vec4_t) == 16);
-    static_assert(sizeof(quat_t) == 16 && alignof(quat_t) == 16 && offsetof(quat_t, w) == 12);
-    static_assert(sizeof(mat4_t) == 64 && alignof(mat4_t) == 16);
-    static_assert(sizeof(mat3x4_t) == 48 && alignof(mat3x4_t) == 16);
+    static_assert(sizeof(vec2) == 8 && alignof(vec2) == 4);
+    static_assert(sizeof(vec3) == 12 && alignof(vec3) == 4);
+    static_assert(sizeof(vec4) == 16 && alignof(vec4) == 16);
+    static_assert(sizeof(quat) == 16 && alignof(quat) == 16 && offsetof(quat, w) == 12);
+    static_assert(sizeof(mat4) == 64 && alignof(mat4) == 16);
+    static_assert(sizeof(mat3x4) == 48 && alignof(mat3x4) == 16);
 
     // --- vec2 ---
 
-    constexpr vec2_t operator+(vec2_t a, vec2_t b) { return {a.x + b.x, a.y + b.y}; }
-    constexpr vec2_t operator-(vec2_t a, vec2_t b) { return {a.x - b.x, a.y - b.y}; }
-    constexpr vec2_t operator-(vec2_t a) { return {-a.x, -a.y}; }
-    constexpr vec2_t operator*(vec2_t a, vec2_t b) { return {a.x * b.x, a.y * b.y}; }
-    constexpr vec2_t operator*(vec2_t a, f32 s) { return {a.x * s, a.y * s}; }
-    constexpr vec2_t operator*(f32 s, vec2_t a) { return {a.x * s, a.y * s}; }
-    constexpr vec2_t operator/(vec2_t a, f32 s) { return {a.x / s, a.y / s}; }
-    constexpr vec2_t& operator+=(vec2_t& a, vec2_t b) { return a = a + b; }
-    constexpr vec2_t& operator-=(vec2_t& a, vec2_t b) { return a = a - b; }
-    constexpr vec2_t& operator*=(vec2_t& a, f32 s) { return a = a * s; }
+    constexpr vec2 operator+(vec2 a, vec2 b) { return {a.x + b.x, a.y + b.y}; }
+    constexpr vec2 operator-(vec2 a, vec2 b) { return {a.x - b.x, a.y - b.y}; }
+    constexpr vec2 operator-(vec2 a) { return {-a.x, -a.y}; }
+    constexpr vec2 operator*(vec2 a, vec2 b) { return {a.x * b.x, a.y * b.y}; }
+    constexpr vec2 operator*(vec2 a, f32 s) { return {a.x * s, a.y * s}; }
+    constexpr vec2 operator*(f32 s, vec2 a) { return {a.x * s, a.y * s}; }
+    constexpr vec2 operator/(vec2 a, f32 s) { return {a.x / s, a.y / s}; }
+    constexpr vec2& operator+=(vec2& a, vec2 b) { return a = a + b; }
+    constexpr vec2& operator-=(vec2& a, vec2 b) { return a = a - b; }
+    constexpr vec2& operator*=(vec2& a, f32 s) { return a = a * s; }
 
-    constexpr f32 dot(vec2_t a, vec2_t b) { return a.x * b.x + a.y * b.y; }
+    constexpr f32 dot(vec2 a, vec2 b) { return a.x * b.x + a.y * b.y; }
     // z of the 3d cross product
-    constexpr f32 cross(vec2_t a, vec2_t b) { return a.x * b.y - a.y * b.x; }
-    inline f32 length_sq(vec2_t v) { return dot(v, v); }
-    inline f32 length(vec2_t v) { return std::sqrt(dot(v, v)); }
+    constexpr f32 cross(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
+    inline f32 length_sq(vec2 v) { return dot(v, v); }
+    inline f32 length(vec2 v) { return std::sqrt(dot(v, v)); }
 
-    inline vec2_t normalize(vec2_t v)
+    inline vec2 normalize(vec2 v)
     {
         const f32 len = length(v);
-        return len > 0.0f ? v * (1.0f / len) : vec2_t{};
+        return len > 0.0f ? v * (1.0f / len) : vec2{};
     }
 
     // --- vec3 ---
 
-    constexpr vec3_t operator+(vec3_t a, vec3_t b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-    constexpr vec3_t operator-(vec3_t a, vec3_t b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-    constexpr vec3_t operator-(vec3_t a) { return {-a.x, -a.y, -a.z}; }
-    constexpr vec3_t operator*(vec3_t a, vec3_t b) { return {a.x * b.x, a.y * b.y, a.z * b.z}; }
-    constexpr vec3_t operator*(vec3_t a, f32 s) { return {a.x * s, a.y * s, a.z * s}; }
-    constexpr vec3_t operator*(f32 s, vec3_t a) { return {a.x * s, a.y * s, a.z * s}; }
-    constexpr vec3_t operator/(vec3_t a, f32 s) { return {a.x / s, a.y / s, a.z / s}; }
-    constexpr vec3_t& operator+=(vec3_t& a, vec3_t b) { return a = a + b; }
-    constexpr vec3_t& operator-=(vec3_t& a, vec3_t b) { return a = a - b; }
-    constexpr vec3_t& operator*=(vec3_t& a, f32 s) { return a = a * s; }
-    constexpr bool operator==(vec3_t a, vec3_t b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+    constexpr vec3 operator+(vec3 a, vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+    constexpr vec3 operator-(vec3 a, vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+    constexpr vec3 operator-(vec3 a) { return {-a.x, -a.y, -a.z}; }
+    constexpr vec3 operator*(vec3 a, vec3 b) { return {a.x * b.x, a.y * b.y, a.z * b.z}; }
+    constexpr vec3 operator*(vec3 a, f32 s) { return {a.x * s, a.y * s, a.z * s}; }
+    constexpr vec3 operator*(f32 s, vec3 a) { return {a.x * s, a.y * s, a.z * s}; }
+    constexpr vec3 operator/(vec3 a, f32 s) { return {a.x / s, a.y / s, a.z / s}; }
+    constexpr vec3& operator+=(vec3& a, vec3 b) { return a = a + b; }
+    constexpr vec3& operator-=(vec3& a, vec3 b) { return a = a - b; }
+    constexpr vec3& operator*=(vec3& a, f32 s) { return a = a * s; }
+    constexpr bool operator==(vec3 a, vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 
-    constexpr f32 dot(vec3_t a, vec3_t b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-    constexpr vec3_t cross(vec3_t a, vec3_t b)
+    constexpr f32 dot(vec3 a, vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+    constexpr vec3 cross(vec3 a, vec3 b)
     { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
-    inline f32 length_sq(vec3_t v) { return dot(v, v); }
-    inline f32 length(vec3_t v) { return std::sqrt(dot(v, v)); }
-    constexpr vec3_t lerp(vec3_t a, vec3_t b, f32 t) { return a + (b - a) * t; }
+    inline f32 length_sq(vec3 v) { return dot(v, v); }
+    inline f32 length(vec3 v) { return std::sqrt(dot(v, v)); }
+    constexpr vec3 lerp(vec3 a, vec3 b, f32 t) { return a + (b - a) * t; }
 
-    inline vec3_t normalize(vec3_t v)
+    inline vec3 normalize(vec3 v)
     {
         const f32 len = length(v);
-        return len > 0.0f ? v * (1.0f / len) : vec3_t{};
+        return len > 0.0f ? v * (1.0f / len) : vec3{};
     }
 
     // --- vec4 ---
 
-    constexpr vec4_t operator+(vec4_t a, vec4_t b) { return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w}; }
-    constexpr vec4_t operator-(vec4_t a, vec4_t b) { return {a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w}; }
-    constexpr vec4_t operator*(vec4_t a, f32 s) { return {a.x * s, a.y * s, a.z * s, a.w * s}; }
-    constexpr vec4_t operator*(f32 s, vec4_t a) { return a * s; }
-    constexpr f32 dot(vec4_t a, vec4_t b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
+    constexpr vec4 operator+(vec4 a, vec4 b) { return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w}; }
+    constexpr vec4 operator-(vec4 a, vec4 b) { return {a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w}; }
+    constexpr vec4 operator*(vec4 a, f32 s) { return {a.x * s, a.y * s, a.z * s, a.w * s}; }
+    constexpr vec4 operator*(f32 s, vec4 a) { return a * s; }
+    constexpr f32 dot(vec4 a, vec4 b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
 
     // --- quat ---
 
-    constexpr f32 dot(quat_t a, quat_t b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
-    constexpr quat_t conjugate(quat_t q) { return {-q.x, -q.y, -q.z, q.w}; }
+    constexpr f32 dot(quat a, quat b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
+    constexpr quat conjugate(quat q) { return {-q.x, -q.y, -q.z, q.w}; }
 
-    inline quat_t normalize(quat_t q)
+    inline quat normalize(quat q)
     {
         const f32 len_sq = dot(q, q);
         if (len_sq <= 0.0f) { return {}; }
@@ -171,7 +171,7 @@ namespace tau
         return {q.x * inv, q.y * inv, q.z * inv, q.w * inv};
     }
 
-    inline quat_t inverse(quat_t q)
+    inline quat inverse(quat q)
     {
         const f32 len_sq = dot(q, q);
         if (len_sq <= 0.0f) { return {}; }
@@ -179,32 +179,32 @@ namespace tau
         return {-q.x * inv, -q.y * inv, -q.z * inv, q.w * inv};
     }
 
-    constexpr quat_t operator*(quat_t a, quat_t b)
+    constexpr quat operator*(quat a, quat b)
     {
         return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
                 a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
     }
 
-    inline quat_t angle_axis(f32 angle_radians, vec3_t axis)
+    inline quat angle_axis(f32 angle_radians, vec3 axis)
     {
-        const vec3_t n = normalize(axis);
+        const vec3 n = normalize(axis);
         const f32 s = std::sin(angle_radians * 0.5f);
         return {n.x * s, n.y * s, n.z * s, std::cos(angle_radians * 0.5f)};
     }
 
-    inline vec3_t rotate(quat_t q, vec3_t v)
+    inline vec3 rotate(quat q, vec3 v)
     {
-        const vec3_t u = {q.x, q.y, q.z};
-        const vec3_t t = cross(u, v) * 2.0f;
+        const vec3 u = {q.x, q.y, q.z};
+        const vec3 t = cross(u, v) * 2.0f;
         return v + t * q.w + cross(u, t);
     }
 
-    inline vec3_t right(quat_t q) { return rotate(q, {1.0f, 0.0f, 0.0f}); }
-    inline vec3_t up(quat_t q) { return rotate(q, {0.0f, 1.0f, 0.0f}); }
-    inline vec3_t forward(quat_t q) { return rotate(q, {0.0f, 0.0f, 1.0f}); }
+    inline vec3 right(quat q) { return rotate(q, {1.0f, 0.0f, 0.0f}); }
+    inline vec3 up(quat q) { return rotate(q, {0.0f, 1.0f, 0.0f}); }
+    inline vec3 forward(quat q) { return rotate(q, {0.0f, 0.0f, 1.0f}); }
 
     // shortest arc, normalized lerp when nearly parallel
-    inline quat_t slerp(quat_t a, quat_t b, f32 t)
+    inline quat slerp(quat a, quat b, f32 t)
     {
         f32 cos_theta = dot(a, b);
         if (cos_theta < 0.0f)
@@ -221,12 +221,12 @@ namespace tau
             wa = std::sin(wa * theta) * inv_sin;
             wb = std::sin(wb * theta) * inv_sin;
         }
-        return normalize(quat_t{a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb});
+        return normalize(quat{a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb});
     }
 
     // --- mat4 ---
 
-    inline vec4_t operator*(const mat4_t& m, vec4_t v)
+    inline vec4 operator*(const mat4& m, vec4 v)
     {
 #ifdef TAU_MATH_SSE
         __m128 r = _mm_mul_ps(_mm_load_ps(&m.cols[0].x), _mm_set1_ps(v.x));
@@ -239,7 +239,7 @@ namespace tau
         r = _mm_add_ps(r, _mm_mul_ps(_mm_load_ps(&m.cols[2].x), _mm_set1_ps(v.z)));
         r = _mm_add_ps(r, _mm_mul_ps(_mm_load_ps(&m.cols[3].x), _mm_set1_ps(v.w)));
     #endif
-        vec4_t out;
+        vec4 out;
         _mm_store_ps(&out.x, r);
         return out;
 #else
@@ -247,23 +247,23 @@ namespace tau
 #endif
     }
 
-    inline mat4_t operator*(const mat4_t& a, const mat4_t& b)
+    inline mat4 operator*(const mat4& a, const mat4& b)
     {
-        mat4_t out;
+        mat4 out;
         for (int c = 0; c < 4; c++) { out.cols[c] = a * b.cols[c]; }
         return out;
     }
 
-    inline vec3_t transform_point(const mat4_t& m, vec3_t p) { return (m * vec4_t{p, 1.0f}).xyz(); }
-    inline vec3_t transform_dir(const mat4_t& m, vec3_t d) { return (m * vec4_t{d, 0.0f}).xyz(); }
+    inline vec3 transform_point(const mat4& m, vec3 p) { return (m * vec4{p, 1.0f}).xyz(); }
+    inline vec3 transform_dir(const mat4& m, vec3 d) { return (m * vec4{d, 0.0f}).xyz(); }
 
-    constexpr vec3_t translation_of(const mat4_t& m) { return m.cols[3].xyz(); }
-    inline vec3_t scale_of(const mat4_t& m)
+    constexpr vec3 translation_of(const mat4& m) { return m.cols[3].xyz(); }
+    inline vec3 scale_of(const mat4& m)
     { return {length(m.cols[0].xyz()), length(m.cols[1].xyz()), length(m.cols[2].xyz())}; }
 
-    constexpr mat4_t transpose(const mat4_t& m)
+    constexpr mat4 transpose(const mat4& m)
     {
-        mat4_t t;
+        mat4 t;
         for (int c = 0; c < 4; c++)
         {
             for (int r = 0; r < 4; r++) { t.cols[c][r] = m.cols[r][c]; }
@@ -272,7 +272,7 @@ namespace tau
     }
 
     // general 4x4 inverse (cofactors); a singular matrix gives zero
-    inline mat4_t inverse(const mat4_t& m)
+    inline mat4 inverse(const mat4& m)
     {
         const f32 a = m[0][0], b = m[0][1], c = m[0][2], d = m[0][3];
         const f32 e = m[1][0], f = m[1][1], g = m[1][2], h = m[1][3];
@@ -282,7 +282,7 @@ namespace tau
         const f32 kp_lo = k * q - l * p, jp_ln = j * q - l * o, jo_kn = j * p - k * o;
         const f32 ip_lm = i * q - l * n, io_km = i * p - k * n, in_jm = i * o - j * n;
 
-        mat4_t r;
+        mat4 r;
         r[0][0] = f * kp_lo - g * jp_ln + h * jo_kn;
         r[1][0] = -(e * kp_lo - g * ip_lm + h * io_km);
         r[2][0] = e * jp_ln - f * ip_lm + h * in_jm;
@@ -311,12 +311,12 @@ namespace tau
 
         const f32 det = a * r[0][0] + b * r[1][0] + c * r[2][0] + d * r[3][0];
         const f32 inv_det = det != 0.0f ? 1.0f / det : 0.0f;
-        for (vec4_t& col : r.cols) { col = col * inv_det; }
+        for (vec4& col : r.cols) { col = col * inv_det; }
         return r;
     }
 
     // the rotation part of m (unit columns)
-    inline mat4_t mat_from_quat(quat_t q)
+    inline mat4 mat_from_quat(quat q)
     {
         const f32 len_sq = dot(q, q);
         const f32 s = len_sq > 0.0f ? 2.0f / len_sq : 0.0f;
@@ -324,7 +324,7 @@ namespace tau
         const f32 xy = s * q.x * q.y, xz = s * q.x * q.z, yz = s * q.y * q.z;
         const f32 wx = s * q.w * q.x, wy = s * q.w * q.y, wz = s * q.w * q.z;
 
-        mat4_t m;
+        mat4 m;
         m[0] = {1.0f - yy - zz, xy + wz, xz - wy, 0.0f};
         m[1] = {xy - wz, 1.0f - xx - zz, yz + wx, 0.0f};
         m[2] = {xz + wy, yz - wx, 1.0f - xx - yy, 0.0f};
@@ -332,7 +332,7 @@ namespace tau
     }
 
     // from the upper 3x3, which must be a rotation (normalize scaled columns first)
-    inline quat_t quat_from_mat(const mat4_t& m)
+    inline quat quat_from_mat(const mat4& m)
     {
         const f32 trace = m[0][0] + m[1][1] + m[2][2];
         if (trace >= 0.0f)
@@ -355,9 +355,9 @@ namespace tau
     }
 
     // translation * rotation * scale
-    inline mat4_t trs(vec3_t t, quat_t r, vec3_t s)
+    inline mat4 trs(vec3 t, quat r, vec3 s)
     {
-        mat4_t m = mat_from_quat(r);
+        mat4 m = mat_from_quat(r);
         m[0] = m[0] * s.x;
         m[1] = m[1] * s.y;
         m[2] = m[2] * s.z;
@@ -366,11 +366,11 @@ namespace tau
     }
 
     // inverse of trs for matrices without shear
-    inline void decompose(const mat4_t& m, vec3_t& t, quat_t& r, vec3_t& s)
+    inline void decompose(const mat4& m, vec3& t, quat& r, vec3& s)
     {
         t = translation_of(m);
         s = scale_of(m);
-        vec3_t x = m[0].xyz() / s.x, y = m[1].xyz() / s.y, z = m[2].xyz() / s.z;
+        vec3 x = m[0].xyz() / s.x, y = m[1].xyz() / s.y, z = m[2].xyz() / s.z;
         if (dot(cross(x, y), z) < 0.0f)
         {
             s = -s;
@@ -378,16 +378,16 @@ namespace tau
             y = -y;
             z = -z;
         }
-        mat4_t rot;
+        mat4 rot;
         rot[0] = {x, 0.0f};
         rot[1] = {y, 0.0f};
         rot[2] = {z, 0.0f};
         r = quat_from_mat(rot);
     }
 
-    inline quat_t rotation_of(const mat4_t& m)
+    inline quat rotation_of(const mat4& m)
     {
-        mat4_t rot;
+        mat4 rot;
         rot[0] = {normalize(m[0].xyz()), 0.0f};
         rot[1] = {normalize(m[1].xyz()), 0.0f};
         rot[2] = {normalize(m[2].xyz()), 0.0f};
@@ -395,42 +395,42 @@ namespace tau
     }
 
     // m * rotation about z
-    inline mat4_t rotate_z(const mat4_t& m, f32 angle_radians)
+    inline mat4 rotate_z(const mat4& m, f32 angle_radians)
     {
         const f32 c = std::cos(angle_radians), s = std::sin(angle_radians);
-        mat4_t r;
+        mat4 r;
         r[0] = {c, s, 0.0f, 0.0f};
         r[1] = {-s, c, 0.0f, 0.0f};
         return m * r;
     }
 
-    inline mat3x4_t to_mat3x4(const mat4_t& m)
+    inline mat3x4 to_mat3x4(const mat4& m)
     {
-        mat3x4_t out;
+        mat3x4 out;
         for (int row = 0; row < 3; row++) { out.rows[row] = {m[0][row], m[1][row], m[2][row], m[3][row]}; }
         return out;
     }
 
     // --- euler (x, y, z in radians) ---
 
-    inline mat4_t mat_from_euler_xyz(vec3_t e)
+    inline mat4 mat_from_euler_xyz(vec3 e)
     {
         const f32 sx = std::sin(e.x), cx = std::cos(e.x);
         const f32 sy = std::sin(e.y), cy = std::cos(e.y);
         const f32 sz = std::sin(e.z), cz = std::cos(e.z);
 
-        mat4_t m;
+        mat4 m;
         m[0] = {cy * cz, cz * sx * sy + cx * sz, -cx * cz * sy + sx * sz, 0.0f};
         m[1] = {-cy * sz, cx * cz - sx * sy * sz, cz * sx + cx * sy * sz, 0.0f};
         m[2] = {sy, -cy * sx, cx * cy, 0.0f};
         return m;
     }
 
-    inline quat_t quat_from_euler_xyz(vec3_t e) { return quat_from_mat(mat_from_euler_xyz(e)); }
+    inline quat quat_from_euler_xyz(vec3 e) { return quat_from_mat(mat_from_euler_xyz(e)); }
 
-    inline vec3_t euler_xyz(quat_t q)
+    inline vec3 euler_xyz(quat q)
     {
-        const mat4_t m = mat_from_quat(q);
+        const mat4 m = mat_from_quat(q);
         if (m[2][0] < 1.0f)
         {
             if (m[2][0] > -1.0f)
@@ -444,13 +444,13 @@ namespace tau
 
     // --- view and projection (zero to one depth, when i switch to right hand this goes away) ---
 
-    inline mat4_t look_at_lh(vec3_t eye, vec3_t center, vec3_t up)
+    inline mat4 look_at_lh(vec3 eye, vec3 center, vec3 up)
     {
-        const vec3_t f = normalize(center - eye);
-        const vec3_t s = normalize(cross(up, f));
-        const vec3_t u = cross(f, s);
+        const vec3 f = normalize(center - eye);
+        const vec3 s = normalize(cross(up, f));
+        const vec3 u = cross(f, s);
 
-        mat4_t m;
+        mat4 m;
         m[0] = {s.x, u.x, f.x, 0.0f};
         m[1] = {s.y, u.y, f.y, 0.0f};
         m[2] = {s.z, u.z, f.z, 0.0f};
@@ -458,13 +458,13 @@ namespace tau
         return m;
     }
 
-    inline mat4_t look_at_rh(vec3_t eye, vec3_t center, vec3_t up)
+    inline mat4 look_at_rh(vec3 eye, vec3 center, vec3 up)
     {
-        const vec3_t f = normalize(center - eye);
-        const vec3_t s = normalize(cross(f, up));
-        const vec3_t u = cross(s, f);
+        const vec3 f = normalize(center - eye);
+        const vec3 s = normalize(cross(f, up));
+        const vec3 u = cross(s, f);
 
-        mat4_t m;
+        mat4 m;
         m[0] = {s.x, u.x, -f.x, 0.0f};
         m[1] = {s.y, u.y, -f.y, 0.0f};
         m[2] = {s.z, u.z, -f.z, 0.0f};
@@ -472,12 +472,12 @@ namespace tau
         return m;
     }
 
-    inline mat4_t perspective_lh_zo(f32 fovy_radians, f32 aspect, f32 near_z, f32 far_z)
+    inline mat4 perspective_lh_zo(f32 fovy_radians, f32 aspect, f32 near_z, f32 far_z)
     {
         const f32 f = 1.0f / std::tan(fovy_radians * 0.5f);
         const f32 fn = 1.0f / (near_z - far_z);
 
-        mat4_t m = mat4_t::zero();
+        mat4 m = mat4::zero();
         m[0][0] = f / aspect;
         m[1][1] = f;
         m[2][2] = -far_z * fn;
@@ -486,12 +486,12 @@ namespace tau
         return m;
     }
 
-    inline mat4_t perspective_rh_zo(f32 fovy_radians, f32 aspect, f32 near_z, f32 far_z)
+    inline mat4 perspective_rh_zo(f32 fovy_radians, f32 aspect, f32 near_z, f32 far_z)
     {
         const f32 f = 1.0f / std::tan(fovy_radians * 0.5f);
         const f32 fn = 1.0f / (near_z - far_z);
 
-        mat4_t m = mat4_t::zero();
+        mat4 m = mat4::zero();
         m[0][0] = f / aspect;
         m[1][1] = f;
         m[2][2] = far_z * fn;
@@ -501,11 +501,11 @@ namespace tau
     }
 
     // reverse z
-    inline mat4_t perspective_reverse_infinite_lh_zo(f32 fovy_radians, f32 aspect, f32 near_z)
+    inline mat4 perspective_reverse_infinite_lh_zo(f32 fovy_radians, f32 aspect, f32 near_z)
     {
         const f32 focal = 1.0f / std::tan(fovy_radians * 0.5f);
 
-        mat4_t m = mat4_t::zero();
+        mat4 m = mat4::zero();
         m[0][0] = focal / aspect;
         m[1][1] = focal;
         m[2][3] = 1.0f;
@@ -513,11 +513,11 @@ namespace tau
         return m;
     }
 
-    inline mat4_t perspective_reverse_infinite_rh_zo(f32 fovy_radians, f32 aspect, f32 near_z)
+    inline mat4 perspective_reverse_infinite_rh_zo(f32 fovy_radians, f32 aspect, f32 near_z)
     {
         const f32 focal = 1.0f / std::tan(fovy_radians * 0.5f);
 
-        mat4_t m = mat4_t::zero();
+        mat4 m = mat4::zero();
         m[0][0] = focal / aspect;
         m[1][1] = focal;
         m[2][3] = -1.0f;
@@ -525,13 +525,13 @@ namespace tau
         return m;
     }
 
-    inline mat4_t ortho_lh_zo(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z)
+    inline mat4 ortho_lh_zo(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z)
     {
         const f32 rl = 1.0f / (right - left);
         const f32 tb = 1.0f / (top - bottom);
         const f32 fn = -1.0f / (far_z - near_z);
 
-        mat4_t m = mat4_t::zero();
+        mat4 m = mat4::zero();
         m[0][0] = 2.0f * rl;
         m[1][1] = 2.0f * tb;
         m[2][2] = -fn;
@@ -539,13 +539,13 @@ namespace tau
         return m;
     }
 
-    inline mat4_t ortho_rh_zo(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z)
+    inline mat4 ortho_rh_zo(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z)
     {
         const f32 rl = 1.0f / (right - left);
         const f32 tb = 1.0f / (top - bottom);
         const f32 fn = -1.0f / (far_z - near_z);
 
-        mat4_t m = mat4_t::zero();
+        mat4 m = mat4::zero();
         m[0][0] = 2.0f * rl;
         m[1][1] = 2.0f * tb;
         m[2][2] = fn;
@@ -553,15 +553,15 @@ namespace tau
         return m;
     }
 
-    inline void flip_clip_y(mat4_t& proj)
+    inline void flip_clip_y(mat4& proj)
     {
-        for (vec4_t& c : proj.cols) { c.y = -c.y; }
+        for (vec4& c : proj.cols) { c.y = -c.y; }
     }
 
     // left, right, bottom, top, near, far; xyz unit normals pointing inside, w the distance
-    inline void frustum_planes(const mat4_t& view_proj, vec4_t out[6])
+    inline void frustum_planes(const mat4& view_proj, vec4 out[6])
     {
-        const mat4_t t = transpose(view_proj);
+        const mat4 t = transpose(view_proj);
         out[0] = t[3] + t[0];
         out[1] = t[3] - t[0];
         out[2] = t[3] + t[1];
@@ -571,7 +571,7 @@ namespace tau
         for (int i = 0; i < 6; i++)
         {
             const f32 len = length(out[i].xyz());
-            out[i] = len > 0.0f ? out[i] * (1.0f / len) : vec4_t{};
+            out[i] = len > 0.0f ? out[i] * (1.0f / len) : vec4{};
         }
     }
 } // namespace tau

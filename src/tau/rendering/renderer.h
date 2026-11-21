@@ -96,8 +96,8 @@ namespace tau::renderer
 
     TAU_ENGINE_API u32_t get_target_texture_id(u32_t name_hash);
 
-    TAU_ENGINE_API void submit_color_view(u32_t name_hash, const mat4_t& view, const mat4_t& projection,
-                                          const mat4_t& view_proj, const vec3_t& position, u32_t color_target_hash,
+    TAU_ENGINE_API void submit_color_view(u32_t name_hash, const mat4& view, const mat4& projection,
+                                          const mat4& view_proj, const vec3& position, u32_t color_target_hash,
                                           u32_t depth_target_hash, VkExtent2D extent, f32 z_near = 0.0f,
                                           f32 z_far = 0.0f);
 
@@ -105,15 +105,15 @@ namespace tau::renderer
 
     TAU_ENGINE_API void set_view_post_processing(u32_t view_name_hash, bool enabled);
 
-    TAU_ENGINE_API void set_fallback_light(bool enabled, const vec3_t& direction = {0.0f, -1.0f, 0.0f},
-                                           const vec3_t& color = {1.0f, 1.0f, 1.0f}, f32 intensity = 1.0f);
+    TAU_ENGINE_API void set_fallback_light(bool enabled, const vec3& direction = {0.0f, -1.0f, 0.0f},
+                                           const vec3& color = {1.0f, 1.0f, 1.0f}, f32 intensity = 1.0f);
 
-    TAU_ENGINE_API void submit_shadow_cascade_view(u32_t name_hash, const mat4_t& view, const mat4_t& projection,
+    TAU_ENGINE_API void submit_shadow_cascade_view(u32_t name_hash, const mat4& view, const mat4& projection,
                                                    u32_t atlas_target_hash, const image_desc_t& atlas_desc,
                                                    VkRect2D atlas_rect, f32 split_far, f32 normal_bias_texels = 1.5f,
                                                    f32 depth_bias_ndc = 0.0f);
 
-    TAU_ENGINE_API void submit_punctual_shadow_view(u32_t name_hash, const mat4_t& view, const mat4_t& projection,
+    TAU_ENGINE_API void submit_punctual_shadow_view(u32_t name_hash, const mat4& view, const mat4& projection,
                                                     const image_desc_t& atlas_desc, VkRect2D atlas_rect,
                                                     u32_t shadow_slot, f32 range, bool needs_render = true,
                                                     f32 normal_bias_texels = 2.0f, f32 depth_bias_ndc = 0.0f);
@@ -122,19 +122,19 @@ namespace tau::renderer
 
     TAU_ENGINE_API void submit_punctual_shadow_slot(ecs::entity_t light, u32_t shadow_slot);
 
-    TAU_ENGINE_API bool get_primary_camera_position(ecs::registry_t& reg, vec3_t& out_pos);
+    TAU_ENGINE_API bool get_primary_camera_position(ecs::registry_t& reg, vec3& out_pos);
 
     struct primary_view_info_t
     {
-        vec3_t position;
-        vec3_t forward;
+        vec3 position;
+        vec3 forward;
         f32 fov_rad;
         f32 aspect;
         f32 z_near;
         f32 z_far;
 
         // inward facing planes
-        vec4_t frustum_planes[6];
+        vec4 frustum_planes[6];
         bool has_frustum_planes = false;
     };
 

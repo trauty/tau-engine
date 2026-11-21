@@ -43,7 +43,7 @@ namespace tau::editor::asset_editors
 
         // dragged into the viewport at a world point, or onto an entity in the hierarchy (null: none)
         void (*drop_in_viewport)(world_t& world, editor_context_t& ctx, const std::string& vfs,
-                                 const vec3_t& at) = nullptr;
+                                 const vec3& at) = nullptr;
         void (*drop_on_entity)(world_t& world, editor_context_t& ctx, const std::string& vfs,
                                ecs::entity_t parent) = nullptr;
 

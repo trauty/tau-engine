@@ -18,7 +18,7 @@ namespace tau
         u32_t index_count = 0;
         u32_t submesh_count = 0;
         u32_t stream_count = 0;
-        vec3_t local_center;
+        vec3 local_center;
         f32 local_radius = 0.0f;
     };
 
@@ -26,7 +26,7 @@ namespace tau
     {
         u32_t first_index = 0;
         u32_t index_count = 0;
-        vec3_t local_center;
+        vec3 local_center;
         f32 local_radius = 0.0f;
 
         u64_t material_guid = 0;

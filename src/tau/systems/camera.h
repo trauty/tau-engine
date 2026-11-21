@@ -11,7 +11,6 @@ namespace tau::camera_system
 
     TAU_ENGINE_API void update(ecs::registry_t& reg);
 
-    TAU_ENGINE_API void build_view_projection(vec3_t eye, vec3_t forward, vec3_t up, f32 fov_deg, f32 aspect,
-                                              f32 near_plane, f32 far_plane, mat4_t& out_view, mat4_t& out_projection,
-                                              mat4_t& out_view_proj);
+    TAU_ENGINE_API void build_view_projection(vec3 eye, vec3 forward, vec3 up, f32 fov_deg, f32 aspect, f32 near_plane,
+                                              f32 far_plane, mat4& out_view, mat4& out_projection, mat4& out_view_proj);
 } // namespace tau::camera_system

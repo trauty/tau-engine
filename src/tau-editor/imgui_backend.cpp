@@ -52,8 +52,8 @@ namespace tau::editor::imgui
 
     struct imgui_material_gpu_t
     {
-        vec2_t scale;
-        vec2_t translate;
+        vec2 scale;
+        vec2 translate;
         VkDeviceAddress vertex_buffer;
     };
 
@@ -377,8 +377,8 @@ namespace tau::editor::imgui
             global_vtx_offset += cmd_list->VtxBuffer.Size;
         }
 
-        vec2_t scale = {2.0f / draw_data->DisplaySize.x, 2.0f / draw_data->DisplaySize.y};
-        vec2_t translate = {-1.0f - draw_data->DisplayPos.x * scale.x, -1.0f - draw_data->DisplayPos.y * scale.y};
+        vec2 scale = {2.0f / draw_data->DisplaySize.x, 2.0f / draw_data->DisplaySize.y};
+        vec2 translate = {-1.0f - draw_data->DisplayPos.x * scale.x, -1.0f - draw_data->DisplayPos.y * scale.y};
 
         imgui_material_gpu_t gpu_mat = {
             .scale = scale,
@@ -821,11 +821,11 @@ namespace tau::editor::imgui
                         global_vtx_offset += cmd_list->VtxBuffer.Size;
                     }
 
-                    vec2_t scale = {
+                    vec2 scale = {
                         2.0f / draw_data->DisplaySize.x,
                         2.0f / draw_data->DisplaySize.y,
                     };
-                    vec2_t translate = {
+                    vec2 translate = {
                         -1.0f - draw_data->DisplayPos.x * scale.x,
                         -1.0f - draw_data->DisplayPos.y * scale.y,
                     };

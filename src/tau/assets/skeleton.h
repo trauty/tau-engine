@@ -16,10 +16,10 @@ namespace tau
         std::string name;
         // -1 for a root
         i32 parent = -1;
-        vec3_t translation;
-        quat_t rotation;
-        vec3_t scale = {1.0f, 1.0f, 1.0f};
-        mat4_t inverse_bind;
+        vec3 translation;
+        quat rotation;
+        vec3 scale = {1.0f, 1.0f, 1.0f};
+        mat4 inverse_bind;
     };
 
     // joints are pose arrays, not entities; in the skin's order, which the mesh's joint indices use

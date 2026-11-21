@@ -177,7 +177,7 @@ namespace tau::input
 
     float get_mouse_y() { return input_state.mouse_y; }
 
-    vec2_t get_mouse_delta() { return {input_state.delta_mouse_x, input_state.delta_mouse_y}; }
+    vec2 get_mouse_delta() { return {input_state.delta_mouse_x, input_state.delta_mouse_y}; }
 
     void set_mouse_relative_mode(bool is_relative)
     { SDL_SetWindowRelativeMouseMode(tau::window::get_window(), is_relative); }

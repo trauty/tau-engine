@@ -60,13 +60,13 @@ namespace tau::reflection
         }
 
         const std::array POD_TYPES = {
-            pod_entry<bool, scene_value_type_e::BOOL>(),   pod_entry<i32, scene_value_type_e::I32>(),
-            pod_entry<u32, scene_value_type_e::U32>(),     pod_entry<i64, scene_value_type_e::I64>(),
-            pod_entry<i64_t, scene_value_type_e::I64>(),   pod_entry<u64, scene_value_type_e::U64>(),
-            pod_entry<u64_t, scene_value_type_e::U64>(),   pod_entry<f32, scene_value_type_e::F32>(),
-            pod_entry<f64, scene_value_type_e::F64>(),     pod_entry<vec2_t, scene_value_type_e::VEC2>(),
-            pod_entry<vec3_t, scene_value_type_e::VEC3>(), pod_entry<vec4_t, scene_value_type_e::VEC4>(),
-            pod_entry<quat_t, scene_value_type_e::QUAT>(), pod_entry<color_t, scene_value_type_e::COLOR>(),
+            pod_entry<bool, scene_value_type_e::BOOL>(), pod_entry<i32, scene_value_type_e::I32>(),
+            pod_entry<u32, scene_value_type_e::U32>(),   pod_entry<i64, scene_value_type_e::I64>(),
+            pod_entry<i64_t, scene_value_type_e::I64>(), pod_entry<u64, scene_value_type_e::U64>(),
+            pod_entry<u64_t, scene_value_type_e::U64>(), pod_entry<f32, scene_value_type_e::F32>(),
+            pod_entry<f64, scene_value_type_e::F64>(),   pod_entry<vec2, scene_value_type_e::VEC2>(),
+            pod_entry<vec3, scene_value_type_e::VEC3>(), pod_entry<vec4, scene_value_type_e::VEC4>(),
+            pod_entry<quat, scene_value_type_e::QUAT>(), pod_entry<color_t, scene_value_type_e::COLOR>(),
         };
     } // namespace
 
@@ -99,11 +99,7 @@ namespace tau::reflection
             if (type.reflect) { type.reflect(ctx); }
         }
 
-        factory<vec3_t>{ctx}
-            .type("vec3_t"_h, "vec3_t")
-            .data<&vec3_t::x>("x"_h)
-            .data<&vec3_t::y>("y"_h)
-            .data<&vec3_t::z>("z"_h);
+        factory<vec3>{ctx}.type("vec3"_h, "vec3").data<&vec3::x>("x"_h).data<&vec3::y>("y"_h).data<&vec3::z>("z"_h);
 
         reflect_transform(ctx);
         reflect_camera(ctx);

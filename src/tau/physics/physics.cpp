@@ -89,8 +89,8 @@ namespace tau::physics::detail
         JPH::BodyID a;
         JPH::BodyID b;
         contact_phase_e phase;
-        vec3_t point;
-        vec3_t normal;
+        vec3 point;
+        vec3 normal;
     };
 
     class contact_listener_t final : public JPH::ContactListener
@@ -143,8 +143,8 @@ namespace tau::physics::detail
 
     struct pose_t
     {
-        vec3_t position;
-        quat_t rotation;
+        vec3 position;
+        quat rotation;
     };
 
     // simulated side of a rigidbody, not reflected
@@ -156,8 +156,8 @@ namespace tau::physics::detail
 
         // last pose physics wrote/took: local (static, dynamic), world (kinematic)
         // transform differs: someone else moved it
-        vec3_t position;
-        quat_t rotation;
+        vec3 position;
+        quat rotation;
         bool was_active = false;
 
         pose_t previous;
@@ -165,12 +165,12 @@ namespace tau::physics::detail
 
         bool set_linear = false;
         bool set_angular = false;
-        vec3_t linear_velocity;
-        vec3_t angular_velocity;
-        vec3_t force;
-        vec3_t torque;
-        vec3_t impulse;
-        vec3_t angular_impulse;
+        vec3 linear_velocity;
+        vec3 angular_velocity;
+        vec3 force;
+        vec3 torque;
+        vec3 impulse;
+        vec3 angular_impulse;
     };
 
     namespace
@@ -207,10 +207,10 @@ namespace tau::physics::detail
             JPH::Factory::sInstance = nullptr;
         }
 
-        JPH::Vec3 to_jolt(const vec3_t& v) { return {v.x, v.y, v.z}; }
-        JPH::Quat to_jolt(const quat_t& q) { return JPH::Quat(q.x, q.y, q.z, q.w).Normalized(); }
-        vec3_t from_jolt(JPH::Vec3Arg v) { return {v.GetX(), v.GetY(), v.GetZ()}; }
-        quat_t from_jolt(JPH::QuatArg q) { return {q.GetX(), q.GetY(), q.GetZ(), q.GetW()}; }
+        JPH::Vec3 to_jolt(const vec3& v) { return {v.x, v.y, v.z}; }
+        JPH::Quat to_jolt(const quat& q) { return JPH::Quat(q.x, q.y, q.z, q.w).Normalized(); }
+        vec3 from_jolt(JPH::Vec3Arg v) { return {v.GetX(), v.GetY(), v.GetZ()}; }
+        quat from_jolt(JPH::QuatArg q) { return {q.GetX(), q.GetY(), q.GetZ(), q.GetW()}; }
 
         u64_t user_data(ecs::entity_t entity) { return (1ull << 32) | static_cast<u64_t>(entt::to_integral(entity)); }
         ecs::entity_t entity_of(u64_t data)
@@ -249,7 +249,7 @@ namespace tau::physics::detail
             return mix(seed, static_cast<u64_t>(bits));
         }
 
-        u64_t mix(u64_t seed, const vec3_t& v) { return mix(mix(mix(seed, v.x), v.y), v.z); }
+        u64_t mix(u64_t seed, const vec3& v) { return mix(mix(mix(seed, v.x), v.y), v.z); }
 
         // changes needing a body rebuild; shape changes are cheap
         u64_t settings_key(const rigidbody_t& rb)
@@ -272,12 +272,12 @@ namespace tau::physics::detail
             const ecs::entity_t parent = transform.get_parent();
             if (parent == ecs::NULL_ENTITY) { return {transform.local_position, transform.local_rotation}; }
 
-            const mat4_t parent_world = transform_system::compose_world(reg, parent);
+            const mat4 parent_world = transform_system::compose_world(reg, parent);
             return {transform_point(parent_world, transform.local_position),
                     rotation_of(parent_world) * transform.local_rotation};
         }
 
-        vec3_t world_scale(ecs::registry_t& reg, const transform_t& transform)
+        vec3 world_scale(ecs::registry_t& reg, const transform_t& transform)
         {
             const ecs::entity_t parent = transform.get_parent();
             if (parent == ecs::NULL_ENTITY) { return transform.local_scale; }
@@ -295,7 +295,7 @@ namespace tau::physics::detail
                 return;
             }
 
-            const mat4_t parent_world = transform_system::compose_world(reg, parent);
+            const mat4 parent_world = transform_system::compose_world(reg, parent);
             transform.local_position = transform_point(inverse(parent_world), world.position);
             transform.local_rotation = normalize(inverse(rotation_of(parent_world)) * world.rotation);
         }
@@ -304,27 +304,26 @@ namespace tau::physics::detail
 
         bool same_pose(const pose_t& a, const pose_t& b)
         {
-            return std::memcmp(&a.position, &b.position, sizeof(vec3_t)) == 0 &&
-                   std::memcmp(&a.rotation, &b.rotation, sizeof(quat_t)) == 0;
+            return std::memcmp(&a.position, &b.position, sizeof(vec3)) == 0 &&
+                   std::memcmp(&a.rotation, &b.rotation, sizeof(quat)) == 0;
         }
 
         pose_t blend(const pose_t& from, const pose_t& to, f32 t)
         {
-            const quat_t& q0 = from.rotation;
-            const quat_t& q1 = to.rotation;
+            const quat& q0 = from.rotation;
+            const quat& q1 = to.rotation;
 
             const f32 sign = q0.x * q1.x + q0.y * q1.y + q0.z * q1.z + q0.w * q1.w < 0.0f ? -1.0f : 1.0f;
             const f32 u = 1.0f - t;
             const f32 v = t * sign;
-            const quat_t rotation = {q0.x * u + q1.x * v, q0.y * u + q1.y * v, q0.z * u + q1.z * v,
-                                     q0.w * u + q1.w * v};
+            const quat rotation = {q0.x * u + q1.x * v, q0.y * u + q1.y * v, q0.z * u + q1.z * v, q0.w * u + q1.w * v};
             return {from.position + (to.position - from.position) * t, normalize(rotation)};
         }
 
         f32 max_abs(f32 a, f32 b) { return std::max(std::abs(a), std::abs(b)); }
 
         // first of box, sphere, capsule
-        u64_t shape_key(ecs::registry_t& reg, ecs::entity_t entity, const vec3_t& scale)
+        u64_t shape_key(ecs::registry_t& reg, ecs::entity_t entity, const vec3& scale)
         {
             u64_t key = mix(14695981039346656037ull, scale);
             if (const box_collider_t* box = reg.try_get<box_collider_t>(entity))
@@ -342,10 +341,10 @@ namespace tau::physics::detail
             return mix(key, u64_t{0});
         }
 
-        JPH::RefConst<JPH::Shape> build_shape(ecs::registry_t& reg, ecs::entity_t entity, const vec3_t& scale)
+        JPH::RefConst<JPH::Shape> build_shape(ecs::registry_t& reg, ecs::entity_t entity, const vec3& scale)
         {
             JPH::RefConst<JPH::Shape> shape;
-            vec3_t offset;
+            vec3 offset;
 
             if (const sphere_collider_t* sphere = reg.try_get<sphere_collider_t>(entity);
                 sphere && !reg.all_of<box_collider_t>(entity))
@@ -369,9 +368,9 @@ namespace tau::physics::detail
                 const box_collider_t* box = reg.try_get<box_collider_t>(entity);
                 if (!box) { box = &fallback; }
 
-                const vec3_t half = {std::max(std::abs(box->extents.x * scale.x), 0.001f),
-                                     std::max(std::abs(box->extents.y * scale.y), 0.001f),
-                                     std::max(std::abs(box->extents.z * scale.z), 0.001f)};
+                const vec3 half = {std::max(std::abs(box->extents.x * scale.x), 0.001f),
+                                   std::max(std::abs(box->extents.y * scale.y), 0.001f),
+                                   std::max(std::abs(box->extents.z * scale.z), 0.001f)};
                 const f32 convex_radius =
                     std::min(JPH::cDefaultConvexRadius, std::min(std::min(half.x, half.y), half.z));
                 shape = new JPH::BoxShape(to_jolt(half), convex_radius);
@@ -398,7 +397,7 @@ namespace tau::physics::detail
         }
 
         void create_body(state_t& state, ecs::registry_t& reg, ecs::entity_t entity, const rigidbody_t& rb,
-                         const transform_t& transform, body_t& body, const vec3_t& scale)
+                         const transform_t& transform, body_t& body, const vec3& scale)
         {
             JPH::BodyInterface& bodies = state.system.GetBodyInterface();
 
@@ -587,7 +586,7 @@ namespace tau::physics::detail
         for (auto [entity, rb, transform] : reg.view<rigidbody_t, transform_t>().each())
         {
             body_t& body = reg.get_or_emplace<body_t>(entity);
-            const vec3_t scale = world_scale(reg, transform);
+            const vec3 scale = world_scale(reg, transform);
 
             if (!body.id.IsInvalid() && body.settings_key != settings_key(rb))
             {
@@ -636,8 +635,8 @@ namespace tau::physics::detail
             if (rb.type == body_type_e::KINEMATIC)
             {
                 const pose_t pose = world_pose(reg, transform);
-                const bool moved = !(pose.position == body.position) ||
-                                   std::memcmp(&pose.rotation, &body.rotation, sizeof(quat_t)) != 0;
+                const bool moved =
+                    !(pose.position == body.position) || std::memcmp(&pose.rotation, &body.rotation, sizeof(quat)) != 0;
                 if (moved || bodies.IsActive(body.id))
                 {
                     bodies.MoveKinematic(body.id, to_jolt(pose.position), to_jolt(pose.rotation), dt);
@@ -648,7 +647,7 @@ namespace tau::physics::detail
             }
 
             const bool moved = !(transform.local_position == body.position) ||
-                               std::memcmp(&transform.local_rotation, &body.rotation, sizeof(quat_t)) != 0;
+                               std::memcmp(&transform.local_rotation, &body.rotation, sizeof(quat)) != 0;
             if (moved)
             {
                 const pose_t pose = world_pose(reg, transform);
@@ -760,7 +759,7 @@ namespace tau::physics
         return state->in_fixed_step ? state->step_contacts : state->frame_contacts;
     }
 
-    bool raycast(const world_t& world, const vec3_t& origin, const vec3_t& direction, f32 max_distance, ray_hit_t& out,
+    bool raycast(const world_t& world, const vec3& origin, const vec3& direction, f32 max_distance, ray_hit_t& out,
                  const query_filter_t& filter)
     {
         const state_t* state = detail::state_of(world);
@@ -777,7 +776,7 @@ namespace tau::physics
         return true;
     }
 
-    std::vector<ray_hit_t> raycast_all(const world_t& world, const vec3_t& origin, const vec3_t& direction,
+    std::vector<ray_hit_t> raycast_all(const world_t& world, const vec3& origin, const vec3& direction,
                                        f32 max_distance, const query_filter_t& filter)
     {
         std::vector<ray_hit_t> out;
@@ -800,7 +799,7 @@ namespace tau::physics
         return out;
     }
 
-    std::vector<ecs::entity_t> overlap_sphere(const world_t& world, const vec3_t& center, f32 radius,
+    std::vector<ecs::entity_t> overlap_sphere(const world_t& world, const vec3& center, f32 radius,
                                               const query_filter_t& filter)
     {
         JPH::SphereShape sphere(std::max(radius, 0.001f));
@@ -808,11 +807,11 @@ namespace tau::physics
         return detail::overlapping(world, sphere, JPH::RMat44::sTranslation(detail::to_jolt(center)), filter);
     }
 
-    std::vector<ecs::entity_t> overlap_box(const world_t& world, const vec3_t& center, const vec3_t& half_extents,
-                                           const quat_t& rotation, const query_filter_t& filter)
+    std::vector<ecs::entity_t> overlap_box(const world_t& world, const vec3& center, const vec3& half_extents,
+                                           const quat& rotation, const query_filter_t& filter)
     {
-        const vec3_t half = {std::max(std::abs(half_extents.x), 0.001f), std::max(std::abs(half_extents.y), 0.001f),
-                             std::max(std::abs(half_extents.z), 0.001f)};
+        const vec3 half = {std::max(std::abs(half_extents.x), 0.001f), std::max(std::abs(half_extents.y), 0.001f),
+                           std::max(std::abs(half_extents.z), 0.001f)};
         JPH::BoxShape box(detail::to_jolt(half),
                           std::min(JPH::cDefaultConvexRadius, std::min(std::min(half.x, half.y), half.z)));
         box.SetEmbedded();
@@ -820,15 +819,15 @@ namespace tau::physics
             world, box, JPH::RMat44::sRotationTranslation(detail::to_jolt(rotation), detail::to_jolt(center)), filter);
     }
 
-    vec3_t linear_velocity(const world_t& world, ecs::entity_t entity)
+    vec3 linear_velocity(const world_t& world, ecs::entity_t entity)
     {
         const body_t* body = detail::existing_body(world, entity);
         if (!body) { return {}; }
-        if (body->id.IsInvalid()) { return body->set_linear ? body->linear_velocity : vec3_t{}; }
+        if (body->id.IsInvalid()) { return body->set_linear ? body->linear_velocity : vec3{}; }
         return detail::from_jolt(world.physics_state->system.GetBodyInterface().GetLinearVelocity(body->id));
     }
 
-    void set_linear_velocity(world_t& world, ecs::entity_t entity, const vec3_t& velocity)
+    void set_linear_velocity(world_t& world, ecs::entity_t entity, const vec3& velocity)
     {
         body_t* body = detail::dynamic_body(world, entity);
         if (!body) { return; }
@@ -841,15 +840,15 @@ namespace tau::physics
         world.physics_state->system.GetBodyInterface().SetLinearVelocity(body->id, detail::to_jolt(velocity));
     }
 
-    vec3_t angular_velocity(const world_t& world, ecs::entity_t entity)
+    vec3 angular_velocity(const world_t& world, ecs::entity_t entity)
     {
         const body_t* body = detail::existing_body(world, entity);
         if (!body) { return {}; }
-        if (body->id.IsInvalid()) { return body->set_angular ? body->angular_velocity : vec3_t{}; }
+        if (body->id.IsInvalid()) { return body->set_angular ? body->angular_velocity : vec3{}; }
         return detail::from_jolt(world.physics_state->system.GetBodyInterface().GetAngularVelocity(body->id));
     }
 
-    void set_angular_velocity(world_t& world, ecs::entity_t entity, const vec3_t& velocity)
+    void set_angular_velocity(world_t& world, ecs::entity_t entity, const vec3& velocity)
     {
         body_t* body = detail::dynamic_body(world, entity);
         if (!body) { return; }
@@ -862,7 +861,7 @@ namespace tau::physics
         world.physics_state->system.GetBodyInterface().SetAngularVelocity(body->id, detail::to_jolt(velocity));
     }
 
-    void add_force(world_t& world, ecs::entity_t entity, const vec3_t& force)
+    void add_force(world_t& world, ecs::entity_t entity, const vec3& force)
     {
         body_t* body = detail::dynamic_body(world, entity);
         if (!body) { return; }
@@ -873,7 +872,7 @@ namespace tau::physics
         }
     }
 
-    void add_torque(world_t& world, ecs::entity_t entity, const vec3_t& torque)
+    void add_torque(world_t& world, ecs::entity_t entity, const vec3& torque)
     {
         body_t* body = detail::dynamic_body(world, entity);
         if (!body) { return; }
@@ -884,7 +883,7 @@ namespace tau::physics
         }
     }
 
-    void add_impulse(world_t& world, ecs::entity_t entity, const vec3_t& impulse)
+    void add_impulse(world_t& world, ecs::entity_t entity, const vec3& impulse)
     {
         body_t* body = detail::dynamic_body(world, entity);
         if (!body) { return; }
@@ -895,7 +894,7 @@ namespace tau::physics
         }
     }
 
-    void add_angular_impulse(world_t& world, ecs::entity_t entity, const vec3_t& impulse)
+    void add_angular_impulse(world_t& world, ecs::entity_t entity, const vec3& impulse)
     {
         body_t* body = detail::dynamic_body(world, entity);
         if (!body) { return; }
@@ -931,14 +930,14 @@ namespace tau::physics
         return ((state->layer_pairs.collides[a] >> b) & 1u) != 0;
     }
 
-    void set_gravity(world_t& world, const vec3_t& gravity)
+    void set_gravity(world_t& world, const vec3& gravity)
     {
         if (state_t* state = detail::state_of(world)) { state->system.SetGravity(detail::to_jolt(gravity)); }
     }
 
-    vec3_t gravity(const world_t& world)
+    vec3 gravity(const world_t& world)
     {
         const state_t* state = detail::state_of(world);
-        return state ? detail::from_jolt(state->system.GetGravity()) : vec3_t{};
+        return state ? detail::from_jolt(state->system.GetGravity()) : vec3{};
     }
 } // namespace tau::physics

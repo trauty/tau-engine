@@ -69,11 +69,11 @@ namespace tau::tween
         constexpr value_kind_e kind_of()
         {
             if constexpr (std::is_same_v<M, f32>) { return value_kind_e::F32; }
-            else if constexpr (std::is_same_v<M, vec2_t>) { return value_kind_e::VEC2; }
-            else if constexpr (std::is_same_v<M, vec3_t>) { return value_kind_e::VEC3; }
+            else if constexpr (std::is_same_v<M, vec2>) { return value_kind_e::VEC2; }
+            else if constexpr (std::is_same_v<M, vec3>) { return value_kind_e::VEC3; }
             else
             {
-                static_assert(std::is_same_v<M, color_t>, "tweens take f32, vec2_t, vec3_t or color_t fields");
+                static_assert(std::is_same_v<M, color_t>, "tweens take f32, vec2, vec3 or color_t fields");
                 return value_kind_e::COLOR;
             }
         }
@@ -116,8 +116,8 @@ namespace tau::tween
         TAU_ENGINE_API builder_t& speed(f32 scale);
 
         TAU_ENGINE_API builder_t& from(f32 value);
-        TAU_ENGINE_API builder_t& from(vec2_t value);
-        TAU_ENGINE_API builder_t& from(vec3_t value);
+        TAU_ENGINE_API builder_t& from(vec2 value);
+        TAU_ENGINE_API builder_t& from(vec3 value);
         TAU_ENGINE_API builder_t& from(color_t value);
 
         operator handle_t() const { return m_handle; }

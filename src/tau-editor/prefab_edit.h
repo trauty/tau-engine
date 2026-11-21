@@ -25,7 +25,7 @@ namespace tau::editor::prefab_edit
 
     std::string create(world_t& world, ecs::entity_t root, const std::string& dir);
     ecs::entity_t instantiate(world_t& world, editor_context_t& ctx, const std::string& prefab_path,
-                              ecs::entity_t parent, const vec3_t* position);
+                              ecs::entity_t parent, const vec3* position);
 
     ecs::entity_t instance_root(world_t& world, ecs::entity_t entity);
     std::string prefab_path(world_t& world, ecs::entity_t root);

@@ -15,13 +15,13 @@ namespace tau::editor::viewport_input
 {
     struct ray_t
     {
-        vec3_t origin;
-        vec3_t direction;
+        vec3 origin;
+        vec3 direction;
     };
 
-    ray_t ray_through(const editor_context_t& ctx, vec2_t pixel);
-    bool mouse_pixel(const editor_context_t& ctx, vec2_t& out);
-    bool to_pixel(const editor_context_t& ctx, vec3_t world, vec2_t& out);
+    ray_t ray_through(const editor_context_t& ctx, vec2 pixel);
+    bool mouse_pixel(const editor_context_t& ctx, vec2& out);
+    bool to_pixel(const editor_context_t& ctx, vec3 world, vec2& out);
     bool mouse_ray(const editor_context_t& ctx, ray_t& out);
 
     // RMB: camera, LMB: handles, then selection

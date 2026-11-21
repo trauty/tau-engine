@@ -44,7 +44,7 @@ namespace tau::editor::panels
         struct degree_edit_t
         {
             ImGuiID widget = 0;
-            tau::vec3_t degrees{};
+            tau::vec3 degrees{};
         };
 
         degree_edit_t active_degree_edit;
@@ -222,7 +222,7 @@ namespace tau::editor::panels
             return changed;
         }
 
-        bool draw_vec3(const char* label, tau::vec3_t& vec, const tau::reflection::editor_prop_t* prop)
+        bool draw_vec3(const char* label, tau::vec3& vec, const tau::reflection::editor_prop_t* prop)
         {
             if (!prop || prop->unit != tau::reflection::unit_e::RADIANS)
             {
@@ -236,7 +236,7 @@ namespace tau::editor::panels
 
             const ImGuiID widget = ImGui::GetID(label);
 
-            tau::vec3_t deg = {wrap_deg(vec.x * RAD2DEG), wrap_deg(vec.y * RAD2DEG), wrap_deg(vec.z * RAD2DEG)};
+            tau::vec3 deg = {wrap_deg(vec.x * RAD2DEG), wrap_deg(vec.y * RAD2DEG), wrap_deg(vec.z * RAD2DEG)};
             if (active_degree_edit.widget == widget) { deg = active_degree_edit.degrees; }
 
             bool changed = false;
@@ -259,7 +259,7 @@ namespace tau::editor::panels
 
         bool draw_pod(const char* label, void* data, scene_value_type_e tag, const tau::reflection::editor_prop_t* prop)
         {
-            if (tag == scene_value_type_e::VEC3) { return draw_vec3(label, *static_cast<tau::vec3_t*>(data), prop); }
+            if (tag == scene_value_type_e::VEC3) { return draw_vec3(label, *static_cast<tau::vec3*>(data), prop); }
             if (tag == scene_value_type_e::COLOR) { return ImGui::ColorEdit4(label, static_cast<f32*>(data)); }
 
             const pod_layout_t layout = pod_layout(tag);

@@ -403,7 +403,7 @@ namespace tau::editor::prefab_edit
             .color = IM_COL32(90, 180, 230, 255),
             .open = [](world_t&, editor_context_t&, const std::string& vfs)
             { commands::push(commands::command_e::OPEN_PREFAB, vfs); },
-            .drop_in_viewport = [](world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3_t& at)
+            .drop_in_viewport = [](world_t& world, editor_context_t& ctx, const std::string& vfs, const vec3& at)
             { instantiate(world, ctx, vfs, ecs::NULL_ENTITY, &at); },
             .drop_on_entity = [](world_t& world, editor_context_t& ctx, const std::string& vfs, ecs::entity_t parent)
             { instantiate(world, ctx, vfs, parent, nullptr); },
@@ -464,7 +464,7 @@ namespace tau::editor::prefab_edit
     }
 
     ecs::entity_t instantiate(world_t& world, editor_context_t& ctx, const std::string& prefab_path,
-                              ecs::entity_t parent, const vec3_t* position)
+                              ecs::entity_t parent, const vec3* position)
     {
         const asset_t<prefab_t> handle = assets::load<prefab_t>(prefab_path);
         const prefab::lookup_t lookup = prefab::asset_lookup();

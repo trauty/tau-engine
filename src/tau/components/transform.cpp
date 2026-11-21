@@ -8,10 +8,9 @@ namespace tau::reflection
 {
     namespace
     {
-        vec3_t get_transform_rot_euler(const tau::transform_t& transform)
-        { return euler_xyz(transform.local_rotation); }
+        vec3 get_transform_rot_euler(const tau::transform_t& transform) { return euler_xyz(transform.local_rotation); }
 
-        void set_transform_rot_euler(tau::transform_t& transform, const vec3_t& euler)
+        void set_transform_rot_euler(tau::transform_t& transform, const vec3& euler)
         { transform.local_rotation = quat_from_euler_xyz(euler); }
     } // namespace
 

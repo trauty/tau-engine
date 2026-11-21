@@ -54,8 +54,8 @@ namespace tau::renderer
             overlay_depth_e depth;
             item_mode_e mode;
             asset_t<mesh_t> mesh;
-            mat4_t world;
-            vec4_t color;
+            mat4 world;
+            vec4 color;
             u32_t first_line;
             u32_t line_count;
             f32 line_width;
@@ -127,7 +127,7 @@ namespace tau::renderer
                 const pending_item_t& item = pending[i];
                 gpu_overlay_item_t& gpu = gpu_items[i];
 
-                std::memcpy(gpu.model.data, &item.world, sizeof(mat4_t));
+                std::memcpy(gpu.model.data, &item.world, sizeof(mat4));
                 std::memcpy(gpu.color, &item.color, sizeof(gpu.color));
                 gpu.mode = static_cast<u32_t>(item.mode);
                 gpu.line_width = item.line_width;
@@ -189,7 +189,7 @@ namespace tau::renderer
         }
     } // namespace
 
-    void submit_overlay_mesh(u32_t view_hash, asset_t<mesh_t> mesh, const mat4_t& world, vec4_t color,
+    void submit_overlay_mesh(u32_t view_hash, asset_t<mesh_t> mesh, const mat4& world, vec4 color,
                              overlay_depth_e depth)
     { pending.push_back({view_hash, depth, item_mode_e::MESH, mesh, world, color, 0, 0, 0.0f}); }
 
@@ -212,8 +212,8 @@ namespace tau::renderer
                            depth,
                            item_mode_e::LINES,
                            {},
-                           mat4_t{},
-                           vec4_t(1.0f, 1.0f, 1.0f, 1.0f),
+                           mat4{},
+                           vec4(1.0f, 1.0f, 1.0f, 1.0f),
                            first,
                            static_cast<u32_t>(lines.size()),
                            width_px});

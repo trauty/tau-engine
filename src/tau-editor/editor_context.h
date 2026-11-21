@@ -47,10 +47,10 @@ namespace tau
         u32_t viewport_width = 0;
         u32_t viewport_height = 0;
 
-        vec2_t viewport_screen_pos;
-        vec2_t viewport_screen_size;
-        mat4_t view;
-        mat4_t view_proj;
+        vec2 viewport_screen_pos;
+        vec2 viewport_screen_size;
+        mat4 view;
+        mat4 view_proj;
 
         handle_mode_e handle_mode = handle_mode_e::MOVE;
         bool handles_local = true;
@@ -62,7 +62,7 @@ namespace tau
         f32 snap_scale = 0.1f;
 
         bool click_pending = false;
-        vec2_t click_pos;
+        vec2 click_pos;
         bool click_additive = false;
         bool scroll_to_selection = false;
 

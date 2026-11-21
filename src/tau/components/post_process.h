@@ -26,7 +26,7 @@ namespace tau
     {
         asset_t<material_t> overrides;
         bool is_global = false;
-        vec3_t extents = {5.0f, 5.0f, 5.0f};
+        vec3 extents = {5.0f, 5.0f, 5.0f};
         f32 blend_distance = 2.0f;
         f32 weight = 1.0f;
         i32_t priority = 0;

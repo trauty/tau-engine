@@ -40,7 +40,7 @@ namespace tau::transform_system
         bool same_bits(const T& a, const T& b)
         { return std::memcmp(&a, &b, sizeof(T)) == 0; }
 
-        void build_local(const vec3_t& position, const quat_t& rotation, const vec3_t& scale, mat4_t& out)
+        void build_local(const vec3& position, const quat& rotation, const vec3& scale, mat4& out)
         { out = trs(position, rotation, scale); }
     } // namespace
 
@@ -243,8 +243,8 @@ namespace tau::transform_system
                 transform_t& transform = view.get<transform_t>(entity);
 
                 const shown_pose_t* pose = shown.contains(entity) ? &shown.get(entity) : nullptr;
-                const vec3_t& position = pose ? pose->position : transform.local_position;
-                const quat_t& rotation = pose ? pose->rotation : transform.local_rotation;
+                const vec3& position = pose ? pose->position : transform.local_position;
+                const quat& rotation = pose ? pose->rotation : transform.local_rotation;
 
                 if (transform.is_dirty || !same_bits(position, transform.built_position) ||
                     !same_bits(rotation, transform.built_rotation) ||
@@ -275,34 +275,34 @@ namespace tau::transform_system
         }
     };
 
-    void set_local_position(ecs::registry_t& reg, ecs::entity_t entity, vec3_t new_pos)
+    void set_local_position(ecs::registry_t& reg, ecs::entity_t entity, vec3 new_pos)
     {
         transform_t& transform = reg.get<transform_t>(entity);
         transform.local_position = new_pos;
     }
 
-    void set_local_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat_t new_rot)
+    void set_local_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat new_rot)
     {
         transform_t& transform = reg.get<transform_t>(entity);
         transform.local_rotation = new_rot;
     }
 
-    void set_local_scale(ecs::registry_t& reg, ecs::entity_t entity, vec3_t new_scale)
+    void set_local_scale(ecs::registry_t& reg, ecs::entity_t entity, vec3 new_scale)
     {
         transform_t& transform = reg.get<transform_t>(entity);
         transform.local_scale = new_scale;
     }
 
-    vec3_t get_world_position(ecs::registry_t& reg, ecs::entity_t entity)
+    vec3 get_world_position(ecs::registry_t& reg, ecs::entity_t entity)
     { return translation_of(reg.get<transform_t>(entity).world_mat); }
 
-    vec3_t get_world_scale(ecs::registry_t& reg, ecs::entity_t entity)
+    vec3 get_world_scale(ecs::registry_t& reg, ecs::entity_t entity)
     { return scale_of(reg.get<transform_t>(entity).world_mat); }
 
-    quat_t get_world_rotation(ecs::registry_t& reg, ecs::entity_t entity)
+    quat get_world_rotation(ecs::registry_t& reg, ecs::entity_t entity)
     { return rotation_of(reg.get<transform_t>(entity).world_mat); }
 
-    void set_world_position(ecs::registry_t& reg, ecs::entity_t entity, vec3_t target_world_pos)
+    void set_world_position(ecs::registry_t& reg, ecs::entity_t entity, vec3 target_world_pos)
     {
         transform_t& t = reg.get<transform_t>(entity);
 
@@ -317,7 +317,7 @@ namespace tau::transform_system
         set_local_position(reg, entity, transform_point(inverse(parent_t.world_mat), target_world_pos));
     }
 
-    void set_world_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat_t world_rot)
+    void set_world_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat world_rot)
     {
         transform_t& t = reg.get<transform_t>(entity);
 
@@ -327,7 +327,7 @@ namespace tau::transform_system
             return;
         }
 
-        const quat_t parent_inv = inverse(get_world_rotation(reg, t.get_parent()));
+        const quat parent_inv = inverse(get_world_rotation(reg, t.get_parent()));
         t.local_rotation = normalize(parent_inv * world_rot);
     }
 
@@ -336,9 +336,9 @@ namespace tau::transform_system
 
     void set_parent_keep_world(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent, ecs::entity_t before)
     {
-        const vec3_t position = get_world_position(reg, child);
-        const quat_t rotation = get_world_rotation(reg, child);
-        const vec3_t scale = get_world_scale(reg, child);
+        const vec3 position = get_world_position(reg, child);
+        const quat rotation = get_world_rotation(reg, child);
+        const vec3 scale = get_world_scale(reg, child);
 
         internal_t::set_parent(reg, child, parent, before);
         if (reg.get<transform_t>(child).get_parent() != parent) { return; }
@@ -347,16 +347,15 @@ namespace tau::transform_system
         set_world_rotation(reg, child, rotation);
 
         // per axis, exact under a uniformly scaled parent
-        const vec3_t parent_scale =
-            parent != ecs::NULL_ENTITY ? get_world_scale(reg, parent) : vec3_t{1.0f, 1.0f, 1.0f};
+        const vec3 parent_scale = parent != ecs::NULL_ENTITY ? get_world_scale(reg, parent) : vec3{1.0f, 1.0f, 1.0f};
         auto ratio = [](f32 a, f32 b) { return std::fabs(b) > 1e-6f ? a / b : a; };
         reg.get<transform_t>(child).local_scale = {ratio(scale.x, parent_scale.x), ratio(scale.y, parent_scale.y),
                                                    ratio(scale.z, parent_scale.z)};
     }
 
-    mat4_t compose_world(const ecs::registry_t& reg, ecs::entity_t entity)
+    mat4 compose_world(const ecs::registry_t& reg, ecs::entity_t entity)
     {
-        mat4_t world;
+        mat4 world;
         for (ecs::entity_t e = entity; e != ecs::NULL_ENTITY;)
         {
             const transform_t& t = reg.get<transform_t>(e);

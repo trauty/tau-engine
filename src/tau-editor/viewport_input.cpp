@@ -24,43 +24,43 @@ namespace tau::editor::viewport_input
         constexpr f32 CLICK_SLOP_PX = 4.0f;
 
         bool pressed_in_viewport = false;
-        vec2_t press_pos;
+        vec2 press_pos;
 
-        vec2_t mouse_in_viewport(const editor_context_t& ctx)
+        vec2 mouse_in_viewport(const editor_context_t& ctx)
         {
             const ImVec2 mouse = ImGui::GetMousePos();
             return {mouse.x - ctx.viewport_screen_pos.x, mouse.y - ctx.viewport_screen_pos.y};
         }
 
-        bool inside(const editor_context_t& ctx, vec2_t pixel)
+        bool inside(const editor_context_t& ctx, vec2 pixel)
         {
             return pixel.x >= 0.0f && pixel.y >= 0.0f && pixel.x < ctx.viewport_screen_size.x &&
                    pixel.y < ctx.viewport_screen_size.y;
         }
     } // namespace
 
-    ray_t ray_through(const editor_context_t& ctx, vec2_t pixel)
+    ray_t ray_through(const editor_context_t& ctx, vec2 pixel)
     {
         const f32 ndc_x = pixel.x / ctx.viewport_screen_size.x * 2.0f - 1.0f;
         const f32 ndc_y = pixel.y / ctx.viewport_screen_size.y * 2.0f - 1.0f;
 
         // reverse z: the near plane is depth 1
-        const vec4_t world = inverse(ctx.view_proj) * vec4_t{ndc_x, ndc_y, 1.0f, 1.0f};
-        const vec3_t on_near = world.xyz() / world.w;
-        const vec3_t eye = translation_of(inverse(ctx.view));
+        const vec4 world = inverse(ctx.view_proj) * vec4{ndc_x, ndc_y, 1.0f, 1.0f};
+        const vec3 on_near = world.xyz() / world.w;
+        const vec3 eye = translation_of(inverse(ctx.view));
 
         return {eye, normalize(on_near - eye)};
     }
 
-    bool mouse_pixel(const editor_context_t& ctx, vec2_t& out)
+    bool mouse_pixel(const editor_context_t& ctx, vec2& out)
     {
         out = mouse_in_viewport(ctx);
         return inside(ctx, out);
     }
 
-    bool to_pixel(const editor_context_t& ctx, vec3_t world, vec2_t& out)
+    bool to_pixel(const editor_context_t& ctx, vec3 world, vec2& out)
     {
-        const vec4_t clip = ctx.view_proj * vec4_t{world, 1.0f};
+        const vec4 clip = ctx.view_proj * vec4{world, 1.0f};
         if (clip.w <= 1e-5f) { return false; }
 
         out = {(clip.x / clip.w * 0.5f + 0.5f) * ctx.viewport_screen_size.x,
@@ -70,7 +70,7 @@ namespace tau::editor::viewport_input
 
     bool mouse_ray(const editor_context_t& ctx, ray_t& out)
     {
-        const vec2_t pixel = mouse_in_viewport(ctx);
+        const vec2 pixel = mouse_in_viewport(ctx);
         if (!inside(ctx, pixel)) { return false; }
 
         out = ray_through(ctx, pixel);
@@ -80,11 +80,11 @@ namespace tau::editor::viewport_input
     void frame_entities(world_t& world, editor_context_t& ctx, std::span<const ecs::entity_t> entities)
     {
         bool any = false;
-        vec3_t center = {0.0f, 0.0f, 0.0f};
+        vec3 center = {0.0f, 0.0f, 0.0f};
         f32 radius = 0.0f;
-        auto merge = [&](vec3_t c, f32 r)
+        auto merge = [&](vec3 c, f32 r)
         {
-            const vec3_t offset = c - center;
+            const vec3 offset = c - center;
             const f32 distance = std::sqrt(dot(offset, offset));
             if (!any || distance + radius <= r)
             {
@@ -110,8 +110,8 @@ namespace tau::editor::viewport_input
             const mesh_t* mesh = assets::get(world.registry.get<mesh_renderer_t>(entity).mesh);
             if (!mesh) { continue; }
 
-            const vec3_t c = transform_point(world.registry.get<transform_t>(entity).world_mat, mesh->local_center);
-            const vec3_t scale = transform_system::get_world_scale(world.registry, entity);
+            const vec3 c = transform_point(world.registry.get<transform_t>(entity).world_mat, mesh->local_center);
+            const vec3 scale = transform_system::get_world_scale(world.registry, entity);
             merge(c, std::max(mesh->local_radius * std::max({scale.x, scale.y, scale.z}), 0.01f));
         }
 
@@ -157,7 +157,7 @@ namespace tau::editor::viewport_input
         }
 
         // press in the viewport, release within the slop: a click
-        const vec2_t pixel = mouse_in_viewport(ctx);
+        const vec2 pixel = mouse_in_viewport(ctx);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ctx.is_viewport_hovered && !flying && !ctx.handle_hovered &&
             inside(ctx, pixel))
         {

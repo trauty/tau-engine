@@ -39,11 +39,10 @@ namespace tau::cooker::mesh
             }
         }
 
-        void sphere_of(const std::vector<vertex_t>& vertices, std::span<const u32_t> indices, vec3_t& center,
-                       f32& radius)
+        void sphere_of(const std::vector<vertex_t>& vertices, std::span<const u32_t> indices, vec3& center, f32& radius)
         {
-            vec3_t lo = {FLT_MAX, FLT_MAX, FLT_MAX};
-            vec3_t hi = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+            vec3 lo = {FLT_MAX, FLT_MAX, FLT_MAX};
+            vec3 hi = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
             for (const u32_t index : indices)
             {
                 const f32* p = vertices[index].position;

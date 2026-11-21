@@ -143,7 +143,7 @@ static void submit_editor_view(tau::editor_context_t& ctx, VkExtent2D extent)
 {
     const auto& ecam = ctx.editor_camera;
     const f32 aspect = extent.height ? (f32)extent.width / (f32)extent.height : 1.0f;
-    tau::mat4_t view, proj, view_proj;
+    tau::mat4 view, proj, view_proj;
     tau::camera_system::build_view_projection(ecam.position, tau::forward(ecam.rotation), tau::up(ecam.rotation),
                                               ecam.fov_deg, aspect, ecam.near_plane, ecam.far_plane, view, proj,
                                               view_proj);

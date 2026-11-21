@@ -44,7 +44,7 @@ namespace tau::editor::handles
         constexpr f32 VIEW_RING_RADIUS = 1.15f;
         constexpr u32_t RING_SEGMENTS = 64;
 
-        vec4_t srgb(f32 r, f32 g, f32 b)
+        vec4 srgb(f32 r, f32 g, f32 b)
         {
             auto linear = [](f32 c)
             {
@@ -54,9 +54,9 @@ namespace tau::editor::handles
             return {linear(r), linear(g), linear(b), 1.0f};
         }
 
-        const vec4_t AXIS_COLORS[3] = {srgb(240, 70, 80), srgb(130, 205, 40), srgb(50, 135, 245)};
-        const vec4_t HOT_COLOR = srgb(255, 210, 50);
-        const vec4_t NEUTRAL_COLOR = srgb(220, 220, 220);
+        const vec4 AXIS_COLORS[3] = {srgb(240, 70, 80), srgb(130, 205, 40), srgb(50, 135, 245)};
+        const vec4 HOT_COLOR = srgb(255, 210, 50);
+        const vec4 NEUTRAL_COLOR = srgb(220, 220, 220);
 
         enum class part_e : u8_t
         {
@@ -83,18 +83,18 @@ namespace tau::editor::handles
 
         struct frame_t
         {
-            vec3_t origin;
-            vec3_t axes[3];
-            vec3_t view_dir;
+            vec3 origin;
+            vec3 axes[3];
+            vec3 view_dir;
             f32 size;
         };
 
         struct target_t
         {
             ecs::entity_t entity;
-            vec3_t world_pos;
-            quat_t world_rot;
-            vec3_t local_scale;
+            vec3 world_pos;
+            quat world_rot;
+            vec3 local_scale;
         };
 
         struct drag_t
@@ -103,13 +103,13 @@ namespace tau::editor::handles
             handle_mode_e mode;
             frame_t frame;
             f32 start_t = 0.0f;
-            vec3_t start_hit;
-            vec2_t start_pixel;
+            vec3 start_hit;
+            vec2 start_pixel;
             f32 start_screen_angle = 0.0f;
             f32 last_angle = 0.0f;
             // set when the ring was grabbed close to edge on
             bool ring_tangent = false;
-            vec2_t tangent_px;
+            vec2 tangent_px;
             std::vector<target_t> targets;
         };
 
@@ -134,16 +134,16 @@ namespace tau::editor::handles
         { return std::clamp((std::fabs(dot(frame.axes[normal_axis], frame.view_dir)) - 0.1f) / 0.1f, 0.0f, 1.0f); }
 
         // cyclic, so a mesh modelled along +y keeps its winding on every axis
-        void axis_columns(const frame_t& frame, u32_t axis, vec3_t out[3])
+        void axis_columns(const frame_t& frame, u32_t axis, vec3 out[3])
         {
             out[0] = frame.axes[(axis + 2) % 3];
             out[1] = frame.axes[axis];
             out[2] = frame.axes[(axis + 1) % 3];
         }
 
-        mat4_t model_matrix(vec3_t origin, const vec3_t columns[3], f32 scale)
+        mat4 model_matrix(vec3 origin, const vec3 columns[3], f32 scale)
         {
-            mat4_t m;
+            mat4 m;
             for (int c = 0; c < 3; c++)
             {
                 m[c][0] = columns[c].x * scale;
@@ -175,7 +175,7 @@ namespace tau::editor::handles
 
             if (ctx.handles_local || ctx.handle_mode == handle_mode_e::SCALE)
             {
-                const quat_t rot = transform_system::get_world_rotation(reg, primary);
+                const quat rot = transform_system::get_world_rotation(reg, primary);
                 out.axes[0] = normalize(tau::right(rot));
                 out.axes[1] = normalize(tau::up(rot));
                 out.axes[2] = normalize(tau::forward(rot));
@@ -188,7 +188,7 @@ namespace tau::editor::handles
             }
 
             const editor_camera_t& cam = ctx.editor_camera;
-            const vec3_t to_origin = out.origin - cam.position;
+            const vec3 to_origin = out.origin - cam.position;
             const f32 distance = std::sqrt(dot(to_origin, to_origin));
             if (distance < 1e-4f || ctx.viewport_screen_size.y <= 0.0f) { return false; }
 
@@ -197,8 +197,7 @@ namespace tau::editor::handles
             return true;
         }
 
-        part_e hit_test(const editor_context_t& ctx, const frame_t& frame, vec2_t mouse,
-                        const viewport_input::ray_t& ray)
+        part_e hit_test(const editor_context_t& ctx, const frame_t& frame, vec2 mouse, const viewport_input::ray_t& ray)
         {
             part_e best = part_e::NONE;
             f32 best_dist = HIT_PX;
@@ -211,7 +210,7 @@ namespace tau::editor::handles
                 }
             };
 
-            vec2_t origin_px;
+            vec2 origin_px;
             const bool origin_visible = viewport_input::to_pixel(ctx, frame.origin, origin_px);
 
             if (ctx.handle_mode == handle_mode_e::MOVE || ctx.handle_mode == handle_mode_e::SCALE)
@@ -221,8 +220,8 @@ namespace tau::editor::handles
                 {
                     if (axis_visibility(frame, axis) < 0.5f) { continue; }
 
-                    vec2_t a;
-                    vec2_t b;
+                    vec2 a;
+                    vec2 b;
                     if (viewport_input::to_pixel(ctx, frame.origin + frame.axes[axis] * (frame.size * AXIS_START), a) &&
                         viewport_input::to_pixel(ctx, frame.origin + frame.axes[axis] * (frame.size * end), b))
                     {
@@ -244,10 +243,10 @@ namespace tau::editor::handles
                 {
                     if (plane_visibility(frame, normal) < 0.5f) { continue; }
 
-                    vec3_t hit;
+                    vec3 hit;
                     if (!ray_plane(ray.origin, ray.direction, frame.origin, frame.axes[normal], hit)) { continue; }
 
-                    const vec3_t local = hit - frame.origin;
+                    const vec3 local = hit - frame.origin;
                     const f32 u = dot(local, frame.axes[(normal + 2) % 3]) / frame.size;
                     const f32 v = dot(local, frame.axes[(normal + 1) % 3]) / frame.size;
                     if (u >= PLANE_MIN && u <= PLANE_MAX && v >= PLANE_MIN && v <= PLANE_MAX)
@@ -261,18 +260,18 @@ namespace tau::editor::handles
             {
                 for (u32_t axis = 0; axis < 3; axis++)
                 {
-                    const vec3_t u = frame.axes[(axis + 1) % 3];
-                    const vec3_t v = frame.axes[(axis + 2) % 3];
+                    const vec3 u = frame.axes[(axis + 1) % 3];
+                    const vec3 v = frame.axes[(axis + 2) % 3];
 
-                    vec2_t prev;
+                    vec2 prev;
                     bool prev_ok = false;
                     for (u32_t i = 0; i <= RING_SEGMENTS; i++)
                     {
                         const f32 angle = static_cast<f32>(i) / RING_SEGMENTS * 6.2831853f;
-                        const vec3_t point =
+                        const vec3 point =
                             frame.origin + (u * std::cos(angle) + v * std::sin(angle)) * (frame.size * RING_RADIUS);
 
-                        vec2_t px;
+                        vec2 px;
                         const bool ok = viewport_input::to_pixel(ctx, point, px);
                         if (ok && prev_ok) { consider(axis_part(axis), segment_distance(mouse, prev, px)); }
                         prev = px;
@@ -282,8 +281,8 @@ namespace tau::editor::handles
 
                 if (origin_visible)
                 {
-                    vec2_t rim;
-                    const vec3_t side = normalize(cross(frame.view_dir, tau::up(ctx.editor_camera.rotation)));
+                    vec2 rim;
+                    const vec3 side = normalize(cross(frame.view_dir, tau::up(ctx.editor_camera.rotation)));
                     if (viewport_input::to_pixel(ctx, frame.origin + side * (frame.size * VIEW_RING_RADIUS), rim))
                     {
                         const f32 radius = std::hypot(rim.x - origin_px.x, rim.y - origin_px.y);
@@ -296,10 +295,10 @@ namespace tau::editor::handles
             return best;
         }
 
-        vec4_t color_for(part_e part, vec4_t base, f32 alpha)
+        vec4 color_for(part_e part, vec4 base, f32 alpha)
         {
             const bool hot = drag ? drag->part == part : hovered == part;
-            vec4_t color = hot ? HOT_COLOR : base;
+            vec4 color = hot ? HOT_COLOR : base;
             color.w *= alpha;
             return color;
         }
@@ -316,14 +315,14 @@ namespace tau::editor::handles
                     const f32 alpha = axis_visibility(frame, axis);
                     if (alpha <= 0.0f) { continue; }
 
-                    vec3_t columns[3];
+                    vec3 columns[3];
                     axis_columns(frame, axis, columns);
                     renderer::submit_overlay_mesh(VIEW, axis_mesh, model_matrix(frame.origin, columns, frame.size),
                                                   color_for(axis_part(axis), AXIS_COLORS[axis], alpha),
                                                   overlay_depth_e::ON_TOP);
                 }
 
-                const vec3_t identity[3] = {frame.axes[0], frame.axes[1], frame.axes[2]};
+                const vec3 identity[3] = {frame.axes[0], frame.axes[1], frame.axes[2]};
                 renderer::submit_overlay_mesh(VIEW, meshes.center, model_matrix(frame.origin, identity, frame.size),
                                               color_for(part_e::CENTER, NEUTRAL_COLOR, 1.0f), overlay_depth_e::ON_TOP);
             }
@@ -335,7 +334,7 @@ namespace tau::editor::handles
                     const f32 alpha = plane_visibility(frame, normal) * 0.5f;
                     if (alpha <= 0.0f) { continue; }
 
-                    vec3_t columns[3];
+                    vec3 columns[3];
                     axis_columns(frame, normal, columns);
                     renderer::submit_overlay_mesh(VIEW, meshes.plane, model_matrix(frame.origin, columns, frame.size),
                                                   color_for(plane_part(normal), AXIS_COLORS[normal], alpha),
@@ -348,17 +347,17 @@ namespace tau::editor::handles
                 const asset_t<mesh_t> ring = meshes.rotate;
                 for (u32_t axis = 0; axis < 3; axis++)
                 {
-                    vec3_t columns[3];
+                    vec3 columns[3];
                     axis_columns(frame, axis, columns);
                     renderer::submit_overlay_mesh(VIEW, ring, model_matrix(frame.origin, columns, frame.size),
                                                   color_for(axis_part(axis), AXIS_COLORS[axis], 1.0f),
                                                   overlay_depth_e::ON_TOP);
                 }
 
-                const vec3_t up = normalize(frame.view_dir * -1.0f);
-                const vec3_t right = normalize(cross(up, tau::up(ctx.editor_camera.rotation)));
-                const vec3_t forward = cross(right, up);
-                const vec3_t columns[3] = {right, up, forward};
+                const vec3 up = normalize(frame.view_dir * -1.0f);
+                const vec3 right = normalize(cross(up, tau::up(ctx.editor_camera.rotation)));
+                const vec3 forward = cross(right, up);
+                const vec3 columns[3] = {right, up, forward};
                 renderer::submit_overlay_mesh(
                     VIEW, ring, model_matrix(frame.origin, columns, frame.size * VIEW_RING_RADIUS / RING_RADIUS),
                     color_for(part_e::VIEW_RING, NEUTRAL_COLOR, 1.0f), overlay_depth_e::ON_TOP);
@@ -366,20 +365,20 @@ namespace tau::editor::handles
         }
 
         // screen dir of a positive turn at the ring point nearest the mouse
-        vec2_t ring_tangent(const editor_context_t& ctx, const frame_t& frame, u32_t axis, vec2_t mouse)
+        vec2 ring_tangent(const editor_context_t& ctx, const frame_t& frame, u32_t axis, vec2 mouse)
         {
-            const vec3_t u = frame.axes[(axis + 1) % 3];
-            const vec3_t v = frame.axes[(axis + 2) % 3];
+            const vec3 u = frame.axes[(axis + 1) % 3];
+            const vec3 v = frame.axes[(axis + 2) % 3];
 
-            vec3_t nearest = frame.origin + u * frame.size;
+            vec3 nearest = frame.origin + u * frame.size;
             f32 nearest_dist = 1e30f;
             for (u32_t i = 0; i < RING_SEGMENTS; i++)
             {
                 const f32 angle = static_cast<f32>(i) / RING_SEGMENTS * 6.2831853f;
-                const vec3_t point =
+                const vec3 point =
                     frame.origin + (u * std::cos(angle) + v * std::sin(angle)) * (frame.size * RING_RADIUS);
 
-                vec2_t px;
+                vec2 px;
                 if (!viewport_input::to_pixel(ctx, point, px)) { continue; }
 
                 const f32 dist = std::hypot(px.x - mouse.x, px.y - mouse.y);
@@ -390,9 +389,9 @@ namespace tau::editor::handles
                 }
             }
 
-            const vec3_t tangent = normalize(cross(frame.axes[axis], nearest - frame.origin));
-            vec2_t a;
-            vec2_t b;
+            const vec3 tangent = normalize(cross(frame.axes[axis], nearest - frame.origin));
+            vec2 a;
+            vec2 b;
             if (!viewport_input::to_pixel(ctx, nearest, a) ||
                 !viewport_input::to_pixel(ctx, nearest + tangent * (frame.size * 0.1f), b))
             {
@@ -400,11 +399,11 @@ namespace tau::editor::handles
             }
 
             const f32 len = std::hypot(b.x - a.x, b.y - a.y);
-            return len > 1e-4f ? vec2_t{(b.x - a.x) / len, (b.y - a.y) / len} : vec2_t{1.0f, 0.0f};
+            return len > 1e-4f ? vec2{(b.x - a.x) / len, (b.y - a.y) / len} : vec2{1.0f, 0.0f};
         }
 
         void begin_drag(world_t& world, editor_context_t& ctx, const frame_t& frame, part_e part,
-                        const viewport_input::ray_t& ray, vec2_t mouse)
+                        const viewport_input::ray_t& ray, vec2 mouse)
         {
             drag_t d;
             d.part = part;
@@ -442,13 +441,13 @@ namespace tau::editor::handles
             }
             else if (is_axis(part))
             {
-                const vec3_t axis = frame.axes[axis_of(part)];
+                const vec3 axis = frame.axes[axis_of(part)];
                 d.ring_tangent = std::fabs(dot(axis, frame.view_dir)) < 0.25f ||
                                  !ray_plane(ray.origin, ray.direction, frame.origin, axis, d.start_hit);
                 if (d.ring_tangent) { d.tangent_px = ring_tangent(ctx, frame, axis_of(part), mouse); }
             }
 
-            vec2_t origin_px;
+            vec2 origin_px;
             if (viewport_input::to_pixel(ctx, frame.origin, origin_px))
             {
                 d.start_screen_angle = std::atan2(mouse.y - origin_px.y, mouse.x - origin_px.x);
@@ -457,7 +456,7 @@ namespace tau::editor::handles
             drag = std::move(d);
         }
 
-        void apply_move(world_t& world, vec3_t delta)
+        void apply_move(world_t& world, vec3 delta)
         {
             for (const target_t& t : drag->targets)
             {
@@ -465,21 +464,21 @@ namespace tau::editor::handles
             }
         }
 
-        void apply_rotation(world_t& world, vec3_t axis, f32 angle)
+        void apply_rotation(world_t& world, vec3 axis, f32 angle)
         {
-            const quat_t q = angle_axis(angle, axis);
-            const vec3_t pivot = drag->frame.origin;
+            const quat q = angle_axis(angle, axis);
+            const vec3 pivot = drag->frame.origin;
 
             for (const target_t& t : drag->targets)
             {
-                const vec3_t rotated = rotate(q, t.world_pos - pivot);
+                const vec3 rotated = rotate(q, t.world_pos - pivot);
 
                 transform_system::set_world_rotation(world.registry, t.entity, q * t.world_rot);
                 transform_system::set_world_position(world.registry, t.entity, pivot + rotated);
             }
         }
 
-        void apply_scale(world_t& world, vec3_t factor)
+        void apply_scale(world_t& world, vec3 factor)
         {
             for (const target_t& t : drag->targets)
             {
@@ -488,17 +487,17 @@ namespace tau::editor::handles
             }
         }
 
-        void update_drag(world_t& world, const editor_context_t& ctx, const viewport_input::ray_t& ray, vec2_t mouse)
+        void update_drag(world_t& world, const editor_context_t& ctx, const viewport_input::ray_t& ray, vec2 mouse)
         {
             const frame_t& frame = drag->frame;
             const bool snapping = ImGui::GetIO().KeyCtrl;
 
             if (drag->mode == handle_mode_e::MOVE)
             {
-                vec3_t delta = {0.0f, 0.0f, 0.0f};
+                vec3 delta = {0.0f, 0.0f, 0.0f};
                 if (is_axis(drag->part))
                 {
-                    const vec3_t axis = frame.axes[axis_of(drag->part)];
+                    const vec3 axis = frame.axes[axis_of(drag->part)];
                     f32 t = 0.0f;
                     if (!ray_line_param(ray.origin, ray.direction, frame.origin, axis, t)) { return; }
 
@@ -507,15 +506,15 @@ namespace tau::editor::handles
                 }
                 else
                 {
-                    const vec3_t normal = is_plane(drag->part) ? frame.axes[axis_of(drag->part)] : frame.view_dir;
-                    vec3_t hit;
+                    const vec3 normal = is_plane(drag->part) ? frame.axes[axis_of(drag->part)] : frame.view_dir;
+                    vec3 hit;
                     if (!ray_plane(ray.origin, ray.direction, frame.origin, normal, hit)) { return; }
 
                     delta = hit - drag->start_hit;
                     if (snapping && is_plane(drag->part))
                     {
-                        const vec3_t u = frame.axes[(axis_of(drag->part) + 2) % 3];
-                        const vec3_t v = frame.axes[(axis_of(drag->part) + 1) % 3];
+                        const vec3 u = frame.axes[(axis_of(drag->part) + 2) % 3];
+                        const vec3 v = frame.axes[(axis_of(drag->part) + 1) % 3];
                         delta = u * snap(dot(delta, u), ctx.snap_move) + v * snap(dot(delta, v), ctx.snap_move);
                     }
                 }
@@ -523,12 +522,12 @@ namespace tau::editor::handles
             }
             else if (drag->mode == handle_mode_e::ROTATE)
             {
-                vec3_t axis = frame.view_dir;
+                vec3 axis = frame.view_dir;
                 f32 angle = drag->last_angle;
 
                 if (drag->part == part_e::VIEW_RING)
                 {
-                    vec2_t origin_px;
+                    vec2 origin_px;
                     if (viewport_input::to_pixel(ctx, frame.origin, origin_px))
                     {
                         angle = drag->start_screen_angle - std::atan2(mouse.y - origin_px.y, mouse.x - origin_px.x);
@@ -537,13 +536,13 @@ namespace tau::editor::handles
                 else if (drag->ring_tangent)
                 {
                     axis = frame.axes[axis_of(drag->part)];
-                    const vec2_t moved = mouse - drag->start_pixel;
+                    const vec2 moved = mouse - drag->start_pixel;
                     angle = (moved.x * drag->tangent_px.x + moved.y * drag->tangent_px.y) / (HANDLE_PX * RING_RADIUS);
                 }
                 else
                 {
                     axis = frame.axes[axis_of(drag->part)];
-                    vec3_t hit;
+                    vec3 hit;
                     if (ray_plane(ray.origin, ray.direction, frame.origin, axis, hit))
                     {
                         angle = signed_angle(drag->start_hit - frame.origin, hit - frame.origin, axis);
@@ -556,7 +555,7 @@ namespace tau::editor::handles
             }
             else if (drag->mode == handle_mode_e::SCALE)
             {
-                vec3_t factor = {1.0f, 1.0f, 1.0f};
+                vec3 factor = {1.0f, 1.0f, 1.0f};
                 if (is_axis(drag->part))
                 {
                     const u32_t axis = axis_of(drag->part);
@@ -630,7 +629,7 @@ namespace tau::editor::handles
         }
 
         const bool flying = tau::input::get_mouse_button(tau::input::mouse_button_e::Right);
-        vec2_t mouse;
+        vec2 mouse;
         const bool in_viewport = viewport_input::mouse_pixel(ctx, mouse);
         viewport_input::ray_t ray;
         const bool has_ray = in_viewport && viewport_input::mouse_ray(ctx, ray);

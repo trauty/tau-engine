@@ -48,8 +48,8 @@ namespace tau::shadow_system
     // +x -x +y -y +z -z
     struct cube_face_t
     {
-        vec3_t forward;
-        vec3_t up;
+        vec3 forward;
+        vec3 up;
     };
 
     static const cube_face_t CUBE_FACES[renderer::POINT_SHADOW_FACE_COUNT] = {
@@ -69,8 +69,8 @@ namespace tau::shadow_system
     {
         u32_t slot = 0;
         u32_t tile_count = 0;
-        vec3_t position;
-        vec3_t direction;
+        vec3 position;
+        vec3 direction;
         f32 range = 0.0f;
         f32 outer_angle_rad = 0.0f;
         bool is_spot = false;
@@ -80,7 +80,7 @@ namespace tau::shadow_system
     struct shadow_cache_t
     {
         flat_map_t<punctual_cache_entry_t> punctual;
-        flat_map_t<vec3_t> caster_positions;
+        flat_map_t<vec3> caster_positions;
     };
 
     static shadow_cache_t& cache_of(ecs::registry_t& reg) { return reg.ctx().emplace<shadow_cache_t>(); }
@@ -88,8 +88,8 @@ namespace tau::shadow_system
     struct shadow_candidate_t
     {
         ecs::entity_t entity;
-        vec3_t position;
-        vec3_t direction; // spot lights only
+        vec3 position;
+        vec3 direction; // spot lights only
         f32 range;
         f32 outer_angle_rad; // spot lights only
         f32 priority;        // distance from the camera to the light's sphere, nearest first
@@ -110,9 +110,9 @@ namespace tau::shadow_system
         };
     }
 
-    static vec3_t stable_up(vec3_t forward)
+    static vec3 stable_up(vec3 forward)
     {
-        vec3_t up = {0.0f, 1.0f, 0.0f};
+        vec3 up = {0.0f, 1.0f, 0.0f};
         if (std::fabs(dot(forward, up)) > 0.99f) { up = {0.0f, 0.0f, 1.0f}; }
         return up;
     }
@@ -158,13 +158,13 @@ namespace tau::shadow_system
         renderer::submit_shadow_cascade_light(caster);
         if (caster == ecs::NULL_ENTITY) { return; }
 
-        vec3_t eye = view_info.position;
-        vec3_t forward = view_info.forward;
+        vec3 eye = view_info.position;
+        vec3 forward = view_info.forward;
 
         const transform_t& light_transform = reg.get<transform_t>(caster);
 
-        const vec3_t dir = normalize(light_transform.world_mat[2].xyz());
-        vec3_t up = normalize(light_transform.world_mat[1].xyz());
+        const vec3 dir = normalize(light_transform.world_mat[2].xyz());
+        vec3 up = normalize(light_transform.world_mat[1].xyz());
         if (std::fabs(dot(dir, up)) > 0.99f)
         {
             // the light's own up is useless when it points along the light direction
@@ -219,18 +219,18 @@ namespace tau::shadow_system
             // quantise the radius so float noise in the split maths cannot wobble the ortho extent
             radius = std::ceil(radius * 16.0f) / 16.0f;
 
-            vec3_t center = {eye.x + forward.x * center_z, eye.y + forward.y * center_z, eye.z + forward.z * center_z};
+            vec3 center = {eye.x + forward.x * center_z, eye.y + forward.y * center_z, eye.z + forward.z * center_z};
 
             const f32 back_off = radius + CASTER_EXTRUSION;
-            vec3_t light_eye = {center.x - dir.x * back_off, center.y - dir.y * back_off, center.z - dir.z * back_off};
+            vec3 light_eye = {center.x - dir.x * back_off, center.y - dir.y * back_off, center.z - dir.z * back_off};
 
-            const mat4_t view = look_at_lh(light_eye, center, up);
-            mat4_t projection = ortho_lh_zo(-radius, radius, -radius, radius, 0.0f, back_off + radius);
+            const mat4 view = look_at_lh(light_eye, center, up);
+            mat4 projection = ortho_lh_zo(-radius, radius, -radius, radius, 0.0f, back_off + radius);
 
             // texel snap: nudge the cascade so its texel grid stays put in world space as the camera moves
             // without it every sub texel step rerasterises the silhouettes and the shadow edges crawl
             {
-                const mat4_t view_proj = projection * view;
+                const mat4 view_proj = projection * view;
 
                 const f32 half_dim = static_cast<f32>(renderer::SHADOW_CASCADE_TILE_DIM) * 0.5f;
                 // world origin in cascade clip space is just the translation column, w is 1 for ortho
@@ -257,13 +257,13 @@ namespace tau::shadow_system
         }
     }
 
-    static bool sphere_in_frustum(const renderer::primary_view_info_t& view_info, vec3_t center, f32 radius)
+    static bool sphere_in_frustum(const renderer::primary_view_info_t& view_info, vec3 center, f32 radius)
     {
         if (!view_info.has_frustum_planes) { return true; } // no planes
 
         for (u32_t i = 0; i < 6; i++)
         {
-            const vec4_t& plane = view_info.frustum_planes[i];
+            const vec4& plane = view_info.frustum_planes[i];
             const f32 distance = plane.x * center.x + plane.y * center.y + plane.z * center.z + plane.w;
             if (distance < -radius) { return false; }
         }
@@ -271,7 +271,7 @@ namespace tau::shadow_system
         return true;
     }
 
-    static void cone_bounding_sphere(vec3_t apex, vec3_t direction, f32 range, f32 half_angle_rad, vec3_t& out_center,
+    static void cone_bounding_sphere(vec3 apex, vec3 direction, f32 range, f32 half_angle_rad, vec3& out_center,
                                      f32& out_radius)
     {
         const f32 cos_half = std::cos(half_angle_rad);
@@ -290,31 +290,31 @@ namespace tau::shadow_system
 
     struct moved_caster_t
     {
-        vec3_t from;
-        vec3_t to;
+        vec3 from;
+        vec3 to;
     };
 
     static void collect_moved_casters(ecs::registry_t& reg, std::vector<moved_caster_t>& out_moved)
     {
-        flat_map_t<vec3_t> current;
-        flat_map_t<vec3_t>& caster_positions = cache_of(reg).caster_positions;
+        flat_map_t<vec3> current;
+        flat_map_t<vec3>& caster_positions = cache_of(reg).caster_positions;
 
         for (auto [entity, renderer, transform] : reg.view<mesh_renderer_t, transform_t>().each())
         {
             if (!renderer.active || !renderer.casts_shadow) { continue; }
 
-            const vec3_t position = {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]};
+            const vec3 position = {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]};
             const u32_t key = static_cast<u32_t>(entity);
             current[key] = position;
 
-            const vec3_t* previous = caster_positions.find(key);
+            const vec3* previous = caster_positions.find(key);
             if (previous == nullptr)
             {
                 out_moved.push_back({position, position});
                 continue;
             }
 
-            const vec3_t delta = position - *previous;
+            const vec3 delta = position - *previous;
             if (dot(delta, delta) > LIGHT_MOVE_EPSILON * LIGHT_MOVE_EPSILON)
             {
                 out_moved.push_back({*previous, position});
@@ -336,10 +336,10 @@ namespace tau::shadow_system
 
         for (const moved_caster_t& caster : moved)
         {
-            const vec3_t from = caster.from - candidate.position;
+            const vec3 from = caster.from - candidate.position;
             if (dot(from, from) <= reach_sq) { return true; }
 
-            const vec3_t to = caster.to - candidate.position;
+            const vec3 to = caster.to - candidate.position;
             if (dot(to, to) <= reach_sq) { return true; }
         }
 
@@ -378,7 +378,7 @@ namespace tau::shadow_system
             candidate.outer_angle_rad = radians(light.outer_angle);
             candidate.is_spot = true;
 
-            vec3_t cone_center;
+            vec3 cone_center;
             f32 cone_radius = 0.0f;
             cone_bounding_sphere(candidate.position, candidate.direction, candidate.range, candidate.outer_angle_rad,
                                  cone_center, cone_radius);
@@ -398,7 +398,7 @@ namespace tau::shadow_system
 
         for (shadow_candidate_t& candidate : candidates)
         {
-            const vec3_t to_light = candidate.position - view_info.position;
+            const vec3 to_light = candidate.position - view_info.position;
             candidate.priority = std::sqrt(dot(to_light, to_light)) - candidate.range;
         }
 
@@ -446,8 +446,8 @@ namespace tau::shadow_system
             candidate.slot = cached->slot;
             claim(candidate.slot, candidate.tile_count);
 
-            const vec3_t moved_by = candidate.position - cached->position;
-            const vec3_t turned_by = candidate.direction - cached->direction;
+            const vec3 moved_by = candidate.position - cached->position;
+            const vec3 turned_by = candidate.direction - cached->direction;
 
             candidate.dirty = dot(moved_by, moved_by) > LIGHT_MOVE_EPSILON * LIGHT_MOVE_EPSILON ||
                               dot(turned_by, turned_by) > LIGHT_MOVE_EPSILON * LIGHT_MOVE_EPSILON ||
@@ -516,11 +516,11 @@ namespace tau::shadow_system
 
             if (tile.is_spot)
             {
-                const vec3_t center = tile.position + tile.direction;
-                const vec3_t up = stable_up(tile.direction);
+                const vec3 center = tile.position + tile.direction;
+                const vec3 up = stable_up(tile.direction);
 
-                const mat4_t view = look_at_lh(tile.position, center, up);
-                mat4_t projection =
+                const mat4 view = look_at_lh(tile.position, center, up);
+                mat4 projection =
                     perspective_lh_zo(2.0f * padded_half_fov(tile.outer_angle_rad), 1.0f, tile_near, tile.range);
                 flip_clip_y(projection);
 
@@ -533,10 +533,10 @@ namespace tau::shadow_system
                 for (u32_t face = 0; face < renderer::POINT_SHADOW_FACE_COUNT; face++)
                 {
                     const u32_t face_slot = slot + face;
-                    const vec3_t center = tile.position + CUBE_FACES[face].forward;
+                    const vec3 center = tile.position + CUBE_FACES[face].forward;
 
-                    const mat4_t view = look_at_lh(tile.position, center, CUBE_FACES[face].up);
-                    mat4_t projection =
+                    const mat4 view = look_at_lh(tile.position, center, CUBE_FACES[face].up);
+                    mat4 projection =
                         perspective_lh_zo(2.0f * padded_half_fov(radians(45.0f)), 1.0f, tile_near, tile.range);
                     flip_clip_y(projection);
 

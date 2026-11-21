@@ -301,10 +301,10 @@ namespace tau::renderer
     {
         u32_t name_hash = 0;
         view_kind_e kind = view_kind_e::COLOR;
-        mat4_t view;
-        mat4_t projection;
-        mat4_t view_proj;
-        vec3_t position;
+        mat4 view;
+        mat4 projection;
+        mat4 view_proj;
+        vec3 position;
         u32_t color_target_hash = 0;
         u32_t depth_target_hash = 0;
         bool has_depth_desc = false;

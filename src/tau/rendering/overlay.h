@@ -18,12 +18,12 @@ namespace tau::renderer
 
     struct overlay_line_t
     {
-        vec3_t a;
-        vec3_t b;
-        vec4_t color;
+        vec3 a;
+        vec3 b;
+        vec4 color;
     };
 
-    TAU_ENGINE_API void submit_overlay_mesh(u32_t view_hash, asset_t<mesh_t> mesh, const mat4_t& world, vec4_t color,
+    TAU_ENGINE_API void submit_overlay_mesh(u32_t view_hash, asset_t<mesh_t> mesh, const mat4& world, vec4 color,
                                             overlay_depth_e depth);
     TAU_ENGINE_API void submit_overlay_lines(u32_t view_hash, std::span<const overlay_line_t> lines, f32 width_px,
                                              overlay_depth_e depth);

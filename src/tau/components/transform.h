@@ -11,18 +11,18 @@ namespace tau
 
     struct shown_pose_t
     {
-        vec3_t position;
-        quat_t rotation;
+        vec3 position;
+        quat rotation;
     };
 
     struct TAU_ENGINE_API transform_t
     {
-        vec3_t local_position;
-        quat_t local_rotation;
-        vec3_t local_scale = {1.0f, 1.0f, 1.0f};
+        vec3 local_position;
+        quat local_rotation;
+        vec3 local_scale = {1.0f, 1.0f, 1.0f};
 
         // read only, the transform system writes it, use it for visual only
-        mat4_t world_mat;
+        mat4 world_mat;
 
         ecs::entity_t get_parent() const { return parent; }
         ecs::entity_t get_first_child() const { return first_child; }
@@ -32,12 +32,12 @@ namespace tau
       private:
         friend struct transform_system::internal_t;
 
-        mat4_t local_mat;
+        mat4 local_mat;
 
         // what local_mat was built from, to detect moves
-        vec3_t built_position;
-        quat_t built_rotation;
-        vec3_t built_scale;
+        vec3 built_position;
+        quat built_rotation;
+        vec3 built_scale;
 
         ecs::entity_t parent = ecs::NULL_ENTITY;
         ecs::entity_t first_child = ecs::NULL_ENTITY;

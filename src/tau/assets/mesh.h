@@ -25,7 +25,7 @@ namespace tau
     {
         u32_t first_index = 0;
         u32_t index_count = 0;
-        vec3_t local_center;
+        vec3 local_center;
         f32 local_radius = 0.0f;
 
         asset_t<material_t> material;
@@ -40,7 +40,7 @@ namespace tau
         u32_t index_count = 0;
 
         // all submeshes
-        vec3_t local_center;
+        vec3 local_center;
         f32 local_radius;
 
         std::vector<submesh_t> submeshes;
