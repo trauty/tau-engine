@@ -44,20 +44,12 @@ namespace tau::editor::viewport_input
         const f32 ndc_x = pixel.x / ctx.viewport_screen_size.x * 2.0f - 1.0f;
         const f32 ndc_y = pixel.y / ctx.viewport_screen_size.y * 2.0f - 1.0f;
 
-        mat4_t inv_view_proj;
-        glm_mat4_inv(const_cast<mat4_t&>(ctx.view_proj), inv_view_proj);
-
         // reverse z: the near plane is depth 1
-        vec4 clip = {ndc_x, ndc_y, 1.0f, 1.0f};
-        vec4 world;
-        glm_mat4_mulv(inv_view_proj, clip, world);
-        const vec3_t on_near = {world[0] / world[3], world[1] / world[3], world[2] / world[3]};
+        const vec4_t world = inverse(ctx.view_proj) * vec4_t{ndc_x, ndc_y, 1.0f, 1.0f};
+        const vec3_t on_near = world.xyz() / world.w;
+        const vec3_t eye = translation_of(inverse(ctx.view));
 
-        mat4_t inv_view;
-        glm_mat4_inv(const_cast<mat4_t&>(ctx.view), inv_view);
-        const vec3_t eye = {inv_view[3][0], inv_view[3][1], inv_view[3][2]};
-
-        return {eye, vec3_t::normalize(on_near - eye)};
+        return {eye, normalize(on_near - eye)};
     }
 
     bool mouse_pixel(const editor_context_t& ctx, vec2_t& out)
@@ -68,13 +60,11 @@ namespace tau::editor::viewport_input
 
     bool to_pixel(const editor_context_t& ctx, vec3_t world, vec2_t& out)
     {
-        vec4 point = {world.x, world.y, world.z, 1.0f};
-        vec4 clip;
-        glm_mat4_mulv(const_cast<mat4_t&>(ctx.view_proj), point, clip);
-        if (clip[3] <= 1e-5f) { return false; }
+        const vec4_t clip = ctx.view_proj * vec4_t{world, 1.0f};
+        if (clip.w <= 1e-5f) { return false; }
 
-        out = {(clip[0] / clip[3] * 0.5f + 0.5f) * ctx.viewport_screen_size.x,
-               (clip[1] / clip[3] * 0.5f + 0.5f) * ctx.viewport_screen_size.y};
+        out = {(clip.x / clip.w * 0.5f + 0.5f) * ctx.viewport_screen_size.x,
+               (clip.y / clip.w * 0.5f + 0.5f) * ctx.viewport_screen_size.y};
         return true;
     }
 
@@ -95,7 +85,7 @@ namespace tau::editor::viewport_input
         auto merge = [&](vec3_t c, f32 r)
         {
             const vec3_t offset = c - center;
-            const f32 distance = std::sqrt(handle_math::dot(offset, offset));
+            const f32 distance = std::sqrt(dot(offset, offset));
             if (!any || distance + radius <= r)
             {
                 center = c;
@@ -120,9 +110,7 @@ namespace tau::editor::viewport_input
             const mesh_t* mesh = assets::get(world.registry.get<mesh_renderer_t>(entity).mesh);
             if (!mesh) { continue; }
 
-            vec3_t local_center = mesh->local_center;
-            vec3_t c;
-            glm_mat4_mulv3(world.registry.get<transform_t>(entity).world_mat, local_center, 1.0f, c);
+            const vec3_t c = transform_point(world.registry.get<transform_t>(entity).world_mat, mesh->local_center);
             const vec3_t scale = transform_system::get_world_scale(world.registry, entity);
             merge(c, std::max(mesh->local_radius * std::max({scale.x, scale.y, scale.z}), 0.01f));
         }
@@ -138,9 +126,9 @@ namespace tau::editor::viewport_input
         if (!any) { return; }
 
         editor_camera_t& cam = ctx.editor_camera;
-        const f32 half_fov = glm_rad(cam.fov_deg) * 0.5f;
+        const f32 half_fov = radians(cam.fov_deg) * 0.5f;
         const f32 distance = radius / std::sin(half_fov) * 1.1f;
-        cam.position = center - cam.rotation.forward() * distance;
+        cam.position = center - tau::forward(cam.rotation) * distance;
     }
 
     void frame_selection(world_t& world, editor_context_t& ctx)

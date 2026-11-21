@@ -465,13 +465,33 @@ namespace tau::editor::panels
         {
             bool was_modified = false;
 
+            using tau::reflection::prop_flags_e;
+
+            bool hidden_overridden = false;
+            for (auto [id, data] : type.data())
+            {
+                const tau::reflection::editor_prop_t* prop = data.custom();
+                if (overridden && prop && has_flag(prop->flags, prop_flags_e::HIDDEN) &&
+                    overridden->contains(tau::reflection::meta_key(data.name(), id)))
+                {
+                    hidden_overridden = true;
+                }
+            }
+
             for (auto [id, data] : type.data())
             {
                 if (std::find(skip.begin(), skip.end(), data.name()) != skip.end()) { continue; }
 
                 tau::reflection::editor_prop_t* prop = data.custom();
+                if (prop && has_flag(prop->flags, prop_flags_e::HIDDEN)) { continue; }
+
                 const char* label = prop ? prop->name : "Unknown";
-                if (overridden && overridden->contains(tau::reflection::meta_key(data.name(), id))) { mark_override(); }
+                const bool is_view = prop && has_flag(prop->flags, prop_flags_e::NOT_SAVED);
+                if (overridden && (overridden->contains(tau::reflection::meta_key(data.name(), id)) ||
+                                   (is_view && hidden_overridden)))
+                {
+                    mark_override();
+                }
 
                 tau::reflection::any_t field_value = data.get(instance);
 

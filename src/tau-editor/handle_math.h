@@ -7,10 +7,6 @@
 
 namespace tau::editor::handle_math
 {
-    inline f32 dot(vec3_t a, vec3_t b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-    inline vec3_t cross(vec3_t a, vec3_t b)
-    { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
-
     // closest points of a ray and a line, returns the line's parameter
     inline bool ray_line_param(vec3_t ray_origin, vec3_t ray_dir, vec3_t line_origin, vec3_t line_dir, f32& out_t)
     {

@@ -26,8 +26,8 @@ namespace tau::editor::camera_system
 
         if (!is_moving) { return; }
 
-        vec3_t forward = cam.rotation.forward();
-        vec3_t right = cam.rotation.right();
+        vec3_t forward = tau::forward(cam.rotation);
+        vec3_t right = tau::right(cam.rotation);
 
         f32 speed = 10.0f * tau::time::get_dt();
         if (tau::input::get_key(tau::input::key_e::LeftShift)) { speed *= 2.0f; }
@@ -45,12 +45,12 @@ namespace tau::editor::camera_system
             cam.yaw += mouse_delta.x * mouse_sensitivity;
             cam.pitch += mouse_delta.y * mouse_sensitivity;
 
-            const f32 pitch_limit = tau::math::deg_to_rad(90.0f);
+            const f32 pitch_limit = tau::radians(90.0f);
             if (cam.pitch > pitch_limit) { cam.pitch = pitch_limit; }
             if (cam.pitch < -pitch_limit) { cam.pitch = -pitch_limit; }
 
-            quat_t q_yaw = quat_t::angle_axis(cam.yaw, vec3_t::up());
-            quat_t q_pitch = quat_t::angle_axis(cam.pitch, vec3_t::right());
+            quat_t q_yaw = angle_axis(cam.yaw, vec3_t{0.0f, 1.0f, 0.0f});
+            quat_t q_pitch = angle_axis(cam.pitch, vec3_t{1.0f, 0.0f, 0.0f});
 
             cam.rotation = q_yaw * q_pitch;
         }

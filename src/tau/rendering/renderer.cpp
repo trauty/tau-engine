@@ -39,7 +39,6 @@
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_vulkan.h>
 #include <algorithm>
-#include <cglm/cglm.h>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -277,7 +276,7 @@ namespace tau::renderer
     { return {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]}; }
 
     static vec3_t world_forward(const transform_t& transform)
-    { return vec3_t::normalize({transform.world_mat[2][0], transform.world_mat[2][1], transform.world_mat[2][2]}); }
+    { return normalize({transform.world_mat[2][0], transform.world_mat[2][1], transform.world_mat[2][2]}); }
 
     static void set_vec4(gpu_vec4_t& dst, f32 x, f32 y, f32 z, f32 w)
     {
@@ -1746,8 +1745,8 @@ namespace tau::renderer
 
             set_vec4(gpu_light.position_range, world_position(transform), light.radius);
             set_vec4(gpu_light.direction_intensity, world_forward(transform), light.intensity);
-            set_vec4(gpu_light.color_inner_cos, light.color, std::cos(glm_rad(light.inner_angle)));
-            set_vec4(gpu_light.outer_cos, std::cos(glm_rad(light.outer_angle)), 0.0f, 0.0f, 0.0f);
+            set_vec4(gpu_light.color_inner_cos, light.color, std::cos(radians(light.inner_angle)));
+            set_vec4(gpu_light.outer_cos, std::cos(radians(light.outer_angle)), 0.0f, 0.0f, 0.0f);
             set_shadow_params(gpu_light.shadow_params, punctual_slots, entity);
 
             spot_count++;
@@ -1898,9 +1897,7 @@ namespace tau::renderer
             object_data_t& obj_data = frame_data.mapped_object_data[cur_object_id];
             std::memcpy(obj_data.model_matrix.data, &transform.world_mat, sizeof(mat4_t));
 
-            mat4_t normal_mat;
-            glm_mat4_inv(transform.world_mat, normal_mat);
-            glm_mat4_transpose(normal_mat);
+            const mat4_t normal_mat = transpose(inverse(transform.world_mat));
             std::memcpy(obj_data.normal_matrix.data, &normal_mat, sizeof(mat4_t));
 
             obj_data.material_offset = item.material->heap_offset[ctx.cur_frame];
@@ -1917,18 +1914,9 @@ namespace tau::renderer
             const active_pipeline_t& bin = frame_data.active_pipelines.back();
             const bool has_shadow = bin.shadow_pipeline != VK_NULL_HANDLE;
 
-            vec3_t world_center;
-            vec3_t local_c = local_center;
-            glm_mat4_mulv3(transform.world_mat, local_c, 1.0f, world_center);
-
-            const f32 scale_x =
-                glm_vec3_norm((vec3){transform.world_mat[0][0], transform.world_mat[0][1], transform.world_mat[0][2]});
-            const f32 scale_y =
-                glm_vec3_norm((vec3){transform.world_mat[1][0], transform.world_mat[1][1], transform.world_mat[1][2]});
-            const f32 scale_z =
-                glm_vec3_norm((vec3){transform.world_mat[2][0], transform.world_mat[2][1], transform.world_mat[2][2]});
-
-            const f32 max_scale = std::max({scale_x, scale_y, scale_z});
+            const vec3_t world_center = transform_point(transform.world_mat, local_center);
+            const vec3_t scale = scale_of(transform.world_mat);
+            const f32 max_scale = std::max({scale.x, scale.y, scale.z});
 
             cull_data_t& cull = frame_data.mapped_cull_data[cur_object_id];
             cull.bounding_sphere.data.x = world_center.x;
@@ -2071,22 +2059,16 @@ namespace tau::renderer
     // the swapchain may be rotated relative to the display, so colour views are pre multiplied by the rotation
     static mat4_t surface_pre_rotation()
     {
-        mat4_t pre_rot = mat4_t::identity();
-
-        if (ctx.cur_surface_transform & VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR)
+        if (ctx.cur_surface_transform & VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR) { return rotate_z({}, radians(90.0f)); }
+        if (ctx.cur_surface_transform & VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR)
         {
-            glm_rotate_z(pre_rot, glm_rad(90.0f), pre_rot);
+            return rotate_z({}, radians(180.0f));
         }
-        else if (ctx.cur_surface_transform & VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR)
+        if (ctx.cur_surface_transform & VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)
         {
-            glm_rotate_z(pre_rot, glm_rad(180.0f), pre_rot);
+            return rotate_z({}, radians(270.0f));
         }
-        else if (ctx.cur_surface_transform & VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR)
-        {
-            glm_rotate_z(pre_rot, glm_rad(270.0f), pre_rot);
-        }
-
-        return pre_rot;
+        return {};
     }
 
     static void create_device_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer,
@@ -2257,24 +2239,18 @@ namespace tau::renderer
             std::memcpy(slot->view.data, &sub.view, sizeof(mat4_t));
             std::memcpy(slot->projection.data, &sub.projection, sizeof(mat4_t));
 
-            mat4_t final_view_proj;
-            if (sub.kind == view_kind_e::COLOR) { glm_mat4_mul(pre_rot_mat, sub.view_proj, final_view_proj); }
-            else
-            {
-                final_view_proj = sub.view_proj;
-            }
+            const mat4_t final_view_proj = sub.kind == view_kind_e::COLOR ? pre_rot_mat * sub.view_proj : sub.view_proj;
             std::memcpy(slot->view_proj.data, &final_view_proj, sizeof(mat4_t));
 
-            mat4_t inv_view_proj;
-            glm_mat4_inv(final_view_proj, inv_view_proj);
+            const mat4_t inv_view_proj = inverse(final_view_proj);
             std::memcpy(slot->inv_view_proj.data, &inv_view_proj, sizeof(mat4_t));
 
             const debug_view_e* debug_view = view_debug_views.find(sub.name_hash);
             slot->debug_view = static_cast<u32_t>(debug_view ? *debug_view : debug_view_e::OFF);
 
-            vec4 planes[6];
-            glm_frustum_planes(sub.view_proj, planes);
-            std::memcpy(slot->frustum_planes, planes, sizeof(vec4) * 6);
+            vec4_t planes[6];
+            frustum_planes(sub.view_proj, planes);
+            std::memcpy(slot->frustum_planes, planes, sizeof(planes));
 
             slot->camera_pos.data.x = sub.position.x;
             slot->camera_pos.data.y = sub.position.y;
@@ -2498,7 +2474,7 @@ namespace tau::renderer
                 if (punctual_atlas_res == RG_NULL_ID) { punctual_atlas_res = punctual_id; }
 
                 // perspective tile: the world width the far plane covers, over the tile's texels
-                const f32 punctual_m00 = std::fabs(sub.projection.m00);
+                const f32 punctual_m00 = std::fabs(sub.projection[0][0]);
                 const f32 punctual_texel =
                     (punctual_m00 > 0.0f && sub.shadow_atlas_rect.extent.width > 0)
                         ? (2.0f * sub.z_far / punctual_m00) / static_cast<f32>(sub.shadow_atlas_rect.extent.width)
@@ -2522,7 +2498,7 @@ namespace tau::renderer
             if (shadow_atlas_res == RG_NULL_ID) { shadow_atlas_res = id; }
 
             // orthographic cascade: the ortho extent is 2/m00 wide, over the tile's texels
-            const f32 m00 = std::fabs(sub.projection.m00);
+            const f32 m00 = std::fabs(sub.projection[0][0]);
             const f32 cascade_texel = (m00 > 0.0f && sub.shadow_atlas_rect.extent.width > 0)
                                           ? (2.0f / m00) / static_cast<f32>(sub.shadow_atlas_rect.extent.width)
                                           : 0.0f;
@@ -3685,14 +3661,7 @@ namespace tau::renderer
 
     namespace
     {
-        mat4_t combine_view_proj(const mat4_t& view, const mat4_t& projection)
-        {
-            mat4_t proj_copy = projection;
-            mat4_t view_copy = view;
-            mat4_t out;
-            glm_mat4_mul(proj_copy, view_copy, out);
-            return out;
-        }
+        mat4_t combine_view_proj(const mat4_t& view, const mat4_t& projection) { return projection * view; }
 
         // every depth only view is a tile in an atlas, differing in the atlas and what the caller remembers
         render_view_t make_shadow_view(u32_t name_hash, u32_t atlas_target_hash, const mat4_t& view,
@@ -3730,7 +3699,7 @@ namespace tau::renderer
         v.color_target_hash = color_target_hash;
         v.depth_target_hash = depth_target_hash;
         v.extent = extent;
-        v.z_near = (z_near > 0.0f) ? z_near : projection.m32;
+        v.z_near = (z_near > 0.0f) ? z_near : projection[3][2];
         v.z_far = z_far;
         submitted_views.push_back(v);
     }
@@ -3788,23 +3757,19 @@ namespace tau::renderer
     static void fill_view_info(const render_view_t& v, primary_view_info_t& out_info)
     {
         out_info.position = v.position;
-        out_info.forward = vec3_t::normalize({v.view.m02, v.view.m12, v.view.m22});
+        out_info.forward = normalize(vec3_t{v.view[0][2], v.view[1][2], v.view[2][2]});
 
-        const f32 focal = std::fabs(v.projection.m11);
-        const f32 focal_over_aspect = std::fabs(v.projection.m00);
-        out_info.fov_rad = (focal > 1e-6f) ? (2.0f * std::atan(1.0f / focal)) : glm_rad(45.0f);
+        const f32 focal = std::fabs(v.projection[1][1]);
+        const f32 focal_over_aspect = std::fabs(v.projection[0][0]);
+        out_info.fov_rad = (focal > 1e-6f) ? (2.0f * std::atan(1.0f / focal)) : radians(45.0f);
         out_info.aspect = (focal_over_aspect > 1e-6f) ? (focal / focal_over_aspect) : 1.0f;
 
         out_info.z_near = (v.z_near > 0.0f) ? v.z_near : 0.1f;
         out_info.z_far = v.z_far;
 
-        mat4_t view_proj = v.view_proj;
-        vec4 planes[6];
-        glm_frustum_planes(view_proj, planes);
-        for (u32_t i = 0; i < 6; i++)
-        {
-            out_info.frustum_planes[i] = {planes[i][0], planes[i][1], planes[i][2], planes[i][3]};
-        }
+        vec4_t planes[6];
+        frustum_planes(v.view_proj, planes);
+        for (u32_t i = 0; i < 6; i++) { out_info.frustum_planes[i] = planes[i]; }
         out_info.has_frustum_planes = true;
     }
 
@@ -3826,8 +3791,8 @@ namespace tau::renderer
         const transform_t& t = reg.get<transform_t>(cam_e);
 
         out_info.position = {t.world_mat[3][0], t.world_mat[3][1], t.world_mat[3][2]};
-        out_info.forward = vec3_t::normalize({t.world_mat[2][0], t.world_mat[2][1], t.world_mat[2][2]});
-        out_info.fov_rad = glm_rad(cam.fov_deg);
+        out_info.forward = normalize({t.world_mat[2][0], t.world_mat[2][1], t.world_mat[2][2]});
+        out_info.fov_rad = radians(cam.fov_deg);
         out_info.aspect = cam.aspect;
         out_info.z_near = cam.near_plane;
         out_info.z_far = cam.far_plane;

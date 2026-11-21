@@ -176,9 +176,9 @@ namespace tau::editor::handles
             if (ctx.handles_local || ctx.handle_mode == handle_mode_e::SCALE)
             {
                 const quat_t rot = transform_system::get_world_rotation(reg, primary);
-                out.axes[0] = vec3_t::normalize(rot.right());
-                out.axes[1] = vec3_t::normalize(rot.up());
-                out.axes[2] = vec3_t::normalize(rot.forward());
+                out.axes[0] = normalize(tau::right(rot));
+                out.axes[1] = normalize(tau::up(rot));
+                out.axes[2] = normalize(tau::forward(rot));
             }
             else
             {
@@ -193,7 +193,7 @@ namespace tau::editor::handles
             if (distance < 1e-4f || ctx.viewport_screen_size.y <= 0.0f) { return false; }
 
             out.view_dir = to_origin * (1.0f / distance);
-            out.size = distance * std::tan(glm_rad(cam.fov_deg) * 0.5f) * 2.0f * HANDLE_PX / ctx.viewport_screen_size.y;
+            out.size = distance * std::tan(radians(cam.fov_deg) * 0.5f) * 2.0f * HANDLE_PX / ctx.viewport_screen_size.y;
             return true;
         }
 
@@ -283,7 +283,7 @@ namespace tau::editor::handles
                 if (origin_visible)
                 {
                     vec2_t rim;
-                    const vec3_t side = vec3_t::normalize(cross(frame.view_dir, ctx.editor_camera.rotation.up()));
+                    const vec3_t side = normalize(cross(frame.view_dir, tau::up(ctx.editor_camera.rotation)));
                     if (viewport_input::to_pixel(ctx, frame.origin + side * (frame.size * VIEW_RING_RADIUS), rim))
                     {
                         const f32 radius = std::hypot(rim.x - origin_px.x, rim.y - origin_px.y);
@@ -355,8 +355,8 @@ namespace tau::editor::handles
                                                   overlay_depth_e::ON_TOP);
                 }
 
-                const vec3_t up = vec3_t::normalize(frame.view_dir * -1.0f);
-                const vec3_t right = vec3_t::normalize(cross(up, ctx.editor_camera.rotation.up()));
+                const vec3_t up = normalize(frame.view_dir * -1.0f);
+                const vec3_t right = normalize(cross(up, tau::up(ctx.editor_camera.rotation)));
                 const vec3_t forward = cross(right, up);
                 const vec3_t columns[3] = {right, up, forward};
                 renderer::submit_overlay_mesh(
@@ -390,7 +390,7 @@ namespace tau::editor::handles
                 }
             }
 
-            const vec3_t tangent = vec3_t::normalize(cross(frame.axes[axis], nearest - frame.origin));
+            const vec3_t tangent = normalize(cross(frame.axes[axis], nearest - frame.origin));
             vec2_t a;
             vec2_t b;
             if (!viewport_input::to_pixel(ctx, nearest, a) ||
@@ -467,14 +467,12 @@ namespace tau::editor::handles
 
         void apply_rotation(world_t& world, vec3_t axis, f32 angle)
         {
-            const quat_t q = quat_t::angle_axis(angle, axis);
+            const quat_t q = angle_axis(angle, axis);
             const vec3_t pivot = drag->frame.origin;
 
             for (const target_t& t : drag->targets)
             {
-                vec3_t offset = t.world_pos - pivot;
-                vec3_t rotated;
-                glm_quat_rotatev(q, offset, rotated);
+                const vec3_t rotated = rotate(q, t.world_pos - pivot);
 
                 transform_system::set_world_rotation(world.registry, t.entity, q * t.world_rot);
                 transform_system::set_world_position(world.registry, t.entity, pivot + rotated);
@@ -553,7 +551,7 @@ namespace tau::editor::handles
                 }
 
                 drag->last_angle = angle;
-                if (snapping) { angle = snap(angle, glm_rad(ctx.snap_rotate_deg)); }
+                if (snapping) { angle = snap(angle, radians(ctx.snap_rotate_deg)); }
                 apply_rotation(world, axis, angle);
             }
             else if (drag->mode == handle_mode_e::SCALE)

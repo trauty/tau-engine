@@ -50,11 +50,11 @@ namespace tau::physics
         frame_t frame_of(const transform_t& transform)
         {
             frame_t frame;
-            frame.origin = vec3_t(transform.world_mat[3]);
+            frame.origin = translation_of(transform.world_mat);
             for (u32_t i = 0; i < 3; i++)
             {
-                const vec3_t column(transform.world_mat[i]);
-                const f32 length = column.length();
+                const vec3_t column = transform.world_mat[i].xyz();
+                const f32 length = tau::length(column);
                 frame.axes[i] = length > 0.0f ? column * (1.0f / length) : vec3_t{};
                 (&frame.scale.x)[i] = length;
             }

@@ -11,7 +11,6 @@
 * stb_image v2.30
 * stb_image_resize2 v2.18
 * stb_image_write v1.16
-* cglm v0.9.6
 * nlohmann::json v3.12.0
 * entt v3.16.0
 * volk 1.4.335

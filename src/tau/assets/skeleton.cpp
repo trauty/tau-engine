@@ -35,7 +35,7 @@ namespace tau
                                ? record.parent
                                : -1;
             joint.translation = {record.translation[0], record.translation[1], record.translation[2]};
-            joint.rotation = quat_t(record.rotation);
+            joint.rotation = {record.rotation[0], record.rotation[1], record.rotation[2], record.rotation[3]};
             joint.scale = {record.scale[0], record.scale[1], record.scale[2]};
             std::memcpy(&joint.inverse_bind, record.inverse_bind, sizeof(record.inverse_bind));
         }

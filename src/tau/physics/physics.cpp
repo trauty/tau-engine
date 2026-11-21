@@ -267,27 +267,14 @@ namespace tau::physics::detail
             return mix(key, rb.gravity_scale);
         }
 
-        quat_t rotation_of(mat4_t m)
-        {
-            mat4 axes;
-            glm_mat4_copy(m, axes);
-            glm_vec3_normalize(axes[0]);
-            glm_vec3_normalize(axes[1]);
-            glm_vec3_normalize(axes[2]);
-            quat_t rotation;
-            glm_mat4_quat(axes, rotation);
-            return rotation;
-        }
-
         pose_t world_pose(ecs::registry_t& reg, const transform_t& transform)
         {
             const ecs::entity_t parent = transform.get_parent();
             if (parent == ecs::NULL_ENTITY) { return {transform.local_position, transform.local_rotation}; }
 
-            mat4_t parent_world = transform_system::compose_world(reg, parent);
-            vec3_t position;
-            glm_mat4_mulv3(parent_world, transform.local_position, 1.0f, position);
-            return {position, rotation_of(parent_world) * transform.local_rotation};
+            const mat4_t parent_world = transform_system::compose_world(reg, parent);
+            return {transform_point(parent_world, transform.local_position),
+                    rotation_of(parent_world) * transform.local_rotation};
         }
 
         vec3_t world_scale(ecs::registry_t& reg, const transform_t& transform)
@@ -295,10 +282,7 @@ namespace tau::physics::detail
             const ecs::entity_t parent = transform.get_parent();
             if (parent == ecs::NULL_ENTITY) { return transform.local_scale; }
 
-            mat4_t parent_world = transform_system::compose_world(reg, parent);
-            const vec3_t parent_scale = {glm_vec3_norm(parent_world[0]), glm_vec3_norm(parent_world[1]),
-                                         glm_vec3_norm(parent_world[2])};
-            return parent_scale * transform.local_scale;
+            return scale_of(transform_system::compose_world(reg, parent)) * transform.local_scale;
         }
 
         void set_local_pose(ecs::registry_t& reg, transform_t& transform, const pose_t& world)
@@ -311,14 +295,9 @@ namespace tau::physics::detail
                 return;
             }
 
-            mat4_t parent_world = transform_system::compose_world(reg, parent);
-            mat4 parent_inverse;
-            glm_mat4_inv(parent_world, parent_inverse);
-            glm_mat4_mulv3(parent_inverse, world.position, 1.0f, transform.local_position);
-
-            quat_t parent_rotation = rotation_of(parent_world);
-            glm_quat_inv(parent_rotation, parent_rotation);
-            transform.local_rotation = quat_t::normalize(parent_rotation * world.rotation);
+            const mat4_t parent_world = transform_system::compose_world(reg, parent);
+            transform.local_position = transform_point(inverse(parent_world), world.position);
+            transform.local_rotation = normalize(inverse(rotation_of(parent_world)) * world.rotation);
         }
 
         pose_t local_pose(const transform_t& transform) { return {transform.local_position, transform.local_rotation}; }
@@ -339,7 +318,7 @@ namespace tau::physics::detail
             const f32 v = t * sign;
             const quat_t rotation = {q0.x * u + q1.x * v, q0.y * u + q1.y * v, q0.z * u + q1.z * v,
                                      q0.w * u + q1.w * v};
-            return {from.position + (to.position - from.position) * t, quat_t::normalize(rotation)};
+            return {from.position + (to.position - from.position) * t, normalize(rotation)};
         }
 
         f32 max_abs(f32 a, f32 b) { return std::max(std::abs(a), std::abs(b)); }
@@ -657,7 +636,7 @@ namespace tau::physics::detail
             if (rb.type == body_type_e::KINEMATIC)
             {
                 const pose_t pose = world_pose(reg, transform);
-                const bool moved = !glm_vec3_eqv(pose.position, body.position) ||
+                const bool moved = !(pose.position == body.position) ||
                                    std::memcmp(&pose.rotation, &body.rotation, sizeof(quat_t)) != 0;
                 if (moved || bodies.IsActive(body.id))
                 {
@@ -668,7 +647,7 @@ namespace tau::physics::detail
                 continue;
             }
 
-            const bool moved = !glm_vec3_eqv(transform.local_position, body.position) ||
+            const bool moved = !(transform.local_position == body.position) ||
                                std::memcmp(&transform.local_rotation, &body.rotation, sizeof(quat_t)) != 0;
             if (moved)
             {
@@ -785,7 +764,7 @@ namespace tau::physics
                  const query_filter_t& filter)
     {
         const state_t* state = detail::state_of(world);
-        const f32 length = direction.length();
+        const f32 length = tau::length(direction);
         if (!state || max_distance <= 0.0f || length <= 0.0f) { return false; }
 
         const JPH::RRayCast ray{detail::to_jolt(origin), detail::to_jolt(direction * (max_distance / length))};
@@ -803,7 +782,7 @@ namespace tau::physics
     {
         std::vector<ray_hit_t> out;
         const state_t* state = detail::state_of(world);
-        const f32 length = direction.length();
+        const f32 length = tau::length(direction);
         if (!state || max_distance <= 0.0f || length <= 0.0f) { return out; }
 
         const JPH::RRayCast ray{detail::to_jolt(origin), detail::to_jolt(direction * (max_distance / length))};

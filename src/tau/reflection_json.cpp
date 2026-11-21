@@ -126,7 +126,9 @@ namespace tau::reflection_json
                 nlohmann::json out = nlohmann::json::object();
                 for (auto [id, data] : type.data())
                 {
-                    out[std::string(data.name())] = encode(data.get(value), prop_of(data));
+                    const reflection::editor_prop_t* field_prop = prop_of(data);
+                    if (field_prop && has_flag(field_prop->flags, reflection::prop_flags_e::NOT_SAVED)) { continue; }
+                    out[std::string(data.name())] = encode(data.get(value), field_prop);
                 }
                 return out;
             }
@@ -247,6 +249,7 @@ namespace tau::reflection_json
             const reflection::any_t mine = data.get(value);
             const reflection::any_t theirs = data.get(base);
             const reflection::editor_prop_t* prop = prop_of(data);
+            if (prop && has_flag(prop->flags, reflection::prop_flags_e::NOT_SAVED)) { continue; }
 
             const bool nested = (!prop || prop->asset_type_hash == 0) && is_struct(data.type());
 

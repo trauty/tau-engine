@@ -1,9 +1,5 @@
 #include "camera.h"
 
-#include "cglm/clipspace/persp_lh_zo.h"
-#include "cglm/clipspace/view_lh.h"
-#include "cglm/util.h"
-#include "cglm/vec3.h"
 #include "tau/components/camera.h"
 #include "tau/components/transform.h"
 #include "tau/math.h"
@@ -57,13 +53,10 @@ namespace tau::camera_system
                                f32 far_plane, mat4_t& out_view, mat4_t& out_projection, mat4_t& out_view_proj)
     {
         (void)far_plane;
-        perspective_reverse_infinite_lh_zo(glm_rad(fov_deg), aspect, near_plane, out_projection);
+        out_projection = perspective_reverse_infinite_lh_zo(radians(fov_deg), aspect, near_plane);
         flip_clip_y(out_projection);
 
-        vec3_t center;
-        glm_vec3_add(eye, forward, center);
-        glm_lookat_lh(eye, center, up, out_view);
-
-        glm_mat4_mul(out_projection, out_view, out_view_proj);
+        out_view = look_at_lh(eye, eye + forward, up);
+        out_view_proj = out_projection * out_view;
     }
 } // namespace tau::camera_system

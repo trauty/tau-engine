@@ -17,7 +17,7 @@
 
 namespace tau::cooker
 {
-    inline constexpr int COOKER_VERSION = 8;
+    inline constexpr int COOKER_VERSION = 9;
 
     // debug cooks keep debug info and skip optimisation, for RenderDoc
     // part of the cook identity along with the Slang version

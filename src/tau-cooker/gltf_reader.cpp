@@ -346,17 +346,14 @@ namespace tau::cooker::gltf
 
             if (in.has_matrix)
             {
-                mat4 matrix;
-                std::memcpy(matrix, in.matrix, sizeof(matrix));
-                vec4 translation;
-                mat4 rotation;
-                vec3 scale;
-                glm_decompose(matrix, translation, rotation, scale);
-                versor quat;
-                glm_mat4_quat(rotation, quat);
-                std::memcpy(out.translation, translation, sizeof(out.translation));
-                std::memcpy(out.rotation, quat, sizeof(out.rotation));
-                std::memcpy(out.scale, scale, sizeof(out.scale));
+                mat4_t matrix;
+                std::memcpy(&matrix, in.matrix, sizeof(matrix));
+                vec3_t translation, scale;
+                quat_t rotation;
+                decompose(matrix, translation, rotation, scale);
+                std::memcpy(out.translation, &translation, sizeof(out.translation));
+                std::memcpy(out.rotation, &rotation, sizeof(out.rotation));
+                std::memcpy(out.scale, &scale, sizeof(out.scale));
                 return;
             }
             if (in.has_translation) { std::memcpy(out.translation, in.translation, sizeof(out.translation)); }

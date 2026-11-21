@@ -1,8 +1,5 @@
 #include "transform.h"
 
-#include "cglm/affine.h"
-#include "cglm/mat4.h"
-#include "cglm/vec3.h"
 #include "tau/components/transform.h"
 #include "tau/defines.h"
 #include "tau/ecs.h"
@@ -29,7 +26,6 @@ namespace tau::transform_system
 
         void mark_dirty(ecs::registry_t& reg) { reg.ctx().emplace<order_t>().dirty = true; }
 
-
         struct orphans_t
         { std::vector<ecs::entity_t> entities; };
 
@@ -45,14 +41,7 @@ namespace tau::transform_system
         { return std::memcmp(&a, &b, sizeof(T)) == 0; }
 
         void build_local(const vec3_t& position, const quat_t& rotation, const vec3_t& scale, mat4_t& out)
-        {
-            mat4_t t, r, s, rs;
-            glm_translate_make(t, position);
-            glm_quat_mat4(rotation, r);
-            glm_scale_make(s, scale);
-            glm_mat4_mul(r, s, rs);
-            glm_mat4_mul(t, rs, out);
-        }
+        { out = trs(position, rotation, scale); }
     } // namespace
 
     struct internal_t
@@ -275,11 +264,11 @@ namespace tau::transform_system
 
                     if (transform.is_dirty || parent_transform.is_dirty)
                     {
-                        glm_mat4_mul(parent_transform.world_mat, (vec4*)transform.local_mat, transform.world_mat);
+                        transform.world_mat = parent_transform.world_mat * transform.local_mat;
                         transform.is_dirty = true;
                     }
                 }
-                else if (transform.is_dirty) { glm_mat4_copy(transform.local_mat, transform.world_mat); }
+                else if (transform.is_dirty) { transform.world_mat = transform.local_mat; }
             }
 
             for (ecs::entity_t entity : order.sorted) { view.get<transform_t>(entity).is_dirty = false; }
@@ -289,58 +278,29 @@ namespace tau::transform_system
     void set_local_position(ecs::registry_t& reg, ecs::entity_t entity, vec3_t new_pos)
     {
         transform_t& transform = reg.get<transform_t>(entity);
-        glm_vec3_copy(new_pos, transform.local_position);
+        transform.local_position = new_pos;
     }
 
     void set_local_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat_t new_rot)
     {
         transform_t& transform = reg.get<transform_t>(entity);
-        glm_quat_copy(new_rot, transform.local_rotation);
+        transform.local_rotation = new_rot;
     }
 
     void set_local_scale(ecs::registry_t& reg, ecs::entity_t entity, vec3_t new_scale)
     {
         transform_t& transform = reg.get<transform_t>(entity);
-        glm_vec3_copy(new_scale, transform.local_scale);
+        transform.local_scale = new_scale;
     }
 
     vec3_t get_world_position(ecs::registry_t& reg, ecs::entity_t entity)
-    {
-        transform_t& t = reg.get<transform_t>(entity);
-
-        vec3_t pos;
-        glm_vec3_copy(t.world_mat[3], pos);
-        return pos;
-    }
+    { return translation_of(reg.get<transform_t>(entity).world_mat); }
 
     vec3_t get_world_scale(ecs::registry_t& reg, ecs::entity_t entity)
-    {
-        transform_t& t = reg.get<transform_t>(entity);
-
-        vec3_t scale;
-        scale.x = glm_vec3_norm(t.world_mat[0]);
-        scale.y = glm_vec3_norm(t.world_mat[1]);
-        scale.z = glm_vec3_norm(t.world_mat[2]);
-
-        return scale;
-    }
+    { return scale_of(reg.get<transform_t>(entity).world_mat); }
 
     quat_t get_world_rotation(ecs::registry_t& reg, ecs::entity_t entity)
-    {
-        transform_t& t = reg.get<transform_t>(entity);
-        quat_t rot;
-
-        mat4 temp_mat;
-        glm_mat4_copy(t.world_mat, temp_mat);
-
-        glm_vec3_normalize(temp_mat[0]);
-        glm_vec3_normalize(temp_mat[1]);
-        glm_vec3_normalize(temp_mat[2]);
-
-        glm_mat4_quat(temp_mat, rot);
-
-        return rot;
-    }
+    { return rotation_of(reg.get<transform_t>(entity).world_mat); }
 
     void set_world_position(ecs::registry_t& reg, ecs::entity_t entity, vec3_t target_world_pos)
     {
@@ -354,13 +314,7 @@ namespace tau::transform_system
 
         transform_t& parent_t = reg.get<transform_t>(t.get_parent());
 
-        mat4 parent_inv;
-        glm_mat4_inv(parent_t.world_mat, parent_inv);
-
-        vec3_t new_local_pos;
-        glm_mat4_mulv3(parent_inv, target_world_pos, 1.0f, new_local_pos);
-
-        set_local_position(reg, entity, new_local_pos);
+        set_local_position(reg, entity, transform_point(inverse(parent_t.world_mat), target_world_pos));
     }
 
     void set_world_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat_t world_rot)
@@ -369,13 +323,12 @@ namespace tau::transform_system
 
         if (t.get_parent() == ecs::NULL_ENTITY)
         {
-            t.local_rotation = quat_t::normalize(world_rot);
+            t.local_rotation = normalize(world_rot);
             return;
         }
 
-        quat_t parent_inv = get_world_rotation(reg, t.get_parent());
-        glm_quat_inv(parent_inv, parent_inv);
-        t.local_rotation = quat_t::normalize(parent_inv * world_rot);
+        const quat_t parent_inv = inverse(get_world_rotation(reg, t.get_parent()));
+        t.local_rotation = normalize(parent_inv * world_rot);
     }
 
     void set_parent(ecs::registry_t& reg, ecs::entity_t child, ecs::entity_t parent, ecs::entity_t before)
@@ -404,14 +357,10 @@ namespace tau::transform_system
     mat4_t compose_world(const ecs::registry_t& reg, ecs::entity_t entity)
     {
         mat4_t world;
-        glm_mat4_identity(world);
         for (ecs::entity_t e = entity; e != ecs::NULL_ENTITY;)
         {
             const transform_t& t = reg.get<transform_t>(e);
-            mat4_t local, combined;
-            build_local(t.local_position, t.local_rotation, t.local_scale, local);
-            glm_mat4_mul(local, world, combined);
-            glm_mat4_copy(combined, world);
+            world = trs(t.local_position, t.local_rotation, t.local_scale) * world;
             e = t.get_parent();
         }
         return world;

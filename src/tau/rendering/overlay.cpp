@@ -212,7 +212,7 @@ namespace tau::renderer
                            depth,
                            item_mode_e::LINES,
                            {},
-                           mat4_t::identity(),
+                           mat4_t{},
                            vec4_t(1.0f, 1.0f, 1.0f, 1.0f),
                            first,
                            static_cast<u32_t>(lines.size()),

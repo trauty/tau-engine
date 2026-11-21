@@ -40,7 +40,7 @@ namespace tau::editor::panels
             if (handle_math::ray_plane(ray.origin, ray.direction, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, hit))
             {
                 const vec3_t to_hit = hit - ray.origin;
-                if (handle_math::dot(to_hit, to_hit) < MAX_GROUND_DISTANCE * MAX_GROUND_DISTANCE) { at = hit; }
+                if (dot(to_hit, to_hit) < MAX_GROUND_DISTANCE * MAX_GROUND_DISTANCE) { at = hit; }
             }
             return at;
         }

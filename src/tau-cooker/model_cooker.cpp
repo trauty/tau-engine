@@ -297,14 +297,12 @@ namespace tau::cooker::model
             nlohmann::json components(const std::string& name, const f32* t, const f32* r, const f32* s,
                                       const std::string* mesh) const
             {
-                const vec3_t euler = quat_t::to_euler(quat_t(r));
-                const f32 e[3] = {euler.x, euler.y, euler.z};
-
                 nlohmann::json out = {
                     {"tag_t",       {{"name", tagged(scene_value_type_e::STRING, name)}}},
                     {"transform_t",
                      {{"local_position", tagged(scene_value_type_e::VEC3, vec3_json(t))},
-                      {"local_euler", tagged(scene_value_type_e::VEC3, vec3_json(e))},
+                      {"local_rotation",
+                       tagged(scene_value_type_e::QUAT, nlohmann::json::array({r[0], r[1], r[2], r[3]}))},
                       {"local_scale", tagged(scene_value_type_e::VEC3, vec3_json(s))}}  },
                 };
                 if (mesh)

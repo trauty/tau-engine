@@ -74,11 +74,24 @@ namespace tau::reflection
         RADIANS,
     };
 
+    enum class prop_flags_e : u8_t
+    {
+        NONE = 0,
+        NOT_SAVED = 1 << 0,
+        HIDDEN = 1 << 1,
+    };
+
+    constexpr prop_flags_e operator|(prop_flags_e a, prop_flags_e b)
+    { return static_cast<prop_flags_e>(static_cast<u8_t>(a) | static_cast<u8_t>(b)); }
+    constexpr bool has_flag(prop_flags_e set, prop_flags_e flag)
+    { return (static_cast<u8_t>(set) & static_cast<u8_t>(flag)) != 0; }
+
     struct editor_prop_t
     {
         const char* name = "Unknown";
         u64_t asset_type_hash = 0;
         unit_e unit = unit_e::NONE;
+        prop_flags_e flags = prop_flags_e::NONE;
 
         bool is_list = false;
 
@@ -167,29 +180,33 @@ namespace tau::reflection
         }
 
         template <auto MemberPtr>
-        Self& field(const char* label)
+        Self& field(const char* label, prop_flags_e flags = prop_flags_e::NONE)
         {
             return bind_field<MemberPtr>(tau::hash_string(tau::member_name<MemberPtr>()),
-                                         tau::member_label<MemberPtr>.c_str(), field_prop<MemberPtr>(label));
+                                         tau::member_label<MemberPtr>.c_str(),
+                                         flagged(field_prop<MemberPtr>(label), flags));
         }
 
         template <auto MemberPtr>
-        Self& field(const char* label, stable_id id)
-        { return bind_field<MemberPtr>(tau::hash_string(id.name), id.name, field_prop<MemberPtr>(label)); }
+        Self& field(const char* label, stable_id id, prop_flags_e flags = prop_flags_e::NONE)
+        {
+            return bind_field<MemberPtr>(tau::hash_string(id.name), id.name,
+                                         flagged(field_prop<MemberPtr>(label), flags));
+        }
 
         template <auto Setter, auto Getter>
-        Self& accessor(const char* label, stable_id id)
+        Self& accessor(const char* label, stable_id id, prop_flags_e flags = prop_flags_e::NONE)
         {
             m_factory.template data<Setter, Getter>(tau::hash_string(id.name), id.name)
-                .template custom<editor_prop_t>(editor_prop_t{label});
+                .template custom<editor_prop_t>(flagged(editor_prop_t{label}, flags));
             return self();
         }
 
         template <auto Setter, auto Getter>
-        Self& accessor(const char* label, unit_e unit, stable_id id)
+        Self& accessor(const char* label, unit_e unit, stable_id id, prop_flags_e flags = prop_flags_e::NONE)
         {
             m_factory.template data<Setter, Getter>(tau::hash_string(id.name), id.name)
-                .template custom<editor_prop_t>(editor_prop_t{label, unit});
+                .template custom<editor_prop_t>(flagged(editor_prop_t{label, unit}, flags));
             return self();
         }
 
@@ -197,6 +214,12 @@ namespace tau::reflection
 
       protected:
         Self& self() { return static_cast<Self&>(*this); }
+
+        static editor_prop_t flagged(editor_prop_t prop, prop_flags_e flags)
+        {
+            prop.flags = flags;
+            return prop;
+        }
 
         template <auto MemberPtr>
         Self& bind_field(u32_t id, const char* name, editor_prop_t prop)

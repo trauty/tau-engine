@@ -327,10 +327,11 @@ namespace tau::serialization
 
             for (auto [data_id, data] : type.data())
             {
+                tau::reflection::editor_prop_t* prop = static_cast<tau::reflection::editor_prop_t*>(data.custom());
+                if (prop && has_flag(prop->flags, tau::reflection::prop_flags_e::NOT_SAVED)) { continue; }
+
                 tau::reflection::any_t field_value = data.get(instance);
                 const std::string prop_key = tau::reflection::meta_key(data.name(), data_id);
-
-                tau::reflection::editor_prop_t* prop = static_cast<tau::reflection::editor_prop_t*>(data.custom());
                 if (prop && prop->asset_type_hash != 0 && prop->is_list)
                 {
                     nlohmann::json entries = nlohmann::json::array();
