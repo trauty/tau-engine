@@ -525,5 +525,6 @@ namespace tau::renderer
         std::vector<const char*> required_instance_exts;
         std::vector<const char*> required_device_exts;
         bindless_limits_t bindless_limits = {};
+        bool vsync = true;
     };
 } // namespace tau::renderer

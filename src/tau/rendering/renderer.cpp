@@ -21,6 +21,7 @@
 #include "tau/os.h"
 #include "tau/profiling.h"
 #include "tau/rendering/frame_upload.h"
+#include "tau/rendering/gpu_timers.h"
 #include "tau/rendering/overlay.h"
 #include "tau/rendering/readback.h"
 #include "tau/rendering/renderer_constants.h"
@@ -63,6 +64,31 @@ namespace tau::renderer
     namespace
     {
         bool frame_slot_ready = false;
+
+        // off: uncapped (IMMEDIATE, else MAILBOX), for timing runs
+        bool vsync = true;
+
+        VkPresentModeKHR select_present_mode(VkPhysicalDevice physical_device, VkSurfaceKHR surface, bool want_vsync)
+        {
+            if (want_vsync) { return VK_PRESENT_MODE_FIFO_KHR; }
+
+            u32_t count = 0;
+            vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &count, nullptr);
+            std::vector<VkPresentModeKHR> modes(count);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &count, modes.data());
+
+            for (const VkPresentModeKHR wanted : {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR})
+            {
+                if (std::ranges::find(modes, wanted) != modes.end())
+                {
+                    TAU_LOG_INFO("VULKAN", "Uncapped present mode: {}",
+                                 wanted == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" : "MAILBOX");
+                    return wanted;
+                }
+            }
+            TAU_LOG_WARN("VULKAN", "No uncapped present mode, staying with vsync");
+            return VK_PRESENT_MODE_FIFO_KHR;
+        }
 
         bool image_acquired = false;
         u32_t acquired_index = 0;
@@ -1113,6 +1139,7 @@ namespace tau::renderer
 
     bool init(const context_config_t& config, SDL_Window* window)
     {
+        vsync = config.vsync;
         std::vector<const char*> instance_exts = config.required_instance_exts;
 
         VkDebugUtilsMessengerCreateInfoEXT debug_create_info = {
@@ -1419,6 +1446,8 @@ namespace tau::renderer
 
         TAU_LOG_INFO("VULKAN", "Context initialized for GPU: {}", ctx.properties.deviceName);
 
+        gpu_timers::init();
+
 #ifdef TAU_ENABLE_PROFILING
         VkCommandPoolCreateInfo tracy_pool_info = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -1554,6 +1583,7 @@ namespace tau::renderer
     void shutdown()
     {
         readback::shutdown();
+        gpu_timers::shutdown();
         overlay::shutdown();
         frame_upload::shutdown();
         save_pipeline_cache();
@@ -2147,6 +2177,7 @@ namespace tau::renderer
 #ifdef TAU_ENABLE_PROFILING
         TracyVkCollect(tracy_vk_ctx, cmd);
 #endif
+        gpu_timers::begin_frame(cmd, ctx.cur_frame);
 
         flush_pending_acquires(cmd);
 
@@ -2388,7 +2419,8 @@ namespace tau::renderer
             .width = ctx.render_extent.width,
             .height = ctx.render_extent.height,
             .format = VK_FORMAT_R16G16B16A16_SFLOAT,
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            // transfer source: the runner reads the HDR back
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
             .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
         };
 
@@ -2788,6 +2820,7 @@ namespace tau::renderer
                              VK_IMAGE_ASPECT_COLOR_BIT);
         }
 
+        gpu_timers::end_frame(cmd);
         vkEndCommandBuffer(cmd);
 
         tau::active_arena = nullptr;
@@ -3024,7 +3057,7 @@ namespace tau::renderer
         ctx.logical_extent = logical_extent;
 
         VkSurfaceFormatKHR surface_format = select_surface_format(ctx.physical_device, ctx.surface);
-        VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+        const VkPresentModeKHR present_mode = select_present_mode(ctx.physical_device, ctx.surface, vsync);
 
         u32_t desired_swapchain_images = surface_caps.minImageCount + 1;
         if ((surface_caps.maxImageCount > 0) && (desired_swapchain_images > surface_caps.maxImageCount))
@@ -3230,6 +3263,7 @@ namespace tau::renderer
             vkWaitSemaphores(ctx.device, &wait_info, UINT64_MAX);
         }
         readback::collect(ctx.cur_frame);
+        gpu_timers::collect(ctx.cur_frame);
         frame_upload::reset(ctx.cur_frame);
 
         frame_slot_ready = true;

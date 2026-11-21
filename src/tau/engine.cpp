@@ -50,7 +50,7 @@ namespace tau::engine
         post_render_callback_t user_post_render_cb;
     } // namespace
 
-    bool init(const std::string& name, i32 init_window_width, i32 init_window_height)
+    bool init(const std::string& name, i32 init_window_width, i32 init_window_height, bool vsync)
     {
         // before vfs::init, which names the per game user:// folder after it
         game_name = name;
@@ -104,6 +104,7 @@ namespace tau::engine
             .app_name = game_name,
             .enable_validation = enable_validation_layers,
             .required_instance_exts = std::move(extensions),
+            .vsync = vsync,
         };
 
         if (!tau::renderer::init(renderer_config, window))

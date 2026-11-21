@@ -3,6 +3,7 @@
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/profiling.h"
+#include "tau/rendering/gpu_timers.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/renderer_types.h"
@@ -254,6 +255,7 @@ namespace tau::renderer
             const char* rg_zone_name = pass.debug_name ? pass.debug_name : "rg_pass";
             TracyVkZoneTransient(static_cast<TracyVkCtx>(profiling_vk_ctx), rg_vk_zone, cmd, rg_zone_name, true);
 #endif
+            gpu_timers::begin_pass(cmd, pass.debug_name);
             bool is_compute = pass.color_writes.empty() && pass.depth_stencil == RG_NULL_ID;
 
             for (rg_resource_id id : pass.storage_writes)
@@ -393,6 +395,8 @@ namespace tau::renderer
             {
                 if (pass.execute_callback) { pass.execute_callback(cmd, reg); }
             }
+
+            gpu_timers::end_pass(cmd);
         }
     }
 

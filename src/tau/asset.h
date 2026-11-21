@@ -126,6 +126,8 @@ namespace tau::assets
     TAU_ENGINE_API asset_handle_t load(u64_t type_id, std::string_view path);
 
     TAU_ENGINE_API asset_state_e state(asset_handle_t handle);
+    // loads started and not finished yet, sync and async
+    TAU_ENGINE_API u32_t in_flight();
     TAU_ENGINE_API u64_t type_of(asset_handle_t handle);
     // load path, else guid map path, else empty
     TAU_ENGINE_API std::string path_of(asset_handle_t handle);

@@ -444,6 +444,8 @@ namespace tau::assets
 
     asset_handle_t load(u64_t type_id, std::string_view path) { return detail::load(type_id, path, false); }
 
+    u32_t in_flight() { return g_in_flight.load(std::memory_order_acquire); }
+
     asset_state_e state(asset_handle_t handle)
     {
         std::scoped_lock lock(g_mutex);

@@ -13,7 +13,9 @@ namespace tau::engine
     using ui_callback_t = std::function<void()>;
     using post_render_callback_t = std::function<void()>;
 
-    TAU_ENGINE_API bool init(const std::string& game_name, i32 init_window_width, i32 init_window_height);
+    // vsync off: uncapped presentation, for timing runs
+    TAU_ENGINE_API bool init(const std::string& game_name, i32 init_window_width, i32 init_window_height,
+                             bool vsync = true);
     TAU_ENGINE_API void run();
     TAU_ENGINE_API bool shutdown();
 

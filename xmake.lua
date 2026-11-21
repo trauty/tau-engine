@@ -171,6 +171,21 @@ target("tau-runtime")
 
 target_end()
 
+-- measurement runs over a project: fixed render size, frame count, HDR dump, GPU pass timings (a dev tool, never shipped)
+target("tau-runner")
+    set_kind("binary")
+    add_rules("tau.common")
+    tau_warnings()
+    add_deps("tau-engine", "tau-assets")
+
+    if is_plat("linux") then
+        add_ldflags("-rdynamic", {force = true})
+    end
+
+    add_files("src/tau-runner/*.cpp")
+
+target_end()
+
 target("tau-cooker")
     set_kind("binary")
     add_rules("tau.common", {march = false})

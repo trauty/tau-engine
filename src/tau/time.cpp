@@ -13,6 +13,9 @@ namespace tau::time
 
     static u64_t start_ticks = 0;
     static u64_t last_ticks = 0;
+    static f64 frame_step = 0.0;
+
+    void set_frame_step(f64 seconds) { frame_step = seconds; }
 
     void update()
     {
@@ -26,8 +29,16 @@ namespace tau::time
 
         constexpr f64 NS_TO_SECONDS = 1.0 / 1000000000.0;
 
-        time = static_cast<f64>(cur_ticks - start_ticks) * NS_TO_SECONDS;
-        dt = static_cast<f64>(cur_ticks - last_ticks) * NS_TO_SECONDS;
+        if (frame_step > 0.0)
+        {
+            time += frame_step;
+            dt = frame_step;
+        }
+        else
+        {
+            time = static_cast<f64>(cur_ticks - start_ticks) * NS_TO_SECONDS;
+            dt = static_cast<f64>(cur_ticks - last_ticks) * NS_TO_SECONDS;
+        }
 
         last_ticks = cur_ticks;
     }
