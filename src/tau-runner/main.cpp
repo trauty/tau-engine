@@ -19,12 +19,21 @@ int main(int argc, char* argv[])
     tau::runner::options_t options;
     if (argc < 2 || !tau::project_t::load(argv[1], project) || !tau::runner::parse(argc, argv, 2, options))
     {
-        TAU_LOG_FATAL("RUNNER", "Usage: tau-runner <project> [--scene=PATH] [--camera=NAME] [--size=WxH] [--frames=N] "
-                                "[--dump-hdr=PREFIX] [--timings] [--no-vsync] [--quit-after=SECONDS]");
+        TAU_LOG_FATAL("RUNNER",
+                      "Usage: tau-runner <project> [--scene=PATH] [--camera=NAME] [--size=WxH] [--frames=N] "
+                      "[--dump-hdr=PREFIX] [--timings] [--no-vsync] [--quit-after=SECONDS] [--headless] [--compat] "
+                      "[--validation]");
         return -1;
     }
 
-    if (!tau::engine::init(project.project_name, 1280, 720, options.vsync)) { return -1; }
+    const tau::engine::engine_config_t engine_config = {
+        .name = project.project_name,
+        .vsync = options.vsync,
+        .validation = options.validation || tau::engine::DEBUG_BUILD,
+        .force_compat = options.compat,
+        .headless = options.headless,
+    };
+    if (!tau::engine::init(engine_config)) { return -1; }
     tau::project::mount(project, true);
 
     tau::world_t& world = tau::engine::get_active_world();

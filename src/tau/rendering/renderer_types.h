@@ -10,6 +10,7 @@
 #include "tau/log.h"
 #include "tau/math.h"
 #include "tau/memory/linear_allocator.h"
+#include "tau/rendering/device.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/shader_instance.h"
 #include "tau/rendering/shader_shared.h"
@@ -92,9 +93,6 @@ namespace tau::renderer
         std::optional<u32_t> compute_family;
         std::optional<u32_t> transfer_family;
         std::optional<u32_t> present_family;
-
-        bool is_complete() const
-        { return graphics_family.has_value() && present_family.has_value() && transfer_family.has_value(); }
     };
 
     struct swapchain_t
@@ -455,15 +453,11 @@ namespace tau::renderer
         VkQueue transfer_queue = VK_NULL_HANDLE;
 
         queue_family_indices_t queue_fam_indices;
-        u32_t transfer_queue_index;
         VkPhysicalDeviceProperties properties;
+        device::device_caps_t caps;
 
         VkCommandPool transfer_command_pool = VK_NULL_HANDLE;
         std::mutex transfer_mutex;
-
-        std::vector<std::string> active_instance_exts;
-        std::vector<std::string> active_device_exts;
-        std::vector<std::string> active_layers;
 
         std::mutex descriptor_mutex;
 
@@ -521,9 +515,14 @@ namespace tau::renderer
     struct context_config_t
     {
         std::string app_name = "tau-engine";
-        bool enable_validation = true;
+        // validation layers with synchronization validation
+        bool validation = false;
+        // no hardware ray tracing and no int16: the minimum spec
+        bool force_compat = false;
+        // no surface or swapchain, offscreen output only
+        bool headless = false;
+        bool pipeline_properties = false;
         std::vector<const char*> required_instance_exts;
-        std::vector<const char*> required_device_exts;
         bindless_limits_t bindless_limits = {};
         bool vsync = true;
     };

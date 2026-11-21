@@ -30,12 +30,6 @@
 #include <vector>
 // clang-format on
 
-#ifdef NDEBUG
-const bool enable_validation_layers = false;
-#else
-const bool enable_validation_layers = true;
-#endif
-
 namespace tau::engine
 {
     namespace
@@ -50,10 +44,10 @@ namespace tau::engine
         post_render_callback_t user_post_render_cb;
     } // namespace
 
-    bool init(const std::string& name, i32 init_window_width, i32 init_window_height, bool vsync)
+    bool init(const engine_config_t& config)
     {
         // before vfs::init, which names the per game user:// folder after it
-        game_name = name;
+        game_name = config.name;
         tau::vfs::init();
 
         tau::log::init();
@@ -63,7 +57,7 @@ namespace tau::engine
         // named after the process, as the editor and a game can share a bin directory
         if (const char* base = SDL_GetBasePath())
         {
-            const std::filesystem::path log_path = std::filesystem::path(base) / "logs" / (name + ".log");
+            const std::filesystem::path log_path = std::filesystem::path(base) / "logs" / (config.name + ".log");
             if (!tau::log::to_file(log_path.string()))
             {
                 TAU_LOG_WARN("ENGINE", "Could not open a log file at {}", log_path.string());
@@ -80,7 +74,8 @@ namespace tau::engine
         tau::reflection::register_types();
         tau::jobs::init();
 
-        SDL_Init(SDL_INIT_VIDEO);
+        // headless needs no display, events still run the loop
+        SDL_Init(config.headless ? SDL_INIT_EVENTS : SDL_INIT_VIDEO);
 
         tau::input::detail::init();
 
@@ -90,21 +85,27 @@ namespace tau::engine
             return false;
         }
 
-        SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+        SDL_Window* window = nullptr;
+        std::vector<const char*> extensions;
+        if (!config.headless)
+        {
+            const SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+            window = SDL_CreateWindow(game_name.c_str(), config.window_width, config.window_height, window_flags);
+            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 
-        SDL_Window* window = SDL_CreateWindow(game_name.c_str(), init_window_width, init_window_height, window_flags);
-        SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+            u32 sdl_ext_count = 0;
+            const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_ext_count);
+            extensions.assign(sdl_extensions, sdl_extensions + sdl_ext_count);
+        }
         tau::window::set_window(window);
-
-        u32 sdl_ext_count = 0;
-        const char* const* sdl_extensions = SDL_Vulkan_GetInstanceExtensions(&sdl_ext_count);
-        std::vector<const char*> extensions(sdl_extensions, sdl_extensions + sdl_ext_count);
 
         renderer::context_config_t renderer_config = {
             .app_name = game_name,
-            .enable_validation = enable_validation_layers,
+            .validation = config.validation,
+            .force_compat = config.force_compat,
+            .headless = config.headless,
             .required_instance_exts = std::move(extensions),
-            .vsync = vsync,
+            .vsync = config.vsync,
         };
 
         if (!tau::renderer::init(renderer_config, window))

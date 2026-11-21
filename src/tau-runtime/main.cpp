@@ -34,7 +34,7 @@ int main(int argc, char* argv[])
     const char* fallback_name = "tau";
 #endif
     const char* window_name = have_project ? project.project_name.c_str() : fallback_name;
-    if (!tau::engine::init(window_name, 1280, 720)) { return -1; }
+    if (!tau::engine::init({.name = window_name})) { return -1; }
 
     // engine::init() already mounted the cooked tree beside the binary and loaded its guid map
     // a project keeps its own engine asset copy, its root supersedes that one, guid maps merge

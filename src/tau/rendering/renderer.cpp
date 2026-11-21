@@ -20,6 +20,7 @@
 #include "tau/memory/linear_allocator.h"
 #include "tau/os.h"
 #include "tau/profiling.h"
+#include "tau/rendering/device.h"
 #include "tau/rendering/frame_upload.h"
 #include "tau/rendering/gpu_timers.h"
 #include "tau/rendering/overlay.h"
@@ -96,7 +97,6 @@ namespace tau::renderer
         // resize waits until the held image is presented
         bool deferred_resize = false;
 
-        const std::vector<const char*> validation_layers = {"VK_LAYER_KHRONOS_validation"};
 #ifdef TAU_ENABLE_PROFILING
         TracyVkCtx tracy_vk_ctx = nullptr;
 #endif
@@ -892,99 +892,6 @@ namespace tau::renderer
         return true;
     }
 
-    namespace detail
-    {
-        bool check_validation_support()
-        {
-            u32_t layer_count;
-            vkEnumerateInstanceLayerProperties(&layer_count, nullptr);
-
-            std::vector<VkLayerProperties> available_layers(layer_count);
-            vkEnumerateInstanceLayerProperties(&layer_count, available_layers.data());
-
-            for (const char* layer_name : validation_layers)
-            {
-                bool layer_found = false;
-                for (const VkLayerProperties& layer_props : available_layers)
-                {
-                    if (std::strcmp(layer_name, layer_props.layerName) == 0)
-                    {
-                        layer_found = true;
-                        break;
-                    }
-                }
-
-                if (!layer_found) { return false; }
-            }
-
-            return true;
-        }
-
-        static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
-            VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
-            [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT message_type,
-            const VkDebugUtilsMessengerCallbackDataEXT* p_callback_data, [[maybe_unused]] void* ptr_user_data)
-        {
-            if (message_severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-            {
-                TAU_LOG_ERROR("VULKAN", "{}", p_callback_data->pMessage);
-            }
-            else if (message_severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
-            {
-                TAU_LOG_WARN("VULKAN", "{}", p_callback_data->pMessage);
-            }
-            else
-            {
-                TAU_LOG_INFO("VULKAN", "{}", p_callback_data->pMessage);
-            }
-
-            return VK_FALSE;
-        }
-
-        queue_family_indices_t find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface)
-        {
-            queue_family_indices_t indices;
-            u32_t count = 0;
-            vkGetPhysicalDeviceQueueFamilyProperties(device, &count, nullptr);
-            std::vector<VkQueueFamilyProperties> families(count);
-            vkGetPhysicalDeviceQueueFamilyProperties(device, &count, families.data());
-
-            for (u32_t i = 0; i < count; i++)
-            {
-                if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-                {
-                    if (!indices.graphics_family.has_value()) { indices.graphics_family = i; }
-                }
-
-                if (families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) { indices.compute_family = i; }
-
-                if ((families[i].queueFlags & VK_QUEUE_TRANSFER_BIT) &&
-                    !(families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
-                {
-                    if (!indices.transfer_family.has_value()) { indices.transfer_family = i; }
-                }
-
-                VkBool32 present_support = false;
-                vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &present_support);
-                if (present_support)
-                {
-                    if (i == indices.graphics_family) { indices.present_family = i; }
-                    else if (!indices.present_family.has_value()) { indices.present_family = i; }
-                }
-            }
-
-            if (!indices.transfer_family.has_value())
-            {
-                indices.transfer_family = indices.graphics_family;
-
-                families[indices.graphics_family.value()].queueCount > 1 ? ctx.transfer_queue_index = 1
-                                                                         : ctx.transfer_queue_index = 0;
-            }
-
-            return indices;
-        }
-    } // namespace detail
-
     // the driver compiles every pipeline from shader binaries on launch and on every shader reload
     // a cache on disk, in the per user folder (user://), carries earlier results across runs
     namespace
@@ -1139,203 +1046,18 @@ namespace tau::renderer
     bool init(const context_config_t& config, SDL_Window* window)
     {
         vsync = config.vsync;
-        std::vector<const char*> instance_exts = config.required_instance_exts;
 
-        VkDebugUtilsMessengerCreateInfoEXT debug_create_info = {
-            VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
-        bool enable_validation = config.enable_validation && detail::check_validation_support();
-
-        if (enable_validation)
-        {
-            instance_exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-
-            debug_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
-                                                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                                                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-            debug_create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                                            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                                            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-            debug_create_info.pfnUserCallback = detail::debug_callback;
-
-            for (const char* layer : validation_layers) { ctx.active_layers.push_back(layer); }
-        }
-
-        VkApplicationInfo app_info = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
-        app_info.pApplicationName = config.app_name.c_str();
-        app_info.apiVersion = VK_API_VERSION_1_3;
-
-        VkInstanceCreateInfo instance_info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
-        instance_info.pApplicationInfo = &app_info;
-        instance_info.enabledExtensionCount = static_cast<u32_t>(instance_exts.size());
-        instance_info.ppEnabledExtensionNames = instance_exts.data();
-        instance_info.enabledLayerCount = enable_validation ? static_cast<u32_t>(validation_layers.size()) : 0;
-        instance_info.ppEnabledLayerNames = enable_validation ? validation_layers.data() : nullptr;
-        instance_info.pNext = enable_validation ? &debug_create_info : nullptr;
-
-        VK_CHECK(vkCreateInstance(&instance_info, nullptr, &ctx.instance));
-
-        volkLoadInstance(ctx.instance);
-
-        for (const char* extension : instance_exts) { ctx.active_instance_exts.push_back(extension); }
-
-        if (enable_validation)
-        {
-            PFN_vkCreateDebugUtilsMessengerEXT func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-                ctx.instance, "vkCreateDebugUtilsMessengerEXT");
-            if (func) { func(ctx.instance, &debug_create_info, nullptr, &ctx.debug_messenger); }
-        }
-
-        if (!SDL_Vulkan_CreateSurface(window, ctx.instance, nullptr, &ctx.surface))
-        {
-            TAU_LOG_FATAL("VULKAN", "Failed to create SDL surface: {}", SDL_GetError());
-            return false;
-        }
-
-        u32_t device_count = 0;
-        vkEnumeratePhysicalDevices(ctx.instance, &device_count, nullptr);
-        std::vector<VkPhysicalDevice> devices(device_count);
-        vkEnumeratePhysicalDevices(ctx.instance, &device_count, devices.data());
-
-        for (const VkPhysicalDevice& device : devices)
-        {
-            queue_family_indices_t family_indices = detail::find_queue_families(device, ctx.surface);
-            if (family_indices.is_complete())
-            {
-                ctx.physical_device = device;
-                ctx.queue_fam_indices = family_indices;
-                vkGetPhysicalDeviceProperties(device, &ctx.properties);
-                break;
-            }
-        }
-
-        if (ctx.physical_device == VK_NULL_HANDLE)
-        {
-            TAU_LOG_FATAL("VULKAN", "No suitable GPU found");
-            return false;
-        }
-
-        VkPhysicalDeviceFeatures2 device_features_check = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-        VkPhysicalDeviceDescriptorIndexingFeatures supports_indexing = {
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
-        VkPhysicalDeviceBufferDeviceAddressFeatures supports_bda = {
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
-        VkPhysicalDeviceScalarBlockLayoutFeatures supports_scalar = {
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES};
-        device_features_check.pNext = &supports_indexing;
-        supports_indexing.pNext = &supports_bda;
-        supports_bda.pNext = &supports_scalar;
-
-        vkGetPhysicalDeviceFeatures2(ctx.physical_device, &device_features_check);
-
-        if (!supports_indexing.runtimeDescriptorArray)
-        {
-            TAU_LOG_FATAL("VULKAN", "No GPU with bindless descriptor support found");
-            return false;
-        }
-
-        if (!supports_bda.bufferDeviceAddress)
-        {
-            TAU_LOG_FATAL("VULKAN", "GPU does not support Buffer Device Address which is required");
-            return false;
-        }
-
-        if (!supports_scalar.scalarBlockLayout)
-        {
-            TAU_LOG_FATAL("VULKAN", "GPU does not support VK_EXT_scalar_block_layout which is required");
-            return false;
-        }
-
-        std::vector<VkDeviceQueueCreateInfo> queue_infos;
-        std::set<u32_t> unique_families = {
-            ctx.queue_fam_indices.graphics_family.value(),
-            ctx.queue_fam_indices.present_family.value(),
-            ctx.queue_fam_indices.transfer_family.value(),
+        const device::device_config_t device_config = {
+            .app_name = config.app_name,
+            .validation = config.validation,
+            .force_compat = config.force_compat,
+            .headless = config.headless,
+            .pipeline_properties = config.pipeline_properties,
+            .instance_exts = config.required_instance_exts,
         };
-
-        float priority = 1.0f;
-        for (u32_t family : unique_families)
-        {
-            VkDeviceQueueCreateInfo queue_info = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-            queue_info.queueFamilyIndex = family;
-            queue_info.queueCount = 1;
-            queue_info.pQueuePriorities = &priority;
-            queue_infos.push_back(queue_info);
-        }
-
-        VkPhysicalDeviceVulkan11Features vk11_features = {
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-            .shaderDrawParameters = VK_TRUE,
-        };
-
-        VkPhysicalDeviceVulkan12Features vk12_features = {
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-            .pNext = &vk11_features,
-
-            .drawIndirectCount = VK_TRUE,
-
-            .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
-            .shaderStorageBufferArrayNonUniformIndexing = VK_TRUE,
-            .shaderStorageImageArrayNonUniformIndexing = VK_TRUE,
-            .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
-            .descriptorBindingStorageImageUpdateAfterBind = VK_TRUE,
-            .descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE,
-            .descriptorBindingUpdateUnusedWhilePending = VK_TRUE,
-            .descriptorBindingPartiallyBound = VK_TRUE,
-            .descriptorBindingVariableDescriptorCount = VK_TRUE,
-
-            .runtimeDescriptorArray = VK_TRUE,
-            .scalarBlockLayout = VK_TRUE,
-            .timelineSemaphore = VK_TRUE,
-            .bufferDeviceAddress = VK_TRUE,
-        };
-
-        VkPhysicalDeviceVulkan13Features vk13_features = {
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-            .pNext = &vk12_features,
-            .synchronization2 = VK_TRUE,
-            .dynamicRendering = VK_TRUE,
-        };
-
-        device_features_check.pNext = &vk13_features;
-        device_features_check.features.samplerAnisotropy = VK_TRUE;
-        device_features_check.features.multiDrawIndirect = VK_TRUE;
-        device_features_check.features.drawIndirectFirstInstance = VK_TRUE;
-
-        std::vector<const char*> device_exts = config.required_device_exts;
-        device_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-
-        VkDeviceCreateInfo device_info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-        device_info.pNext = &device_features_check;
-        device_info.queueCreateInfoCount = static_cast<u32_t>(queue_infos.size());
-        device_info.pQueueCreateInfos = queue_infos.data();
-        device_info.enabledExtensionCount = static_cast<u32_t>(device_exts.size());
-        device_info.ppEnabledExtensionNames = device_exts.data();
-
-        VK_CHECK(vkCreateDevice(ctx.physical_device, &device_info, nullptr, &ctx.device));
-
-        volkLoadDevice(ctx.device);
+        if (!device::create(device_config, window)) { return false; }
 
         create_pipeline_cache();
-
-        for (const char* extension : device_exts) { ctx.active_device_exts.push_back(extension); }
-
-        VmaAllocatorCreateInfo allocator_info = {};
-        allocator_info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
-        allocator_info.vulkanApiVersion = VK_API_VERSION_1_3;
-        allocator_info.physicalDevice = ctx.physical_device;
-        allocator_info.device = ctx.device;
-        allocator_info.instance = ctx.instance;
-
-        VmaVulkanFunctions vulkan_funcs = {};
-        vmaImportVulkanFunctionsFromVolk(&allocator_info, &vulkan_funcs);
-
-        allocator_info.pVulkanFunctions = &vulkan_funcs;
-
-        VK_CHECK(vmaCreateAllocator(&allocator_info, &ctx.allocator));
-
-        vkGetDeviceQueue(ctx.device, ctx.queue_fam_indices.graphics_family.value(), 0, &ctx.graphics_queue);
-        vkGetDeviceQueue(ctx.device, ctx.queue_fam_indices.present_family.value(), 0, &ctx.present_queue);
-        vkGetDeviceQueue(ctx.device, ctx.queue_fam_indices.transfer_family.value(), 0, &ctx.transfer_queue);
 
         {
             VkPhysicalDeviceSubgroupProperties sg_props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
@@ -1384,7 +1106,16 @@ namespace tau::renderer
 
         init_resources();
 
-        init_swapchain();
+        if (ctx.caps.headless)
+        {
+            ctx.swapchain.depth_format = find_depth_format();
+            ctx.swapchain.format = VK_FORMAT_B8G8R8A8_SRGB;
+            ctx.cur_surface_transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        }
+        else
+        {
+            init_swapchain();
+        }
 
         ctx.per_frame_objects.resize(MAX_FRAMES_IN_FLIGHT);
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) { init_per_frame(ctx.per_frame_objects[i]); }
@@ -1645,20 +1376,7 @@ namespace tau::renderer
             vkDestroySwapchainKHR(ctx.device, ctx.swapchain.handle, nullptr);
         }
 
-        if (ctx.surface != VK_NULL_HANDLE) { vkDestroySurfaceKHR(ctx.instance, ctx.surface, nullptr); }
-
-        if (ctx.allocator) { vmaDestroyAllocator(ctx.allocator); }
-
-        if (ctx.device) { vkDestroyDevice(ctx.device, nullptr); }
-
-        if (ctx.debug_messenger)
-        {
-            PFN_vkDestroyDebugUtilsMessengerEXT func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-                ctx.instance, "vkDestroyDebugUtilsMessengerEXT");
-            if (func) { func(ctx.instance, ctx.debug_messenger, nullptr); }
-        }
-
-        if (ctx.instance) { vkDestroyInstance(ctx.instance, nullptr); }
+        device::destroy();
     }
 
     namespace
@@ -1969,6 +1687,35 @@ namespace tau::renderer
 
     // one submit carrying the swapchain acquire and the resource upload timeline, then present
     // the timeline value signalled here is what the next frame's readback waits on
+    // headless: only the timelines, nothing to present
+    static void submit_headless(VkCommandBuffer cmd, per_frame_t& frame_data)
+    {
+        const u64_t next_timeline_value = ++ctx.timeline_value;
+        const u64_t wait_value = res_system.timeline_value;
+
+        VkTimelineSemaphoreSubmitInfo timeline_sem_info = {
+            .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+            .waitSemaphoreValueCount = 1,
+            .pWaitSemaphoreValues = &wait_value,
+            .signalSemaphoreValueCount = 1,
+            .pSignalSemaphoreValues = &next_timeline_value,
+        };
+        const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        const VkSubmitInfo submit_info = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = &timeline_sem_info,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &res_system.timeline_semaphore,
+            .pWaitDstStageMask = &wait_stage,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &cmd,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &ctx.timeline_semaphore,
+        };
+        vkQueueSubmit(ctx.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+        frame_data.target_timeline_value = next_timeline_value;
+    }
+
     static void submit_and_present(VkCommandBuffer cmd, per_frame_t& frame_data, u32_t image_index)
     {
         VkSemaphore wait_semaphores[] = {
@@ -2378,12 +2125,16 @@ namespace tau::renderer
 
         rendergraph.clear();
 
-        rg_resource_id swapchain_res = rendergraph.import_image(
-            "Swapchain"_h, "Swapchain", ctx.swapchain.images[index], ctx.swapchain.views[index], ctx.swapchain.format,
-            ctx.swapchain.extent.width, ctx.swapchain.extent.height);
+        const rg_resource_id swapchain_res =
+            ctx.caps.headless ? RG_NULL_ID
+                              : rendergraph.import_image("Swapchain"_h, "Swapchain", ctx.swapchain.images[index],
+                                                         ctx.swapchain.views[index], ctx.swapchain.format,
+                                                         ctx.swapchain.extent.width, ctx.swapchain.extent.height);
 
-        output_target_t final_output =
-            frame_outputs.empty() ? output_target_t{"Swapchain"_h, ctx.swapchain.extent} : frame_outputs[0];
+        // headless renders into an offscreen target, the runner names its size
+        const output_target_t default_output = ctx.caps.headless ? output_target_t{"HeadlessOutput"_h, {1280, 720}}
+                                                                 : output_target_t{"Swapchain"_h, ctx.swapchain.extent};
+        output_target_t final_output = frame_outputs.empty() ? default_output : frame_outputs[0];
         bool output_to_swapchain = (final_output.target_hash == "Swapchain"_h);
         if (output_to_swapchain || final_output.extent.width == 0 || final_output.extent.height == 0)
         {
@@ -2789,11 +2540,14 @@ namespace tau::renderer
             ctx.punctual_shadow_atlas.layout = rendergraph.get_layout(punctual_atlas_res);
         }
 
-        VkImageLayout final_layout = rendergraph.get_layout(swapchain_res);
-        if (final_layout != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+        if (swapchain_res != RG_NULL_ID)
         {
-            transition_image(cmd, ctx.swapchain.images[index], final_layout, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                             VK_IMAGE_ASPECT_COLOR_BIT);
+            const VkImageLayout final_layout = rendergraph.get_layout(swapchain_res);
+            if (final_layout != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+            {
+                transition_image(cmd, ctx.swapchain.images[index], final_layout, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                                 VK_IMAGE_ASPECT_COLOR_BIT);
+            }
         }
 
         gpu_timers::end_frame(cmd);
@@ -2801,7 +2555,11 @@ namespace tau::renderer
 
         tau::active_arena = nullptr;
 
-        submit_and_present(cmd, frame_data, index);
+        if (ctx.caps.headless) { submit_headless(cmd, frame_data); }
+        else
+        {
+            submit_and_present(cmd, frame_data, index);
+        }
 
         ctx.cur_frame = (ctx.cur_frame + 1) % MAX_FRAMES_IN_FLIGHT;
         frame_slot_ready = false;
@@ -3215,7 +2973,7 @@ namespace tau::renderer
 
     void begin_frame()
     {
-        if (image_acquired || ctx.swapchain.handle == VK_NULL_HANDLE) { return; }
+        if (image_acquired || (ctx.swapchain.handle == VK_NULL_HANDLE && !ctx.caps.headless)) { return; }
 
         // suboptimal still gives an image, rebuild at present
         const VkResult res = acquire_next_image(&acquired_index);
@@ -3247,17 +3005,21 @@ namespace tau::renderer
 
     VkResult acquire_next_image(u32_t* image_index)
     {
-        if (ctx.swapchain.handle == VK_NULL_HANDLE) { return VK_ERROR_OUT_OF_DATE_KHR; }
+        if (ctx.swapchain.handle == VK_NULL_HANDLE && !ctx.caps.headless) { return VK_ERROR_OUT_OF_DATE_KHR; }
 
         per_frame_t& frame_data = ctx.per_frame_objects[ctx.cur_frame];
         wait_for_frame();
 
-        VkResult res = vkAcquireNextImageKHR(ctx.device, ctx.swapchain.handle, UINT64_MAX,
-                                             frame_data.swapchain_acquire_semaphore, VK_NULL_HANDLE, image_index);
-
-        if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_SURFACE_LOST_KHR)
+        if (ctx.caps.headless) { *image_index = 0; }
+        else
         {
-            return res;
+            const VkResult res =
+                vkAcquireNextImageKHR(ctx.device, ctx.swapchain.handle, UINT64_MAX,
+                                      frame_data.swapchain_acquire_semaphore, VK_NULL_HANDLE, image_index);
+            if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_SURFACE_LOST_KHR)
+            {
+                return res;
+            }
         }
 
         vkResetCommandPool(ctx.device, frame_data.main_command_pool, 0);

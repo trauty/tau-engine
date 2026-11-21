@@ -23,6 +23,12 @@ namespace tau::runner
         bool vsync = true;
         // wall clock seconds after loading settled, for timing runs
         f64 quit_after = 0.0;
+        // no window, no display needed (needs --size)
+        bool headless = false;
+        // the minimum spec device: no hardware ray tracing
+        bool compat = false;
+        // validation layers with synchronization validation in a release build too; a run with errors fails
+        bool validation = false;
     };
 
     // the flags after argv[1] (the project); false on an unknown flag or a bad value

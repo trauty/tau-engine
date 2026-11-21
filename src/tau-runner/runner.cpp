@@ -6,6 +6,7 @@
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/rendering/device.h"
 #include "tau/rendering/gpu_timers.h"
 #include "tau/rendering/readback.h"
 #include "tau/rendering/renderer.h"
@@ -112,6 +113,12 @@ namespace tau::runner
         void finish()
         {
             if (opts.timings) { print_timings(); }
+            if (renderer::ctx.caps.validation)
+            {
+                const u32_t errors = renderer::device::validation_errors();
+                std::printf("validation errors: %u\n", errors);
+                if (errors > 0) { ok = false; }
+            }
             std::fflush(stdout);
             phase = phase_e::DONE;
             engine::exit();
@@ -197,13 +204,18 @@ namespace tau::runner
             else if (key == "--dump-hdr") { out.dump_hdr = value; }
             else if (key == "--timings") { out.timings = true; }
             else if (key == "--no-vsync") { out.vsync = false; }
+            else if (key == "--headless") { out.headless = true; }
+            else if (key == "--compat") { out.compat = true; }
+            else if (key == "--validation") { out.validation = true; }
             else if (key == "--quit-after") { good = parse_number(value, out.quit_after) && out.quit_after > 0.0; }
             else
             {
                 good = false;
             }
 
-            if (!good || (eq == std::string_view::npos) != (key == "--timings" || key == "--no-vsync"))
+            const bool is_switch = key == "--timings" || key == "--no-vsync" || key == "--headless" ||
+                                   key == "--compat" || key == "--validation";
+            if (!good || (eq == std::string_view::npos) != is_switch)
             {
                 TAU_LOG_ERROR("RUNNER", "Bad argument: {}", arg);
                 return false;
@@ -213,6 +225,11 @@ namespace tau::runner
         if (!out.dump_hdr.empty() && out.frames == 0)
         {
             TAU_LOG_ERROR("RUNNER", "--dump-hdr needs --frames");
+            return false;
+        }
+        if (out.headless && out.width == 0)
+        {
+            TAU_LOG_ERROR("RUNNER", "--headless needs --size");
             return false;
         }
         return true;
@@ -245,7 +262,9 @@ namespace tau::runner
             renderer::register_renderer_feature("RunnerHdrDump"_h, renderer::FEATURE_ORDER_AFTER_POST - 1,
                                                 &build_dump_pass);
         }
-        std::printf("runner: GPU %s\n", renderer::ctx.properties.deviceName);
+        std::printf("runner: GPU %s (%s%s)\n", renderer::ctx.properties.deviceName,
+                    renderer::ctx.caps.ray_query ? "ray query" : "compat",
+                    renderer::ctx.caps.headless ? ", headless" : "");
 
         engine::set_ui_callback(&before_frame);
         engine::set_post_render_callback(&after_frame);

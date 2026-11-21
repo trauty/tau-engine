@@ -13,9 +13,29 @@ namespace tau::engine
     using ui_callback_t = std::function<void()>;
     using post_render_callback_t = std::function<void()>;
 
-    // vsync off: uncapped presentation, for timing runs
-    TAU_ENGINE_API bool init(const std::string& game_name, i32 init_window_width, i32 init_window_height,
-                             bool vsync = true);
+#ifdef NDEBUG
+    inline constexpr bool DEBUG_BUILD = false;
+#else
+    inline constexpr bool DEBUG_BUILD = true;
+#endif
+
+    struct engine_config_t
+    {
+        // names the window and the per game user:// folder
+        std::string name = "tau";
+        i32 window_width = 1280;
+        i32 window_height = 720;
+        // off: uncapped presentation, for timing runs
+        bool vsync = true;
+        // validation layers with synchronization validation
+        bool validation = DEBUG_BUILD;
+        // no hardware ray tracing even where the GPU has it: the minimum spec
+        bool force_compat = false;
+        // no window and no SDL video, offscreen rendering only (needs no display)
+        bool headless = false;
+    };
+
+    TAU_ENGINE_API bool init(const engine_config_t& config);
     TAU_ENGINE_API void run();
     TAU_ENGINE_API bool shutdown();
 

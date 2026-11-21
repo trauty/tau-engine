@@ -252,7 +252,7 @@ int main(i32 argc, char** argv)
     const std::string user_dir = tau::editor::project_manager::user_dir();
     tau::vfs::mount("user://", user_dir);
 
-    if (!tau::engine::init("tau-editor", 1280, 720)) { return -1; }
+    if (!tau::engine::init({.name = "tau-editor"})) { return -1; }
 
     SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
 
