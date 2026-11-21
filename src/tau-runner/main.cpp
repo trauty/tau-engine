@@ -7,6 +7,7 @@
 #include "tau/log.h"
 #include "tau/project.h"
 #include "tau/reflection.h"
+#include "tau/rendering/pipelines.h"
 #include "tau/serialization.h"
 #include "tau/world.h"
 
@@ -35,6 +36,7 @@ int main(int argc, char* argv[])
     };
     if (!tau::engine::init(engine_config)) { return -1; }
     tau::project::mount(project, true);
+    tau::renderer::pipelines::freeze();
 
     tau::world_t& world = tau::engine::get_active_world();
 

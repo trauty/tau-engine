@@ -12,7 +12,6 @@
 #include <string_view>
 #include <vector>
 
-
 namespace tau
 {
     struct TAU_ENGINE_API shader_member_t
@@ -44,17 +43,28 @@ namespace tau
         bool casts_shadow = true;
     };
 
-    enum class pipeline_variant_e : u32_t
+    struct shader_file_t
     {
-        FORWARD,
-        SHADOW,
-        GBUFFER,
+        shader_header_t header = {};
+        std::vector<VkFormat> target_formats;
+        std::vector<VkFormat> gbuffer_target_formats;
+        shader_module_info_t module;
+        std::vector<shader_descriptor_binding_t> descriptor_bindings;
+        std::vector<shader_pipeline_desc_t> pipelines;
+        std::vector<u32_t> vert_spirv;
+        std::vector<u32_t> frag_spirv;
+        std::vector<u32_t> gbuffer_spirv;
+        std::vector<u32_t> comp_spirv;
+        u64_t content_hash = 0;
     };
+
+    bool read_shader_file(const std::string& cooked_path, shader_file_t& out);
 
     struct TAU_ENGINE_API shader_t
     {
         static constexpr std::string_view type_key = "shader";
 
+        // handles owned by renderer::pipelines, copied in at load
         flat_map_t<VkPipeline> pipelines;
         VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
 

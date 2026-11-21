@@ -4,7 +4,7 @@
 namespace tau
 {
     constexpr u32_t TAU_SHADER_MAGIC = 0x44485354; // "TSHD"
-    constexpr u32_t TAU_SHADER_VERSION = 2;
+    constexpr u32_t TAU_SHADER_VERSION = 3;
 
     inline constexpr const char* SHADER_ENTRY_COMPUTE = "computeMain";
     inline constexpr const char* SHADER_ENTRY_VERTEX = "vertexMain";
@@ -34,6 +34,40 @@ namespace tau
         const bool opaque = blend == blend_mode_e::SOLID || blend == blend_mode_e::CUTOUT;
         return domain == shader_domain_e::SURFACE && opaque && has_gbuffer_targets;
     }
+
+    enum class pipeline_variant_e : u32_t
+    {
+        FORWARD,
+        SHADOW,
+        GBUFFER,
+        COUNT,
+    };
+
+    enum class pipeline_fragment_e : u32_t
+    {
+        NONE,
+        FRAGMENT, // fragmentMain
+        GBUFFER,  // gbufferMain
+    };
+
+    constexpr u32_t PIPELINE_MAX_COLOR_TARGETS = 8;
+
+    struct shader_pipeline_desc_t
+    {
+        pipeline_variant_e variant;
+        pipeline_fragment_e fragment;
+        u32_t color_count;
+        u32_t color_formats[PIPELINE_MAX_COLOR_TARGETS];
+        blend_mode_e blend; // the same for every colour target
+        u32_t depth_attachment;
+        u32_t depth_test;
+        u32_t depth_write;
+        u32_t depth_compare;
+        u32_t cull_mode;
+        u32_t depth_bias;
+        f32 depth_bias_constant;
+        f32 depth_bias_slope;
+    };
 
     enum class descriptor_type_e : u32_t
     {
@@ -66,6 +100,7 @@ namespace tau
         u32_t target_format_count;
         u32_t gbuffer_target_format_count;
         u32_t descriptor_binding_count;
+        u32_t pipeline_count;
     };
 
     struct shader_module_header_t

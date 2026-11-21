@@ -2,6 +2,7 @@
 
 #include "tau/asset.h"
 #include "tau/log.h"
+#include "tau/rendering/pipelines.h"
 #include "tau/vfs.h"
 
 #include "json/json.hpp"
@@ -164,6 +165,8 @@ namespace tau
                 assets::remove_location(path);
             }
             assets::read_guid_map((cooked / "guid_map.json").generic_string());
+
+            renderer::pipelines::build_all();
         }
 
         std::string scene_path(std::string_view ref)

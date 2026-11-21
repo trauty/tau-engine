@@ -8,6 +8,7 @@
 #include "tau/log.h"
 #include "tau/rendering/device.h"
 #include "tau/rendering/gpu_timers.h"
+#include "tau/rendering/pipelines.h"
 #include "tau/rendering/readback.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_constants.h"
@@ -119,6 +120,10 @@ namespace tau::runner
                 std::printf("validation errors: %u\n", errors);
                 if (errors > 0) { ok = false; }
             }
+
+            const u32_t late = renderer::pipelines::late_count();
+            std::printf("late pipelines: %u\n", late);
+            if (late > 0) { ok = false; }
             std::fflush(stdout);
             phase = phase_e::DONE;
             engine::exit();

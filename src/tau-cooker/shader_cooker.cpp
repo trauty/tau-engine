@@ -891,8 +891,87 @@ namespace tau::cooker::shader
         return res;
     }
 
+    std::vector<shader_pipeline_desc_t> describe_pipelines(const slang_compilation_res_t& res)
+    {
+        std::vector<shader_pipeline_desc_t> out;
+
+        auto blank = [](pipeline_variant_e variant)
+        {
+            shader_pipeline_desc_t d;
+            std::memset(&d, 0, sizeof(d));
+            d.variant = variant;
+            return d;
+        };
+        auto set_colors = [](shader_pipeline_desc_t& d, const std::vector<VkFormat>& formats)
+        {
+            d.color_count = static_cast<u32_t>(std::min<size_t>(formats.size(), PIPELINE_MAX_COLOR_TARGETS));
+            for (u32_t i = 0; i < d.color_count; i++) { d.color_formats[i] = static_cast<u32_t>(formats[i]); }
+        };
+
+        if (res.is_compute)
+        {
+            out.push_back(blank(pipeline_variant_e::FORWARD));
+            return out;
+        }
+
+        const bool has_material = !res.shader_types.empty();
+        const shader_module_info_t config = has_material ? res.shader_types[0] : shader_module_info_t{};
+        const blend_mode_e blend = has_material ? config.blend_mode : blend_mode_e::SOLID;
+        const bool depth_test = has_material ? config.depth_test : true;
+        const bool depth_write = has_material ? config.depth_write : true;
+        const VkCullModeFlags base_cull = depth_test ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+
+        // reverse z
+        // an opaque surface shader with gbufferMain only ever draws into the gbuffer
+        if (!draws_into_gbuffer(config.domain, blend, !res.gbuffer_target_formats.empty()))
+        {
+            shader_pipeline_desc_t d = blank(pipeline_variant_e::FORWARD);
+            d.fragment = pipeline_fragment_e::FRAGMENT;
+            set_colors(d, res.target_formats);
+            d.blend = blend;
+            d.depth_attachment = depth_test || depth_write;
+            d.depth_test = depth_test;
+            d.depth_write = depth_write;
+            d.depth_compare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+            d.cull_mode = base_cull;
+            out.push_back(d);
+        }
+
+        // light space depth, not reversed, front faces culled and biased against acne
+        if (has_material && config.casts_shadow)
+        {
+            shader_pipeline_desc_t d = blank(pipeline_variant_e::SHADOW);
+            d.depth_attachment = 1;
+            d.depth_test = 1;
+            d.depth_write = 1;
+            d.depth_compare = VK_COMPARE_OP_LESS_OR_EQUAL;
+            d.cull_mode = VK_CULL_MODE_FRONT_BIT;
+            d.depth_bias = 1;
+            d.depth_bias_constant = 1.25f;
+            d.depth_bias_slope = 1.75f;
+            out.push_back(d);
+        }
+
+        if (!res.gbuffer_spirv.empty() && !res.gbuffer_target_formats.empty())
+        {
+            shader_pipeline_desc_t d = blank(pipeline_variant_e::GBUFFER);
+            d.fragment = pipeline_fragment_e::GBUFFER;
+            set_colors(d, res.gbuffer_target_formats);
+            d.blend = blend_mode_e::SOLID;
+            d.depth_attachment = 1;
+            d.depth_test = 1;
+            d.depth_write = 1;
+            d.depth_compare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+            d.cull_mode = base_cull;
+            out.push_back(d);
+        }
+        return out;
+    }
+
     void write_taushader(const std::string& output_path, const slang_compilation_res_t& res)
     {
+        const std::vector<shader_pipeline_desc_t> pipelines = describe_pipelines(res);
+
         std::filesystem::create_directories(std::filesystem::path(output_path).parent_path());
 
         std::ofstream out(output_path, std::ios::binary);
@@ -917,6 +996,7 @@ namespace tau::cooker::shader
         header.target_format_count = static_cast<u32_t>(res.target_formats.size());
         header.gbuffer_target_format_count = static_cast<u32_t>(res.gbuffer_target_formats.size());
         header.descriptor_binding_count = static_cast<u32_t>(res.descriptor_bindings.size());
+        header.pipeline_count = static_cast<u32_t>(pipelines.size());
         out.write(reinterpret_cast<const char*>(&header), sizeof(shader_header_t));
 
         out.write(reinterpret_cast<const char*>(res.target_formats.data()),
@@ -965,6 +1045,8 @@ namespace tau::cooker::shader
             out.write(reinterpret_cast<const char*>(res.descriptor_bindings.data()),
                       res.descriptor_bindings.size() * sizeof(shader_descriptor_binding_t));
         }
+
+        out.write(reinterpret_cast<const char*>(pipelines.data()), pipelines.size() * sizeof(shader_pipeline_desc_t));
 
         if (!res.vert_spirv.empty())
         {

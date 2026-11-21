@@ -24,6 +24,7 @@
 #include "tau/rendering/frame_upload.h"
 #include "tau/rendering/gpu_timers.h"
 #include "tau/rendering/overlay.h"
+#include "tau/rendering/pipelines.h"
 #include "tau/rendering/readback.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/renderer_resources.h"
@@ -1250,6 +1251,8 @@ namespace tau::renderer
         };
         vkUpdateDescriptorSets(ctx.device, 1, &write_desc, 0, nullptr);
 
+        pipelines::build_all();
+
         ctx.culling_shader = assets::pin(assets::load<shader_t>("engine://assets/shaders/culling.slang"));
 
         ctx.cluster_shader = assets::pin(assets::load<shader_t>("engine://assets/shaders/cluster_build.slang"));
@@ -1307,6 +1310,7 @@ namespace tau::renderer
         gpu_timers::shutdown();
         overlay::shutdown();
         frame_upload::shutdown();
+        pipelines::shutdown();
         save_pipeline_cache();
         if (ctx.pipeline_cache != VK_NULL_HANDLE)
         {

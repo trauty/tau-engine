@@ -5,6 +5,7 @@
 #include "tau/log.h"
 #include "tau/project.h"
 #include "tau/reflection.h"
+#include "tau/rendering/pipelines.h"
 #include "tau/serialization.h"
 #include "tau/world.h"
 
@@ -39,6 +40,8 @@ int main(int argc, char* argv[])
     // engine::init() already mounted the cooked tree beside the binary and loaded its guid map
     // a project keeps its own engine asset copy, its root supersedes that one, guid maps merge
     if (have_project) { tau::project::mount(project, true); }
+
+    tau::renderer::pipelines::freeze();
 
     tau::world_t& world = tau::engine::get_active_world();
 
