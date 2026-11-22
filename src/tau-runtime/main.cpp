@@ -5,7 +5,7 @@
 #include "tau/log.h"
 #include "tau/project.h"
 #include "tau/reflection.h"
-#include "tau/rendering/pipelines.h"
+#include "tau/rhi/pipelines.h"
 #include "tau/serialization.h"
 #include "tau/world.h"
 

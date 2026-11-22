@@ -1,7 +1,7 @@
 #pragma once
 
 #include "tau/defines.h"
-#include "tau/rendering/shader_shared.h"
+#include "tau/rhi/shader_shared.h"
 
 namespace tau
 {
@@ -15,4 +15,4 @@ namespace tau
         SHADOW_CMP = TAU_SAMPLER_SHADOW_CMP, // depth comparison sampler, drives hardware pcf
         COUNT = TAU_SAMPLER_COUNT,
     };
-}
+} // namespace tau

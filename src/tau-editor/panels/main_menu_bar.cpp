@@ -5,7 +5,7 @@
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
 #include "tau-editor/prefab_stage.h"
-#include "tau/rendering/renderdoc.h"
+#include "tau/rhi/renderdoc.h"
 
 #include <string>
 

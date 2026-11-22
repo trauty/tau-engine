@@ -35,7 +35,7 @@ function resolve(engine_dir)
         }
         info.header_root = path.join(engine_dir, "src")
         info.engine_assets = path.join(engine_dir, "assets")
-        -- shaders #include "tau/rendering/shader_shared.h", the same path C++ uses
+        -- shaders #include "tau/rhi/shader_shared.h", the same path C++ uses
         info.shader_include = path.join(engine_dir, "src")
         info.engine_cooked = path.join(info.libdir, "assets", "engine")
         info.engine_guid_map = path.join(info.libdir, "assets", "guid_map.json")

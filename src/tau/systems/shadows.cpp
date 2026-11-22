@@ -6,9 +6,9 @@
 #include "tau/containers/flat_map.h"
 #include "tau/hash.h"
 #include "tau/math.h"
-#include "tau/rendering/renderer.h"
-#include "tau/rendering/renderer_constants.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rhi/renderer.h"
+#include "tau/rhi/renderer_constants.h"
+#include "tau/rhi/renderer_types.h"
 
 #include <algorithm>
 #include <cmath>

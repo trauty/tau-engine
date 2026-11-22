@@ -2,7 +2,7 @@ module tau_globals;
 
 __exported import tau_gpu;
 
-#include "tau/rendering/shader_shared.h"
+#include "tau/rhi/shader_shared.h"
 
 [[vk::binding(0, 0)]]
 public SamplerState global_samplers[];

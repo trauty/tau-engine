@@ -1,7 +1,7 @@
 #pragma once
 
 #include "tau/defines.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rhi/renderer_types.h"
 #include "vulkan/vulkan_core.h"
 
 #include <deque>

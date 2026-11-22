@@ -1,7 +1,7 @@
 #pragma once
 
 #include "tau/defines.h"
-#include "tau/rendering/device.h"
+#include "tau/rhi/device.h"
 
 #include <string>
 

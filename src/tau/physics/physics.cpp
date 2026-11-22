@@ -9,7 +9,7 @@
 #include "tau/log.h"
 #include "tau/physics/jolt_job_system_int.h"
 #include "tau/physics/physics_internal.h"
-#include "tau/rendering/overlay.h"
+#include "tau/rhi/overlay.h"
 #include "tau/systems/transform.h"
 #include "tau/time.h"
 #include "tau/world.h"

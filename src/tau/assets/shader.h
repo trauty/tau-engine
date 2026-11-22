@@ -4,7 +4,7 @@
 #include "tau/assets/shader_format.h"
 #include "tau/containers/flat_map.h"
 #include "tau/defines.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/vulkan.h"
 
 #include <memory>
 #include <optional>

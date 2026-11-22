@@ -4,11 +4,11 @@
 #include "tau/assets/shader.h"
 #include "tau/jobs.h"
 #include "tau/log.h"
-#include "tau/rendering/device.h"
-#include "tau/rendering/gpu_structs.h"
-#include "tau/rendering/renderer.h"
-#include "tau/rendering/renderer_resources.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rhi/device.h"
+#include "tau/rhi/gpu_structs.h"
+#include "tau/rhi/renderer.h"
+#include "tau/rhi/renderer_resources.h"
+#include "tau/rhi/renderer_types.h"
 #include "tau/vfs.h"
 
 #include <algorithm>

@@ -3,7 +3,7 @@
 #include "tau/asset.h"
 #include "tau/defines.h"
 #include "tau/math.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/vulkan.h"
 
 #include <optional>
 #include <string>

@@ -4,7 +4,7 @@
 #include "tau/assets/texture.h"
 #include "tau/defines.h"
 #include "tau/log.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/vulkan.h"
 
 #include <algorithm>
 #include <cctype>

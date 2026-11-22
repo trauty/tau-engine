@@ -1,7 +1,7 @@
 #include "frame_upload.h"
 
-#include "tau/rendering/renderer.h"
-#include "tau/rendering/renderer_constants.h"
+#include "tau/rhi/renderer.h"
+#include "tau/rhi/renderer_constants.h"
 
 #include <algorithm>
 #include <cstring>

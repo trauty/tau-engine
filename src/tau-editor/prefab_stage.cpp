@@ -16,7 +16,7 @@
 #include "tau/guid_json.h"
 #include "tau/log.h"
 #include "tau/prefab.h"
-#include "tau/rendering/renderer.h"
+#include "tau/rhi/renderer.h"
 #include "tau/serialization.h"
 #include "tau/systems/guid.h"
 #include "tau/world.h"

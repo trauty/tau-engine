@@ -5,11 +5,11 @@
 #include "tau/assets/shader.h"
 #include "tau/engine.h"
 #include "tau/hash.h"
-#include "tau/rendering/frame_upload.h"
-#include "tau/rendering/renderer.h"
-#include "tau/rendering/renderer_constants.h"
-#include "tau/rendering/renderer_resources.h"
-#include "tau/rendering/rendergraph.h"
+#include "tau/rhi/frame_upload.h"
+#include "tau/rhi/renderer.h"
+#include "tau/rhi/renderer_constants.h"
+#include "tau/rhi/renderer_resources.h"
+#include "tau/rhi/rendergraph.h"
 
 #include <algorithm>
 #include <cstring>

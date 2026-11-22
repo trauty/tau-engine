@@ -3,12 +3,12 @@
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/profiling.h"
-#include "tau/rendering/device.h"
-#include "tau/rendering/gpu_timers.h"
-#include "tau/rendering/renderer.h"
-#include "tau/rendering/renderer_constants.h"
-#include "tau/rendering/renderer_types.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/device.h"
+#include "tau/rhi/gpu_timers.h"
+#include "tau/rhi/renderer.h"
+#include "tau/rhi/renderer_constants.h"
+#include "tau/rhi/renderer_types.h"
+#include "tau/rhi/vulkan.h"
 #include "vulkan/vulkan_core.h"
 
 #include <algorithm>

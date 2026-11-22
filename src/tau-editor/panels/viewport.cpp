@@ -18,7 +18,7 @@
 #include "tau/engine.h"
 #include "tau/guid.h"
 #include "tau/input.h"
-#include "tau/rendering/renderer.h"
+#include "tau/rhi/renderer.h"
 #include "tau/systems/guid.h"
 #include "tau/systems/transform.h"
 

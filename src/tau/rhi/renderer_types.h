@@ -10,12 +10,12 @@
 #include "tau/log.h"
 #include "tau/math.h"
 #include "tau/memory/linear_allocator.h"
-#include "tau/rendering/device.h"
-#include "tau/rendering/gpu_structs.h"
-#include "tau/rendering/renderer_constants.h"
-#include "tau/rendering/shader_instance.h"
-#include "tau/rendering/shader_shared.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/device.h"
+#include "tau/rhi/gpu_structs.h"
+#include "tau/rhi/renderer_constants.h"
+#include "tau/rhi/shader_instance.h"
+#include "tau/rhi/shader_shared.h"
+#include "tau/rhi/vulkan.h"
 #include "vulkan/vulkan_core.h"
 
 #include <deque>

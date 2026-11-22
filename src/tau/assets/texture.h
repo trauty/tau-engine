@@ -1,8 +1,8 @@
 #pragma once
 #include "tau/asset.h"
 #include "tau/defines.h"
-#include "tau/rendering/renderer_constants.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/renderer_constants.h"
+#include "tau/rhi/vulkan.h"
 
 #include <memory>
 #include <optional>

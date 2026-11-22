@@ -4,8 +4,8 @@
 #include "tau/assets/shader_format.h"
 #include "tau/hash.h"
 #include "tau/log.h"
-#include "tau/rendering/pipelines.h"
-#include "tau/rendering/renderer.h"
+#include "tau/rhi/pipelines.h"
+#include "tau/rhi/renderer.h"
 #include "tau/vfs.h"
 
 #include <cstring>

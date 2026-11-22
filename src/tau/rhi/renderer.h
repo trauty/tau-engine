@@ -3,8 +3,8 @@
 #include "tau/assets/material.h"
 #include "tau/defines.h"
 #include "tau/ecs_fwd.h"
-#include "tau/rendering/renderer_types.h"
-#include "tau/rendering/rendergraph.h"
+#include "tau/rhi/renderer_types.h"
+#include "tau/rhi/rendergraph.h"
 #include "tau/window.h"
 
 #include <span>

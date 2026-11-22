@@ -1,6 +1,6 @@
 import tau_surface;
 
-#include "tau/rendering/shader_shared.h"
+#include "tau/rhi/shader_shared.h"
 
 [ShaderConfig("PostProcess", "Opaque", false, false, false)]
 struct DeferredLightingShader

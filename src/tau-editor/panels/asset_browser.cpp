@@ -19,7 +19,7 @@
 #include "tau/engine.h"
 #include "tau/guid.h"
 #include "tau/log.h"
-#include "tau/rendering/renderer_constants.h"
+#include "tau/rhi/renderer_constants.h"
 #include "tau/systems/guid.h"
 #include "tau/vfs.h"
 

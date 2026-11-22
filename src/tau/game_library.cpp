@@ -6,7 +6,7 @@
 #include "tau/jobs.h"
 #include "tau/log.h"
 #include "tau/reflection.h"
-#include "tau/rendering/renderer.h"
+#include "tau/rhi/renderer.h"
 
 #include <string_view>
 

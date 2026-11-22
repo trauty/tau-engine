@@ -4,10 +4,10 @@
 #include "tau/assets/shader_format.h"
 #include "tau/defines.h"
 #include "tau/log.h"
-#include "tau/rendering/renderer.h"
-#include "tau/rendering/renderer_resources.h"
-#include "tau/rendering/renderer_types.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/renderer.h"
+#include "tau/rhi/renderer_resources.h"
+#include "tau/rhi/renderer_types.h"
+#include "tau/rhi/vulkan.h"
 
 #include <vector>
 

@@ -4,7 +4,7 @@
 #include "tau-editor/systems/camera.h"
 #include "tau/ecs_fwd.h"
 #include "tau/math.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rhi/renderer_types.h"
 
 #include <json/json.hpp>
 #include <vector>

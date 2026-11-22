@@ -3,7 +3,7 @@
 #include "tau/defines.h"
 #include "tau/ecs_fwd.h"
 #include "tau/memory/arena_function.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rhi/renderer_types.h"
 
 #include <vector>
 

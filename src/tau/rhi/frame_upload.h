@@ -1,7 +1,7 @@
 #pragma once
 
 #include "tau/defines.h"
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/vulkan.h"
 
 namespace tau::renderer
 {

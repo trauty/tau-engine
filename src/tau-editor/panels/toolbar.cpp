@@ -7,7 +7,7 @@
 #include "tau-editor/prefab_stage.h"
 #include "tau-editor/settings.h"
 #include "tau/ecs_fwd.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rhi/renderer_types.h"
 
 namespace tau::editor::panels
 {

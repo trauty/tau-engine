@@ -5,8 +5,8 @@
 #include "tau/assets/shader_format.h"
 #include "tau/hash.h"
 #include "tau/log.h"
-#include "tau/rendering/gpu_structs.h"
-#include "tau/rendering/shader_shared.h"
+#include "tau/rhi/gpu_structs.h"
+#include "tau/rhi/shader_shared.h"
 
 #define XXH_INLINE_ALL
 #include <algorithm>

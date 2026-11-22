@@ -21,7 +21,7 @@
 #include "tau/components/tag.h"
 #include "tau/components/transform.h"
 #include "tau/guid.h"
-#include "tau/rendering/renderer_constants.h"
+#include "tau/rhi/renderer_constants.h"
 #include "tau/systems/guid.h"
 #include "tau/systems/transform.h"
 #include "tau/world.h"

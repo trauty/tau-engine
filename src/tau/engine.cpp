@@ -8,16 +8,16 @@
 #include "tau/log.h"
 #include "tau/profiling.h"
 #include "tau/reflection.h"
-#include "tau/rendering/renderdoc.h"
-#include "tau/rendering/renderer.h"
-#include "tau/rendering/renderer_types.h"
+#include "tau/rhi/renderdoc.h"
+#include "tau/rhi/renderer.h"
+#include "tau/rhi/renderer_types.h"
 #include "tau/time.h"
 #include "tau/vfs.h"
 #include "tau/window.h"
 #include "tau/world.h"
 
 // clang-format off
-#include "tau/rendering/vulkan.h"
+#include "tau/rhi/vulkan.h"
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
 #include <filesystem>

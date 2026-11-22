@@ -3,7 +3,7 @@
 #include "tau/components/camera.h"
 #include "tau/components/transform.h"
 #include "tau/math.h"
-#include "tau/rendering/renderer.h"
+#include "tau/rhi/renderer.h"
 
 namespace tau::camera_system
 {

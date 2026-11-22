@@ -15,9 +15,9 @@ namespace tau::runner
         std::string camera;
         u32_t width = 0;
         u32_t height = 0;
-        // - fixed 1/60 s clock after loading, then exit
+        // fixed 1/60 s clock after loading, then exit
         u32_t frames = 0;
-        // - PREFIX_hdr.bin: last SceneColor, RGBA16F, 16 B header
+        // PREFIX_hdr.bin: last SceneColor, RGBA16F, 16 B header
         std::string dump_hdr;
         bool timings = false;
         bool vsync = true;

@@ -37,7 +37,7 @@ namespace tau::editor::asset_cook
 #endif
         }
 
-        // shaders include tau/rendering/shader_shared.h, so the cooker needs the engine header root
+        // shaders include tau/rhi/shader_shared.h, so the cooker needs the engine header root
         fs::path shader_include_dir()
         {
             const std::string dir = project_manager::engine_dir();

@@ -2,7 +2,7 @@
 
 #include "tau/asset.h"
 #include "tau/log.h"
-#include "tau/rendering/pipelines.h"
+#include "tau/rhi/pipelines.h"
 #include "tau/vfs.h"
 
 #include "json/json.hpp"

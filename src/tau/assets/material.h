@@ -5,8 +5,8 @@
 #include "tau/containers/flat_map.h"
 #include "tau/defines.h"
 #include "tau/log.h"
-#include "tau/rendering/renderer_constants.h"
-#include "tau/rendering/samplers.h"
+#include "tau/rhi/renderer_constants.h"
+#include "tau/rhi/samplers.h"
 
 #include <climits>
 #include <cstring>
