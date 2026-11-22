@@ -9,7 +9,6 @@
 #include "tau/serialization.h"
 #include "tau/systems/camera.h"
 #include "tau/systems/guid.h"
-#include "tau/systems/shadows.h"
 #include "tau/systems/transform.h"
 #include "tau/time.h"
 #include "tau/tween.h"
@@ -81,7 +80,6 @@ namespace tau
 
         transform_system::update(registry);
         camera_system::update(registry);
-        shadow_system::update(registry);
     }
 
     void world_t::fixed_update()

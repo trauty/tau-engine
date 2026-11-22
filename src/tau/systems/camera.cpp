@@ -41,7 +41,8 @@ namespace tau::camera_system
             }
 
             vec3 eye = {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]};
-            vec3 forward = {transform.world_mat[2][0], transform.world_mat[2][1], transform.world_mat[2][2]};
+            // looks down its -Z
+            vec3 forward = {-transform.world_mat[2][0], -transform.world_mat[2][1], -transform.world_mat[2][2]};
             vec3 up = {transform.world_mat[1][0], transform.world_mat[1][1], transform.world_mat[1][2]};
 
             build_view_projection(eye, forward, up, cam.fov_deg, cam.aspect, cam.near_plane, cam.far_plane, cam.view,
@@ -54,10 +55,10 @@ namespace tau::camera_system
                                mat4& out_view, mat4& out_projection, mat4& out_view_proj)
     {
         (void)far_plane;
-        out_projection = perspective_reverse_infinite_lh_zo(radians(fov_deg), aspect, near_plane);
+        out_projection = perspective_reverse_infinite_rh_zo(radians(fov_deg), aspect, near_plane);
         flip_clip_y(out_projection);
 
-        out_view = look_at_lh(eye, eye + forward, up);
+        out_view = look_at_rh(eye, eye + forward, up);
         out_view_proj = out_projection * out_view;
     }
 } // namespace tau::camera_system

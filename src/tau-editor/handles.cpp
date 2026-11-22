@@ -178,7 +178,7 @@ namespace tau::editor::handles
                 const quat rot = transform_system::get_world_rotation(reg, primary);
                 out.axes[0] = normalize(tau::right(rot));
                 out.axes[1] = normalize(tau::up(rot));
-                out.axes[2] = normalize(tau::forward(rot));
+                out.axes[2] = normalize(rotate(rot, {0.0f, 0.0f, 1.0f}));
             }
             else
             {

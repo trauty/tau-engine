@@ -46,6 +46,8 @@ namespace tau
     struct model_import_t
     {
         f32 scale = 1.0f;
+        // half a turn about Y on the root: glTF characters face +Z, the engine's forward is -Z
+        bool face_forward = false;
         bool submeshes_as_entities = false;
         bool import_animations = true;
         std::vector<std::string> skipped_clips;

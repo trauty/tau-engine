@@ -22,7 +22,6 @@
 #include "tau-editor/panels/main_menu_bar.h"
 #include "tau-editor/panels/toolbar.h"
 #include "tau-editor/panels/viewport.h"
-#include "tau-editor/picking.h"
 #include "tau-editor/play_mode.h"
 #include "tau-editor/prefab_edit.h"
 #include "tau-editor/prefab_stage.h"
@@ -212,7 +211,6 @@ static void update_editor_ui(tau::editor_context_t& ctx)
 
     tau::editor::handles::update(world, ctx);
     tau::editor::viewport_input::update(world, ctx);
-    tau::editor::picking::update(world, ctx);
     tau::editor::history::update(world, ctx);
     // after shortcuts: a key captured for a binding must not also fire the old one
     tau::editor::settings::draw(ctx);
@@ -286,7 +284,6 @@ int main(i32 argc, char** argv)
     tau::editor::imgui::init_multiviewport();
 
     static tau::editor_context_t editor_ctx;
-    tau::editor::picking::init(editor_ctx);
     tau::editor::handles::init(editor_ctx);
     tau::editor::history::init(editor_ctx);
     tau::editor::asset_editors::register_builtin(editor_ctx);

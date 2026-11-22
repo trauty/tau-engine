@@ -92,6 +92,7 @@ namespace tau::reflection
 
         structure<model_import_t>(ctx, "Model Import")
             .field<&model_import_t::scale>("Scale")
+            .field<&model_import_t::face_forward>("Face Forward")
             .field<&model_import_t::submeshes_as_entities>("Submeshes As Entities")
             .field<&model_import_t::import_animations>("Import Animations")
             .field<&model_import_t::skipped_clips>("Skipped Clips")

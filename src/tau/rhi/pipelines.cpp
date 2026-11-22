@@ -225,7 +225,7 @@ namespace tau::renderer::pipelines
                     .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
                     .polygonMode = VK_POLYGON_MODE_FILL,
                     .cullMode = d.cull_mode,
-                    .frontFace = VK_FRONT_FACE_CLOCKWISE,
+                    .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
                     .depthBiasEnable = d.depth_bias ? VK_TRUE : VK_FALSE,
                     .depthBiasConstantFactor = d.depth_bias_constant,
                     .depthBiasSlopeFactor = d.depth_bias_slope,

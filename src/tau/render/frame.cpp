@@ -12,7 +12,6 @@
 #include "tau/memory/arena_function.h"
 #include "tau/os.h"
 #include "tau/profiling.h"
-#include "tau/render/legacy.h"
 #include "tau/render/overlay.h"
 #include "tau/render/post.h"
 #include "tau/render/settings.h"
@@ -27,6 +26,7 @@
 #include "tau/rhi/swapchain.h"
 #include "tau/rhi/transfer.h"
 #include "tau/systems/camera.h"
+#include "tau/time.h"
 
 #include <algorithm>
 #include <cmath>
@@ -59,8 +59,6 @@ namespace tau::renderer::frame
         std::vector<render_view_t> frame_views;
         std::vector<output_target_t> submitted_outputs;
         std::vector<output_target_t> frame_outputs;
-        flat_map_t<u32_t> submitted_punctual_slots;
-        ecs::entity_t submitted_cascade_light = ecs::NULL_ENTITY;
         flat_map_t<debug_view_e> view_debug_views;
         flat_map_t<bool> view_post_processing;
 
@@ -82,6 +80,20 @@ namespace tau::renderer::frame
         mat4 g_pre_rotation = {};
 
         fallbacks_t g_fallbacks;
+
+        struct inputs_t
+        {
+            // swapchain image, or the output target named by hash
+            VkImage swapchain = VK_NULL_HANDLE;
+            VkImageView swapchain_view = VK_NULL_HANDLE;
+            bool to_swapchain = false;
+            u32_t output_hash = 0;
+            VkExtent2D output_extent = {};
+
+            u32_t post_view_hash = 0;
+            vec3 post_view_pos = {};
+            bool post_enabled = true;
+        };
 
 #ifdef TAU_ENABLE_PROFILING
         TracyVkCtx tracy_vk_ctx = nullptr;
@@ -204,6 +216,30 @@ namespace tau::renderer::frame
             if (res == VK_ERROR_SURFACE_LOST_KHR) { swapchain::recreate_surface(); }
             else if (res == VK_SUBOPTIMAL_KHR || res == VK_ERROR_OUT_OF_DATE_KHR) { resize_swapchain(); }
         }
+
+        u32_t view_globals_offset_at(u32_t view_index)
+        { return first_view_globals_offset() + view_index * g_globals_stride; }
+
+        gpu::GlobalData* view_globals(u32_t view_index)
+        { return reinterpret_cast<gpu::GlobalData*>(g_globals_mapped + view_globals_offset_at(view_index)); }
+
+        void fill_view_camera(gpu::GlobalData& globals, const render_view_t& view)
+        {
+            gpu::GlobalData* slot = &globals;
+            const render_view_t& sub = view;
+            slot->view = sub.view;
+            slot->projection = sub.projection;
+
+            const mat4 final_view_proj = g_pre_rotation * sub.view_proj;
+            slot->view_proj = final_view_proj;
+            slot->inv_view_proj = inverse(final_view_proj);
+
+            const debug_view_e* debug_view = view_debug_views.find(sub.name_hash);
+            slot->debug_view = static_cast<u32_t>(debug_view ? *debug_view : debug_view_e::OFF);
+
+            frustum_planes(sub.view_proj, slot->frustum_planes);
+            slot->camera_pos = vec4(sub.position, 0.0f);
+        }
     } // namespace
 
     void register_producer(u32_t name_hash, i32 order, producer_fn_t fn)
@@ -322,7 +358,6 @@ namespace tau::renderer::frame
         };
         vkUpdateDescriptorSets(ctx.device, 1, &write_desc, 0, nullptr);
 
-        legacy::init(tracy);
         post::init();
 
         g_fallbacks.default_tex = assets::pin(assets::load<texture_t>("engine://assets/textures/default_white.png"));
@@ -336,7 +371,6 @@ namespace tau::renderer::frame
 
     void reset_assets()
     {
-        legacy::reset_assets();
         post::shutdown();
         assets::unpin(g_fallbacks.default_tex);
         assets::unpin(g_fallbacks.texture);
@@ -350,7 +384,6 @@ namespace tau::renderer::frame
         overlay::shutdown();
         graph::destroy_cache(g_cache);
         g_cache = nullptr;
-        legacy::shutdown();
 
         if (g_globals_buffer != VK_NULL_HANDLE) { vmaDestroyBuffer(ctx.allocator, g_globals_buffer, g_globals_alloc); }
         g_globals_buffer = VK_NULL_HANDLE;
@@ -374,6 +407,23 @@ namespace tau::renderer::frame
 
     namespace
     {
+        // until the scene passes exist: a neutral grey and far depth for post and the overlays
+        void declare_scene(graph::graph_t& g, targets_t& t, VkExtent2D extent)
+        {
+            t.scene_color = graph::create_image(g, "SceneColor",
+                                                {.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+                                                 .width = extent.width,
+                                                 .height = extent.height,
+                                                 .clear = {.color = {{0.18f, 0.18f, 0.18f, 1.0f}}}});
+            // reverse depth: far is 0
+            t.scene_depth = graph::create_image(
+                g, "SceneDepth", {.format = ctx.depth_format, .width = extent.width, .height = extent.height});
+
+            const graph::pass_h pass = graph::add_pass(g, "SceneClear", [](const graph::record_ctx_t&, const void*) {});
+            graph::use(g, pass, t.scene_color, graph::access_e::COLOR_WRITE, graph::load_e::CLEAR);
+            graph::use(g, pass, t.scene_depth, graph::access_e::DEPTH_WRITE, graph::load_e::CLEAR);
+        }
+
         void record_graph(VkCommandBuffer cmd, ecs::registry_t& reg, const inputs_t& in)
         {
             graph::graph_t& g = g_graph;
@@ -381,16 +431,7 @@ namespace tau::renderer::frame
 
             targets_t t;
             t.primary_view_hash = in.post_view_hash;
-            for (u32_t i = 0; i < in.legacy_count; i++)
-            {
-                const legacy_image_t& l = in.legacy[i];
-                const graph::image_h h =
-                    graph::import_image(g, l.name, l.image, l.view,
-                                        {.format = l.format, .width = l.extent.width, .height = l.extent.height},
-                                        l.layout, VK_IMAGE_LAYOUT_UNDEFINED, l.sampled_id);
-                if (std::string_view(l.name) == "SceneColor") { t.scene_color = h; }
-                else if (std::string_view(l.name) == "SceneDepth") { t.scene_depth = h; }
-            }
+            declare_scene(g, t, in.output_extent);
 
             const swapchain::swapchain_t& sc = swapchain::state();
             const VkClearValue grey = {.color = {{0.01f, 0.01f, 0.01f, 1.0f}}};
@@ -447,12 +488,6 @@ namespace tau::renderer::frame
 
         frame_outputs.clear();
         frame_outputs.swap(submitted_outputs);
-
-        flat_map_t<u32_t> frame_punctual_slots = submitted_punctual_slots;
-        submitted_punctual_slots.clear();
-
-        const ecs::entity_t frame_cascade_light = submitted_cascade_light;
-        submitted_cascade_light = ecs::NULL_ENTITY;
 
         settings::refresh();
         const bool vsync = settings::get().renderer.vsync;
@@ -540,7 +575,6 @@ namespace tau::renderer::frame
 
                 render_view_t v{};
                 v.name_hash = "PrimaryView"_h;
-                v.kind = view_kind_e::COLOR;
                 v.view = cam.view;
                 v.projection = cam.projection;
                 v.view_proj = cam.view_proj;
@@ -554,9 +588,6 @@ namespace tau::renderer::frame
             }
         }
 
-        std::stable_partition(frame_views.begin(), frame_views.end(),
-                              [](const render_view_t& v) { return v.kind == view_kind_e::DEPTH_ONLY; });
-
         if (frame_views.size() > MAX_VIEWS_PER_FRAME)
         {
             TAU_LOG_FATAL("RENDERER", "Submitted {} views exceeds MAX_VIEWS_PER_FRAME ({})", frame_views.size(),
@@ -569,6 +600,11 @@ namespace tau::renderer::frame
         for (u32_t view_idx = 0; view_idx < frame_views.size(); view_idx++)
         {
             offsets[frame_views[view_idx].name_hash] = view_globals_offset_at(view_idx);
+
+            gpu::GlobalData* globals = view_globals(view_idx);
+            *globals = {};
+            fill_view_camera(*globals, frame_views[view_idx]);
+            globals->time = static_cast<f32>(time::time);
         }
 
         tau::active_arena = &frame_data.allocator;
@@ -585,12 +621,10 @@ namespace tau::renderer::frame
         g_render_extent = final_output.extent;
 
         inputs_t inputs;
-        legacy::record(cmd, reg, frame_views, frame_punctual_slots, frame_cascade_light, inputs);
-
         inputs.post_view_hash = "PrimaryView"_h;
         for (const render_view_t& v : frame_views)
         {
-            if (v.kind == view_kind_e::COLOR && v.name_hash == "PrimaryView"_h)
+            if (v.name_hash == "PrimaryView"_h)
             {
                 inputs.post_view_pos = v.position;
                 break;
@@ -653,39 +687,12 @@ namespace tau::renderer::frame
     void set_view_post_processing(u32_t view_name_hash, bool enabled)
     { view_post_processing[view_name_hash] = enabled; }
 
-    namespace
-    {
-        mat4 combine_view_proj(const mat4& view, const mat4& projection) { return projection * view; }
-
-        // every depth only view is a tile in an atlas, differing in the atlas and what the caller remembers
-        render_view_t make_shadow_view(u32_t name_hash, u32_t atlas_target_hash, const mat4& view,
-                                       const mat4& projection, const image_desc_t& atlas_desc, VkRect2D atlas_rect,
-                                       f32 normal_bias_texels, f32 depth_bias_ndc)
-        {
-            render_view_t v{};
-            v.name_hash = name_hash;
-            v.kind = view_kind_e::DEPTH_ONLY;
-            v.view = view;
-            v.projection = projection;
-            v.view_proj = combine_view_proj(view, projection);
-            v.depth_target_hash = atlas_target_hash;
-            v.has_depth_desc = true;
-            v.depth_desc = atlas_desc;
-            v.extent = atlas_rect.extent;
-            v.shadow_atlas_rect = atlas_rect;
-            v.shadow_normal_bias = normal_bias_texels;
-            v.shadow_depth_bias = depth_bias_ndc;
-            return v;
-        }
-    } // namespace
-
     void submit_color_view(u32_t name_hash, const mat4& view, const mat4& projection, const mat4& view_proj,
                            const vec3& position, u32_t color_target_hash, u32_t depth_target_hash, VkExtent2D extent,
                            f32 z_near, f32 z_far)
     {
         render_view_t v{};
         v.name_hash = name_hash;
-        v.kind = view_kind_e::COLOR;
         v.view = view;
         v.projection = projection;
         v.view_proj = view_proj;
@@ -697,34 +704,6 @@ namespace tau::renderer::frame
         v.z_far = z_far;
         submitted_views.push_back(v);
     }
-
-    void submit_shadow_cascade_view(u32_t name_hash, const mat4& view, const mat4& projection, u32_t atlas_target_hash,
-                                    const image_desc_t& atlas_desc, VkRect2D atlas_rect, f32 split_far,
-                                    f32 normal_bias_texels, f32 depth_bias_ndc)
-    {
-        render_view_t v = make_shadow_view(name_hash, atlas_target_hash, view, projection, atlas_desc, atlas_rect,
-                                           normal_bias_texels, depth_bias_ndc);
-        v.shadow_split_far = split_far;
-        submitted_views.push_back(v);
-    }
-
-    void submit_punctual_shadow_view(u32_t name_hash, const mat4& view, const mat4& projection,
-                                     const image_desc_t& atlas_desc, VkRect2D atlas_rect, u32_t shadow_slot, f32 range,
-                                     bool needs_render, f32 normal_bias_texels, f32 depth_bias_ndc)
-    {
-        render_view_t v = make_shadow_view(name_hash, "PunctualShadowAtlas"_h, view, projection, atlas_desc, atlas_rect,
-                                           normal_bias_texels, depth_bias_ndc);
-        v.shadow_tile = shadow_tile_e::PUNCTUAL;
-        v.shadow_slot = shadow_slot;
-        v.needs_render = needs_render;
-        v.z_far = range;
-        submitted_views.push_back(v);
-    }
-
-    void submit_shadow_cascade_light(ecs::entity_t light) { submitted_cascade_light = light; }
-
-    void submit_punctual_shadow_slot(ecs::entity_t light, u32_t shadow_slot)
-    { submitted_punctual_slots[static_cast<u32_t>(light)] = shadow_slot; }
 
     bool get_primary_camera_position(ecs::registry_t& reg, vec3& out_pos)
     {
@@ -748,51 +727,6 @@ namespace tau::renderer::frame
         return false;
     }
 
-    static void fill_view_info(const render_view_t& v, primary_view_info_t& out_info)
-    {
-        out_info.position = v.position;
-        out_info.forward = normalize(vec3{v.view[0][2], v.view[1][2], v.view[2][2]});
-
-        const f32 focal = std::fabs(v.projection[1][1]);
-        const f32 focal_over_aspect = std::fabs(v.projection[0][0]);
-        out_info.fov_rad = (focal > 1e-6f) ? (2.0f * std::atan(1.0f / focal)) : radians(45.0f);
-        out_info.aspect = (focal_over_aspect > 1e-6f) ? (focal / focal_over_aspect) : 1.0f;
-
-        out_info.z_near = (v.z_near > 0.0f) ? v.z_near : 0.1f;
-        out_info.z_far = v.z_far;
-
-        vec4 planes[6];
-        frustum_planes(v.view_proj, planes);
-        for (u32_t i = 0; i < 6; i++) { out_info.frustum_planes[i] = planes[i]; }
-        out_info.has_frustum_planes = true;
-    }
-
-    bool get_primary_view_info(ecs::registry_t& reg, primary_view_info_t& out_info)
-    {
-        for (const render_view_t& v : submitted_views)
-        {
-            if (v.name_hash == "PrimaryView"_h)
-            {
-                fill_view_info(v, out_info);
-                return true;
-            }
-        }
-
-        ecs::entity_t cam_e = camera_system::get_active_camera(reg);
-        if (cam_e == ecs::NULL_ENTITY || !reg.all_of<camera_t, transform_t>(cam_e)) { return false; }
-
-        const camera_t& cam = reg.get<camera_t>(cam_e);
-        const transform_t& t = reg.get<transform_t>(cam_e);
-
-        out_info.position = {t.world_mat[3][0], t.world_mat[3][1], t.world_mat[3][2]};
-        out_info.forward = normalize({t.world_mat[2][0], t.world_mat[2][1], t.world_mat[2][2]});
-        out_info.fov_rad = radians(cam.fov_deg);
-        out_info.aspect = cam.aspect;
-        out_info.z_near = cam.near_plane;
-        out_info.z_far = cam.far_plane;
-        return true;
-    }
-
     bool bind_view_descriptors(VkCommandBuffer cmd, VkPipelineLayout layout, u32_t view_name_hash)
     {
         const u32_t* offset = g_view_offsets[ctx.cur_frame].find(view_name_hash);
@@ -810,32 +744,6 @@ namespace tau::renderer::frame
     }
 
     u32_t first_view_globals_offset() { return ctx.cur_frame * MAX_VIEWS_PER_FRAME * g_globals_stride; }
-
-    u32_t view_globals_offset_at(u32_t view_index)
-    { return first_view_globals_offset() + view_index * g_globals_stride; }
-
-    gpu::GlobalData* view_globals(u32_t view_index)
-    { return reinterpret_cast<gpu::GlobalData*>(g_globals_mapped + view_globals_offset_at(view_index)); }
-
-    void fill_view_camera(gpu::GlobalData& globals, const render_view_t& view)
-    {
-        gpu::GlobalData* slot = &globals;
-        const render_view_t& sub = view;
-        slot->view = sub.view;
-        slot->projection = sub.projection;
-
-        const mat4 final_view_proj = sub.kind == view_kind_e::COLOR ? g_pre_rotation * sub.view_proj : sub.view_proj;
-        slot->view_proj = final_view_proj;
-        slot->inv_view_proj = inverse(final_view_proj);
-
-        const debug_view_e* debug_view = view_debug_views.find(sub.name_hash);
-        slot->debug_view = static_cast<u32_t>(debug_view ? *debug_view : debug_view_e::OFF);
-
-        frustum_planes(sub.view_proj, slot->frustum_planes);
-        slot->camera_pos = vec4(sub.position, 0.0f);
-
-        slot->cull_flags = (sub.kind == view_kind_e::DEPTH_ONLY) ? 1u : 0u;
-    }
 
     VkExtent2D render_extent() { return g_render_extent; }
     VkExtent2D logical_extent() { return g_logical_extent; }

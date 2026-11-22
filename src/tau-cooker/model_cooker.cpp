@@ -396,15 +396,18 @@ namespace tau::cooker::model
                 std::unordered_map<u64_t, std::size_t> last_child;
                 std::unordered_map<std::string, u32_t> path_uses;
 
-                const bool single = top.size() == 1 && !joints.contains(top.front());
+                // face forward turns a wrapping root, so clips animating the file's roots keep it
+                const bool face_forward = plan.settings.face_forward;
+                const bool single = top.size() == 1 && !joints.contains(top.front()) && !face_forward;
                 if (single) { add_node(top.front(), 0, {}, last_child, path_uses); }
                 else
                 {
                     const f32 zero[3] = {0.0f, 0.0f, 0.0f};
-                    const f32 identity[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                    // glTF faces +Z, the engine's forward is -Z: half a turn about Y
+                    const f32 rotation[4] = {0.0f, face_forward ? 1.0f : 0.0f, 0.0f, face_forward ? 0.0f : 1.0f};
                     const f32 one[3] = {1.0f, 1.0f, 1.0f};
                     const u64_t root = id_of("/");
-                    add(root, 0, components(stem, zero, identity, one, nullptr));
+                    add(root, 0, components(stem, zero, rotation, one, nullptr));
                     for (const i32 node : top) { add_node(node, root, {}, last_child, path_uses); }
                 }
 

@@ -10,7 +10,6 @@
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/log.h"
-#include "tau/render/legacy.h"
 #include "tau/rhi/context.h"
 #include "tau/vfs.h"
 
@@ -286,8 +285,6 @@ namespace tau::editor::asset_watch
                 const asset_editors::asset_editor_t* editor = asset_editors::of_path(vfs_name);
                 if (editor && editor->reload ? editor->reload(world, vfs_name) : tau::assets::reload(vfs_name))
                 {
-                    // renderer may warn again if it goes missing later
-                    tau::renderer::legacy::forget_missing_asset_reports();
                     // stale undo steps
                     history::drop(doc);
                     TAU_LOG_INFO("ASSET_WATCH", "Reloaded {}", vfs_name);

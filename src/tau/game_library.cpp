@@ -8,7 +8,6 @@
 #include "tau/log.h"
 #include "tau/reflection.h"
 #include "tau/render/frame.h"
-#include "tau/render/legacy.h"
 #include "tau/rhi/context.h"
 
 #include <string_view>
@@ -71,8 +70,7 @@ namespace tau::game_library
         if (!lib.handle) { return true; }
 
         const u32_t listeners = input::remove_listeners_of(lib.module);
-        const u32_t features =
-            renderer::legacy::remove_features_of(lib.module) + renderer::frame::remove_producers_of(lib.module);
+        const u32_t features = renderer::frame::remove_producers_of(lib.module);
         const u32_t hooks = game::remove_hooks_of(lib.module);
         reflection::remove_registrations_of(lib.module);
 

@@ -16,7 +16,6 @@
 #include "tau/guid_json.h"
 #include "tau/log.h"
 #include "tau/prefab.h"
-#include "tau/render/legacy.h"
 #include "tau/rhi/context.h"
 #include "tau/serialization.h"
 #include "tau/systems/guid.h"
@@ -84,20 +83,7 @@ namespace tau::editor::prefab_stage
             viewport_input::frame_entities(world, ctx, all);
         }
 
-        void set_lighting(bool staged, const editor_context_t& ctx)
-        {
-            const vec3 forward = tau::forward(ctx.editor_camera.rotation);
-            vec3 direction = {forward.x, forward.y - 0.6f, forward.z};
-            const f32 length = std::sqrt(dot(direction, direction));
-            direction = length > 1e-4f ? direction * (1.0f / length) : vec3{0.0f, -1.0f, 0.0f};
-            renderer::legacy::set_fallback_light(staged, direction, {1.0f, 1.0f, 1.0f}, 3.0f);
-        }
-
-        void reset()
-        {
-            if (g.open) { renderer::legacy::set_fallback_light(false); }
-            g = {};
-        }
+        void reset() { g = {}; }
 
         bool editing(const editor_context_t& ctx) { return ctx.project_loaded && ctx.cur_mode == editor_mode_e::EDIT; }
     } // namespace
@@ -170,7 +156,6 @@ namespace tau::editor::prefab_stage
         history::set_floor(true);
         g.base_state = history::doc_state(doc());
 
-        set_lighting(true, ctx);
         ctx.inspected_asset.clear();
         g.frame_pending = true;
         ctx.selection.set(select != 0 && guid_system::find(world.registry, select) != ecs::NULL_ENTITY ? select
@@ -203,7 +188,6 @@ namespace tau::editor::prefab_stage
         history::set_entity_doc(history::OPEN_SCENE);
         ctx.selection = g.selection;
         ctx.editor_camera = g.camera;
-        set_lighting(false, ctx);
 
         const asset_t<prefab_t> handle = g.prefab;
         const nlohmann::json written = std::move(g.written);
@@ -276,7 +260,6 @@ namespace tau::editor::prefab_stage
             g.frame_pending = false;
             frame(world, ctx);
         }
-        set_lighting(true, ctx);
 
         ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + 6.0f, ImGui::GetCursorPosY() + 4.0f));
         commands::button(ctx, commands::command_e::CLOSE_PREFAB, "< Scene", true);

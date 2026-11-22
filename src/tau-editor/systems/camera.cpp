@@ -42,8 +42,8 @@ namespace tau::editor::camera_system
 
         if (mouse_delta.x != 0.0f || mouse_delta.y != 0.0f)
         {
-            cam.yaw += mouse_delta.x * mouse_sensitivity;
-            cam.pitch += mouse_delta.y * mouse_sensitivity;
+            cam.yaw -= mouse_delta.x * mouse_sensitivity;
+            cam.pitch -= mouse_delta.y * mouse_sensitivity;
 
             const f32 pitch_limit = tau::radians(90.0f);
             if (cam.pitch > pitch_limit) { cam.pitch = pitch_limit; }

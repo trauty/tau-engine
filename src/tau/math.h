@@ -201,7 +201,8 @@ namespace tau
 
     inline vec3 right(quat q) { return rotate(q, {1.0f, 0.0f, 0.0f}); }
     inline vec3 up(quat q) { return rotate(q, {0.0f, 1.0f, 0.0f}); }
-    inline vec3 forward(quat q) { return rotate(q, {0.0f, 0.0f, 1.0f}); }
+    // right-handed: forward is -Z
+    inline vec3 forward(quat q) { return rotate(q, {0.0f, 0.0f, -1.0f}); }
 
     // shortest arc, normalized lerp when nearly parallel
     inline quat slerp(quat a, quat b, f32 t)
@@ -442,21 +443,7 @@ namespace tau
         return {std::atan2(m[0][1], m[1][1]), PI * 0.5f, 0.0f};
     }
 
-    // --- view and projection (zero to one depth, when i switch to right hand this goes away) ---
-
-    inline mat4 look_at_lh(vec3 eye, vec3 center, vec3 up)
-    {
-        const vec3 f = normalize(center - eye);
-        const vec3 s = normalize(cross(up, f));
-        const vec3 u = cross(f, s);
-
-        mat4 m;
-        m[0] = {s.x, u.x, f.x, 0.0f};
-        m[1] = {s.y, u.y, f.y, 0.0f};
-        m[2] = {s.z, u.z, f.z, 0.0f};
-        m[3] = {-dot(s, eye), -dot(u, eye), -dot(f, eye), 1.0f};
-        return m;
-    }
+    // --- view and projection: right-handed (forward -Z, right +X, up +Y), zero to one depth ---
 
     inline mat4 look_at_rh(vec3 eye, vec3 center, vec3 up)
     {
@@ -469,20 +456,6 @@ namespace tau
         m[1] = {s.y, u.y, -f.y, 0.0f};
         m[2] = {s.z, u.z, -f.z, 0.0f};
         m[3] = {-dot(s, eye), -dot(u, eye), dot(f, eye), 1.0f};
-        return m;
-    }
-
-    inline mat4 perspective_lh_zo(f32 fovy_radians, f32 aspect, f32 near_z, f32 far_z)
-    {
-        const f32 f = 1.0f / std::tan(fovy_radians * 0.5f);
-        const f32 fn = 1.0f / (near_z - far_z);
-
-        mat4 m = mat4::zero();
-        m[0][0] = f / aspect;
-        m[1][1] = f;
-        m[2][2] = -far_z * fn;
-        m[2][3] = 1.0f;
-        m[3][2] = near_z * far_z * fn;
         return m;
     }
 
@@ -501,18 +474,6 @@ namespace tau
     }
 
     // reverse z
-    inline mat4 perspective_reverse_infinite_lh_zo(f32 fovy_radians, f32 aspect, f32 near_z)
-    {
-        const f32 focal = 1.0f / std::tan(fovy_radians * 0.5f);
-
-        mat4 m = mat4::zero();
-        m[0][0] = focal / aspect;
-        m[1][1] = focal;
-        m[2][3] = 1.0f;
-        m[3][2] = near_z;
-        return m;
-    }
-
     inline mat4 perspective_reverse_infinite_rh_zo(f32 fovy_radians, f32 aspect, f32 near_z)
     {
         const f32 focal = 1.0f / std::tan(fovy_radians * 0.5f);
@@ -522,20 +483,6 @@ namespace tau
         m[1][1] = focal;
         m[2][3] = -1.0f;
         m[3][2] = near_z;
-        return m;
-    }
-
-    inline mat4 ortho_lh_zo(f32 left, f32 right, f32 bottom, f32 top, f32 near_z, f32 far_z)
-    {
-        const f32 rl = 1.0f / (right - left);
-        const f32 tb = 1.0f / (top - bottom);
-        const f32 fn = -1.0f / (far_z - near_z);
-
-        mat4 m = mat4::zero();
-        m[0][0] = 2.0f * rl;
-        m[1][1] = 2.0f * tb;
-        m[2][2] = -fn;
-        m[3] = {-(right + left) * rl, -(top + bottom) * tb, near_z * fn, 1.0f};
         return m;
     }
 
