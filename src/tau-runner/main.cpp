@@ -20,22 +20,28 @@ int main(int argc, char* argv[])
     tau::runner::options_t options;
     if (argc < 2 || !tau::project_t::load(argv[1], project) || !tau::runner::parse(argc, argv, 2, options))
     {
-        TAU_LOG_FATAL("RUNNER", "Usage: tau-runner <project> [--scene=PATH] [--camera=NAME] [--size=WxH] [--frames=N] "
-                                "[--dump-hdr=PREFIX] [--dump-ldr=PREFIX] [--timings] [--no-vsync] "
-                                "[--quit-after=SECONDS] [--headless] [--compat] "
-                                "[--validation] [--renderdoc] [--capture-frame=N]");
+        TAU_LOG_FATAL("RUNNER",
+                      "Usage: tau-runner <project> [--scene=PATH] [--camera=NAME] [--size=WxH] [--frames=N] "
+                      "[--dump-hdr=PREFIX] [--dump-ldr=PREFIX] [--timings] [--preset=NAME] [--set PATH=VALUE] "
+                      "[--quit-after=SECONDS] [--headless] [--compat] "
+                      "[--validation] [--renderdoc] [--capture-frame=N]");
         return -1;
     }
 
     const tau::engine::engine_config_t engine_config = {
         .name = project.project_name,
-        .vsync = options.vsync,
         .validation = options.validation || tau::engine::DEBUG_BUILD,
         .force_compat = options.compat,
         .headless = options.headless,
         .renderdoc = options.renderdoc,
+        .settings = options.settings,
     };
     if (!tau::engine::init(engine_config)) { return -1; }
+    if (!tau::renderer::settings::clean())
+    {
+        tau::engine::shutdown();
+        return -1;
+    }
     tau::project::mount(project, true);
     tau::renderer::pipelines::freeze();
 

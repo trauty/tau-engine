@@ -26,6 +26,9 @@ namespace tau::renderer::swapchain
 
     // vsync off: IMMEDIATE, else MAILBOX, for timing runs; false: nothing created (no surface, minimised)
     bool init(bool vsync);
+    bool vsync();
+    // takes effect at the next resize
+    void set_vsync(bool vsync);
     void shutdown();
     // false: nothing created
     bool resize();

@@ -15,6 +15,7 @@
 #include "tau/render/legacy.h"
 #include "tau/render/overlay.h"
 #include "tau/render/post.h"
+#include "tau/render/settings.h"
 #include "tau/rhi/bindless.h"
 #include "tau/rhi/context.h"
 #include "tau/rhi/deletion.h"
@@ -452,6 +453,13 @@ namespace tau::renderer::frame
 
         const ecs::entity_t frame_cascade_light = submitted_cascade_light;
         submitted_cascade_light = ecs::NULL_ENTITY;
+
+        const bool vsync = settings::get().renderer.vsync;
+        if (vsync != swapchain::vsync() && !ctx.caps.headless)
+        {
+            swapchain::set_vsync(vsync);
+            pending_resize = true;
+        }
 
         if (pending_resize)
         {

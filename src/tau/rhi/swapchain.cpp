@@ -213,6 +213,10 @@ namespace tau::renderer::swapchain
         return init_swapchain();
     }
 
+    bool vsync() { return g_vsync; }
+
+    void set_vsync(bool vsync) { g_vsync = vsync; }
+
     void shutdown()
     {
         for (VkImageView image_view : g_sc.views) { vkDestroyImageView(ctx.device, image_view, nullptr); }

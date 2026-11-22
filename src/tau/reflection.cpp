@@ -108,6 +108,7 @@ namespace tau::reflection
         reflect_post_process(ctx);
         reflect_mesh_renderer(ctx);
         reflect_import_settings(ctx);
+        reflect_graphics_settings(ctx);
     }
 
     void shutdown() { entt::meta_reset(get_engine_context()); }

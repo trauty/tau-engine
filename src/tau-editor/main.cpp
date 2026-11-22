@@ -8,6 +8,7 @@
 #include "tau-editor/commands.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/game_code.h"
+#include "tau-editor/graphics_settings.h"
 #include "tau-editor/handles.h"
 #include "tau-editor/history.h"
 #include "tau-editor/import_edit.h"
@@ -205,6 +206,7 @@ static void update_editor_ui(tau::editor_context_t& ctx)
 
     for (tau::panel_draw_func custom_panel : ctx.custom_panels) { custom_panel(world, ctx); }
     tau::editor::project_settings::draw(world, ctx);
+    tau::editor::graphics_settings::draw(world, ctx);
     tau::editor::commands::draw_unsaved_prompt(world, ctx);
 
     tau::editor::handles::update(world, ctx);

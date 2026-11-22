@@ -9,6 +9,7 @@
 #include "tau/profiling.h"
 #include "tau/reflection.h"
 #include "tau/render/frame.h"
+#include "tau/render/settings.h"
 #include "tau/rhi/context.h"
 #include "tau/rhi/renderdoc.h"
 #include "tau/time.h"
@@ -73,6 +74,7 @@ namespace tau::engine
         if (!cooked_root.empty()) { tau::assets::read_guid_map(cooked_root + "/guid_map.json"); }
 
         tau::reflection::register_types();
+        tau::renderer::settings::init(config.settings);
         tau::jobs::init();
 
         // before SDL video and the Vulkan instance
@@ -115,7 +117,7 @@ namespace tau::engine
             .force_compat = config.force_compat,
             .headless = config.headless,
             .required_instance_exts = std::move(extensions),
-            .vsync = config.vsync,
+            .vsync = tau::renderer::settings::get().renderer.vsync,
         };
 
         if (!tau::renderer::init_context(renderer_config, window))

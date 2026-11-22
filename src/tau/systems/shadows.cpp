@@ -8,6 +8,7 @@
 #include "tau/math.h"
 #include "tau/render/frame.h"
 #include "tau/render/legacy.h"
+#include "tau/render/settings.h"
 #include "tau/rhi/context.h"
 #include "tau/rhi/renderer_constants.h"
 
@@ -17,16 +18,10 @@
 
 namespace tau::shadow_system
 {
-    // how far the cascades reach
-    static constexpr f32 SHADOW_DISTANCE = 150.0f;
-    // blend between a uniform and a logarithmic split scheme
-    static constexpr f32 SPLIT_LAMBDA = 0.75f;
+    // how far the cascades reach before the preset's scale; the scene's environment sets it later
+    static constexpr f32 BASE_SHADOW_DISTANCE = 150.0f;
     // how far behind each cascade's sphere the light sits
     static constexpr f32 CASTER_EXTRUSION = 200.0f;
-
-    // both in shadow texels
-    static constexpr f32 SHADOW_NORMAL_BIAS = 2.0f;
-    static constexpr f32 SHADOW_DEPTH_BIAS = 0.0f; // ndc depth, the raster slope bias covers the rest
 
     static constexpr f32 SDSM_RANGE_MARGIN = 0.15f;
     static constexpr f32 SDSM_RANGE_STEPS_PER_OCTAVE = 8.0f;
@@ -43,8 +38,6 @@ namespace tau::shadow_system
 
     static constexpr f32 PUNCTUAL_NEAR_FRACTION = 0.02f;
     static constexpr f32 PUNCTUAL_MIN_NEAR = 0.05f;
-    static constexpr f32 PUNCTUAL_NORMAL_BIAS = 1.5f; // in shadow texels, as for the cascades
-    static constexpr f32 PUNCTUAL_DEPTH_BIAS = 0.0015f;
 
     // +x -x +y -y +z -z
     struct cube_face_t
@@ -62,7 +55,6 @@ namespace tau::shadow_system
         {{0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f} },
     };
 
-    static constexpr u32_t PUNCTUAL_TILE_BUDGET = 8;
     static constexpr f32 MOVED_CASTER_SLACK = 5.0f;
     static constexpr f32 LIGHT_MOVE_EPSILON = 0.0005f;
 
@@ -148,6 +140,8 @@ namespace tau::shadow_system
 
     static void update_cascades(ecs::registry_t& reg, const renderer::frame::primary_view_info_t& view_info)
     {
+        const renderer::shadow_settings_t& settings = renderer::settings::get().shadows;
+        const f32 shadow_distance = BASE_SHADOW_DISTANCE * settings.distance_scale;
         ecs::entity_t caster = ecs::NULL_ENTITY;
         for (auto [entity, light, transform] : reg.view<directional_light_t, transform_t>().each())
         {
@@ -174,7 +168,7 @@ namespace tau::shadow_system
         }
 
         f32 near_d = view_info.z_near;
-        f32 far_d = (view_info.z_far > near_d) ? std::fmin(SHADOW_DISTANCE, view_info.z_far) : SHADOW_DISTANCE;
+        f32 far_d = (view_info.z_far > near_d) ? std::fmin(shadow_distance, view_info.z_far) : shadow_distance;
         if (far_d <= near_d) { return; }
 
         {
@@ -190,7 +184,7 @@ namespace tau::shadow_system
                 far_d = std::fmin(far_d, measured_far);
 
                 if (far_d < near_d * SDSM_MIN_RANGE_RATIO) { far_d = near_d * SDSM_MIN_RANGE_RATIO; }
-                far_d = std::fmin(far_d, SHADOW_DISTANCE);
+                far_d = std::fmin(far_d, shadow_distance);
 
                 if (far_d <= near_d) { return; }
             }
@@ -212,7 +206,7 @@ namespace tau::shadow_system
             const f32 t = static_cast<f32>(i + 1) / static_cast<f32>(renderer::SHADOW_CASCADE_COUNT);
             const f32 log_split = near_d * std::pow(ratio, t);
             const f32 uniform_split = near_d + (far_d - near_d) * t;
-            const f32 split_far = SPLIT_LAMBDA * log_split + (1.0f - SPLIT_LAMBDA) * uniform_split;
+            const f32 split_far = settings.split_lambda * log_split + (1.0f - settings.split_lambda) * uniform_split;
 
             f32 center_z = 0.0f;
             f32 radius = 0.0f;
@@ -251,8 +245,8 @@ namespace tau::shadow_system
             };
 
             renderer::frame::submit_shadow_cascade_view("DirShadowCascade"_h + i, view, projection, "ShadowAtlas"_h,
-                                                        atlas_desc, atlas_rect, split_far, SHADOW_NORMAL_BIAS,
-                                                        SHADOW_DEPTH_BIAS);
+                                                        atlas_desc, atlas_rect, split_far, settings.normal_bias,
+                                                        settings.depth_bias);
 
             split_near = split_far;
         }
@@ -349,6 +343,7 @@ namespace tau::shadow_system
 
     static void update_punctual(ecs::registry_t& reg, const renderer::frame::primary_view_info_t& view_info)
     {
+        const renderer::shadow_settings_t& settings = renderer::settings::get().shadows;
         std::vector<shadow_candidate_t> candidates;
 
         for (auto [entity, light, transform] : reg.view<point_light_t, transform_t>().each())
@@ -486,7 +481,7 @@ namespace tau::shadow_system
                 candidate.range, candidate.outer_angle_rad, candidate.is_spot};
         }
 
-        u32_t budget_left = PUNCTUAL_TILE_BUDGET;
+        u32_t budget_left = settings.punctual_tile_budget;
 
         for (const shadow_candidate_t& candidate : candidates)
         {
@@ -525,9 +520,9 @@ namespace tau::shadow_system
                     perspective_lh_zo(2.0f * padded_half_fov(tile.outer_angle_rad), 1.0f, tile_near, tile.range);
                 flip_clip_y(projection);
 
-                renderer::frame::submit_punctual_shadow_view("PunctualShadowTile"_h + slot, view, projection,
-                                                             atlas_desc, punctual_tile_rect(slot), slot, tile.range,
-                                                             render, PUNCTUAL_NORMAL_BIAS, PUNCTUAL_DEPTH_BIAS);
+                renderer::frame::submit_punctual_shadow_view(
+                    "PunctualShadowTile"_h + slot, view, projection, atlas_desc, punctual_tile_rect(slot), slot,
+                    tile.range, render, settings.punctual_normal_bias, settings.punctual_depth_bias);
             }
             else
             {
@@ -543,7 +538,7 @@ namespace tau::shadow_system
 
                     renderer::frame::submit_punctual_shadow_view(
                         "PunctualShadowTile"_h + face_slot, view, projection, atlas_desc, punctual_tile_rect(face_slot),
-                        face_slot, tile.range, render, PUNCTUAL_NORMAL_BIAS, PUNCTUAL_DEPTH_BIAS);
+                        face_slot, tile.range, render, settings.punctual_normal_bias, settings.punctual_depth_bias);
                 }
             }
 

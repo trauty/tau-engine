@@ -35,7 +35,17 @@ int main(int argc, char* argv[])
     const char* fallback_name = "tau";
 #endif
     const char* window_name = have_project ? project.project_name.c_str() : fallback_name;
-    if (!tau::engine::init({.name = window_name})) { return -1; }
+    tau::renderer::settings::args_t settings_args;
+    // a standalone game has no project argument
+    for (i32 i = have_project ? 2 : 1; i < argc; i++)
+    {
+        if (!tau::renderer::settings::take_arg(argc, argv, i, settings_args))
+        {
+            TAU_LOG_WARN("ENGINE", "Unknown argument: {}", argv[i]);
+        }
+    }
+
+    if (!tau::engine::init({.name = window_name, .settings = settings_args})) { return -1; }
 
     // engine::init() already mounted the cooked tree beside the binary and loaded its guid map
     // a project keeps its own engine asset copy, its root supersedes that one, guid maps merge

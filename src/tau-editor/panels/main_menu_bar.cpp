@@ -59,6 +59,7 @@ namespace tau::editor::panels
             {
                 ctx.show_project_settings = true;
             }
+            if (ImGui::MenuItem("Graphics Settings...")) { ctx.show_graphics_settings = true; }
             ImGui::EndMenu();
         }
 

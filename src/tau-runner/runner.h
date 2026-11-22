@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tau/defines.h"
+#include "tau/render/settings.h"
 
 #include <string>
 
@@ -22,7 +23,6 @@ namespace tau::runner
         // PREFIX_ldr.bin: the final output after every pass, 4 bytes per texel, 16 B header
         std::string dump_ldr;
         bool timings = false;
-        bool vsync = true;
         // wall seconds after loading
         f64 quit_after = 0.0;
         // needs --size
@@ -35,6 +35,8 @@ namespace tau::runner
         bool renderdoc = false;
         // RenderDoc capture of this counted frame (1-based)
         u32_t capture_frame = 0;
+        // --preset, --set
+        renderer::settings::args_t settings;
     };
 
     bool parse(i32 argc, char** argv, i32 first, options_t& out);

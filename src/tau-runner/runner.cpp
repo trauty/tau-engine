@@ -278,6 +278,8 @@ namespace tau::runner
     {
         for (i32 i = first; i < argc; i++)
         {
+            if (renderer::settings::take_arg(argc, argv, i, out.settings)) { continue; }
+
             const std::string_view arg = argv[i];
             const std::size_t eq = arg.find('=');
             const std::string_view key = arg.substr(0, eq);
@@ -296,7 +298,6 @@ namespace tau::runner
             else if (key == "--dump-hdr") { out.dump_hdr = value; }
             else if (key == "--dump-ldr") { out.dump_ldr = value; }
             else if (key == "--timings") { out.timings = true; }
-            else if (key == "--no-vsync") { out.vsync = false; }
             else if (key == "--headless") { out.headless = true; }
             else if (key == "--compat") { out.compat = true; }
             else if (key == "--validation") { out.validation = true; }
@@ -311,8 +312,8 @@ namespace tau::runner
                 good = false;
             }
 
-            const bool is_switch = key == "--timings" || key == "--no-vsync" || key == "--headless" ||
-                                   key == "--compat" || key == "--validation" || key == "--renderdoc";
+            const bool is_switch = key == "--timings" || key == "--headless" || key == "--compat" ||
+                                   key == "--validation" || key == "--renderdoc";
             if (!good || (eq == std::string_view::npos) != is_switch)
             {
                 TAU_LOG_ERROR("RUNNER", "Bad argument: {}", arg);

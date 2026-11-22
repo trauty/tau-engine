@@ -95,5 +95,6 @@ namespace tau
         bool show_project_manager = false;
         bool show_settings = false;
         bool show_project_settings = false;
+        bool show_graphics_settings = false;
     };
 } // namespace tau

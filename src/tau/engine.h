@@ -1,6 +1,7 @@
 #pragma once
 
 #include "defines.h"
+#include "tau/render/settings.h"
 #include "tau/world.h"
 
 #include <functional>
@@ -25,8 +26,6 @@ namespace tau::engine
         std::string name = "tau";
         i32 window_width = 1280;
         i32 window_height = 720;
-        // off: uncapped (timing runs)
-        bool vsync = true;
         // + sync validation
         bool validation = DEBUG_BUILD;
         // no RT, min spec
@@ -35,6 +34,8 @@ namespace tau::engine
         bool headless = false;
         // load librenderdoc (an injected one is always used)
         bool renderdoc = false;
+        // --preset / --set from the command line
+        renderer::settings::args_t settings;
     };
 
     TAU_ENGINE_API bool init(const engine_config_t& config);
