@@ -140,6 +140,7 @@ namespace tau::renderer
         u32_t bindless_id = BINDLESS_NULL_HANDLE;
         bool in_use = false;
         u32_t frames_unused = 0;
+        const char* debug_name = nullptr;
     };
 
     struct persistent_image_t
@@ -382,11 +383,11 @@ namespace tau::renderer
     struct context_config_t
     {
         std::string app_name = "tau-engine";
-        // validation layers with synchronization validation
+        // + sync validation
         bool validation = false;
-        // no hardware ray tracing and no int16: the minimum spec
+        // no RT, no int16
         bool force_compat = false;
-        // no surface or swapchain, offscreen output only
+        // no surface / swapchain
         bool headless = false;
         bool pipeline_properties = false;
         std::vector<const char*> required_instance_exts;

@@ -148,7 +148,7 @@ namespace tau
         return shader;
     }
 
-    // the pipelines stay in renderer::pipelines, a later load of this shader reuses them
+    // pipelines stay in renderer::pipelines
     void asset_loader_t<shader_t>::unload(shader_t& shader)
     {
         shader.pipelines.clear();

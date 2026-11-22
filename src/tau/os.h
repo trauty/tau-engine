@@ -25,6 +25,8 @@ namespace tau::os
     using lib_handle_t = void*;
 
     TAU_ENGINE_API lib_handle_t load_lib(const char* path);
+    // only if already in the process (injected), never loads
+    TAU_ENGINE_API lib_handle_t find_loaded_lib(const char* name);
     TAU_ENGINE_API void* get_proc_address(lib_handle_t lib, const char* func_name);
     TAU_ENGINE_API void free_lib(lib_handle_t lib);
     TAU_ENGINE_API std::string lib_error();

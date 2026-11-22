@@ -171,6 +171,14 @@ target("tau-runtime")
 
 target_end()
 
+target("tau-tools")
+    set_kind("static")
+    add_rules("tau.common")
+    tau_warnings()
+    add_deps("tau-engine")
+    add_files("src/tau-tools/*.cpp")
+target_end()
+
 -- measurement runs over a project: fixed render size, frame count, HDR dump, GPU pass timings (a dev tool, never shipped)
 target("tau-runner")
     set_kind("binary")
@@ -182,6 +190,7 @@ target("tau-runner")
         add_ldflags("-rdynamic", {force = true})
     end
 
+    add_deps("tau-tools")
     add_files("src/tau-runner/*.cpp")
 
 target_end()
@@ -246,6 +255,7 @@ target("tau-editor")
         add_ldflags("/subsystem:windows", "/entry:mainCRTStartup", {force = true})
     end
 
+    add_deps("tau-tools")
     add_files("src/tau-editor/**.cpp")
 
     if is_mode("debug") then

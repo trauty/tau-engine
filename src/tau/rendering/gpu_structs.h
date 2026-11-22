@@ -1,11 +1,9 @@
 #pragma once
 
-// GPU records, defined once for C++ and Slang
-// Slang: only tau_gpu.slang (a module without a `module` line, so everything is public) includes this,
-// tau_globals re-exports it; including it in a second module would make distinct, incompatible types
-// shaders compile with scalar layout: a struct's C++ size equals its Slang size only if C++ adds no padding,
-// so the sizes in TAU_GPU_STRUCT_SIZES pin the field offsets too (C++ static_asserts, the cooker checks Slang)
-// matrices are row-major on the GPU and shaders write mul(M, v): float4x4 is built from a column-major mat4
+// GPU records for C++ and Slang
+// Slang: included only by tau_gpu.slang (a second include = distinct types)
+// scalar layout: equal sizes on both sides pin the offsets
+// row-major, shaders write mul(M, v)
 
 #ifdef __cplusplus
     #include "tau/math.h"
@@ -40,8 +38,7 @@ namespace tau::gpu
         uint texture_id;
     };
 
-    // what the draw path reads: one per object, fetched by the vertex shader through the object buffer address
-    // everything culling needs lives in CullData, indexed alike so object i and cull input i are the same object
+    // indexed like CullData
     struct ObjectData
     {
         float4x4 model_matrix;
@@ -54,25 +51,24 @@ namespace tau::gpu
         uint _pad2;
     };
 
-    // kept apart from the 160 byte record so several objects fit per cache line
     struct CullData
     {
         float4 bounding_sphere; // xyz = world centre, w = radius
         uint index_count;
         uint pipeline_index;
         uint flags;           // bit0 = shadow caster
-        uint draw_bin_offset; // start of this pipeline's run in the indirect buffer
+        uint draw_bin_offset; // pipeline's first indirect slot
     };
 
-    // one tile of a shadow atlas: a cascade and a punctual tile are the same record, only split_far is cascade specific
+    // cascade or punctual tile, split_far cascades only
     struct ShadowTile
     {
         float4x4 view_proj;
         float4 uv_offset_scale; // xy = atlas uv offset, zw = atlas uv scale
-        float texel_world_size; // world units per shadow texel, scales the normal offset
+        float texel_world_size; // world units, scales the normal offset
         float normal_bias;      // in shadow texels
         float depth_bias;       // in light space ndc depth
-        float split_far;        // view space distance at which this cascade stops
+        float split_far;        // view distance where the cascade ends
     };
 
     struct DirectionalLight
@@ -85,7 +81,7 @@ namespace tau::gpu
     {
         float4 position_radius; // xyz = pos, w = radius
         float4 color_intensity; // xyz = color, w = intensity
-        float4 shadow_params;   // x = the punctual shadow tile this light owns, negative when it casts none
+        float4 shadow_params;   // x = punctual tile, < 0 none
     };
 
     struct SpotLight
@@ -94,7 +90,7 @@ namespace tau::gpu
         float4 direction_intensity; // xyz = dir, w = intensity
         float4 color_inner_cos;     // xyz = color, w = inner_cosine
         float4 outer_cos;           // x = outer_cosine, yzw = padding
-        float4 shadow_params;       // x = the punctual shadow tile this light owns, negative when it casts none
+        float4 shadow_params;       // x = punctual tile, < 0 none
     };
 
     struct GlobalData
@@ -104,7 +100,7 @@ namespace tau::gpu
         float4x4 view_proj;
         float4 camera_pos;
         float4 frustum_planes[6];
-        float4x4 inv_view_proj; // reconstruct the world position from depth
+        float4x4 inv_view_proj;
 
         uint64_t dir_light_buffer;
         uint64_t point_light_buffer;
@@ -125,8 +121,8 @@ namespace tau::gpu
 
         uint shadow_atlas_id; // bindless id of the cascade atlas
         uint shadow_cascade_count;
-        float shadow_fade_start; // view distance where shadows start fading out
-        float shadow_fade_end;   // and where they are fully faded
+        float shadow_fade_start; // view distance, fade start
+        float shadow_fade_end;   // fade end
 
         float cluster_z_near;
         float cluster_z_far;

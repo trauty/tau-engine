@@ -64,7 +64,7 @@ namespace tau
     {
         static constexpr std::string_view type_key = "shader";
 
-        // handles owned by renderer::pipelines, copied in at load
+        // owned by renderer::pipelines
         flat_map_t<VkPipeline> pipelines;
         VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
 

@@ -27,8 +27,7 @@ namespace tau::cooker
     inline constexpr bool COOK_SHADER_DEBUG = false;
 #endif
 
-    // fingerprint of the shared struct layouts, folded into every entry by cook_identity()
-    // without it a gpu_structs.h size change recooks nothing. set once at startup
+    // gpu_structs.h sizes in cook_identity(): a size change recooks
     inline u64_t g_layout_stamp = 0;
 
     inline void set_layout_stamp(u64_t stamp) { g_layout_stamp = stamp; }

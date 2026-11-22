@@ -38,6 +38,18 @@ namespace tau::renderer::device
             return VK_FALSE;
         }
 
+        gpu_identity_t g_identity;
+
+        bool has_instance_ext(const char* name)
+        {
+            u32_t count = 0;
+            vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr);
+            std::vector<VkExtensionProperties> exts(count);
+            vkEnumerateInstanceExtensionProperties(nullptr, &count, exts.data());
+            return std::any_of(exts.begin(), exts.end(), [name](const VkExtensionProperties& e)
+                               { return std::strcmp(e.extensionName, name) == 0; });
+        }
+
         bool has_layer(const char* name)
         {
             u32_t count = 0;
@@ -54,7 +66,7 @@ namespace tau::renderer::device
                                { return std::strcmp(e.extensionName, name) == 0; });
         }
 
-        // the feature structs every device needs, plus the ray tracing ones the full device adds
+        // base features + the RT ones
         struct features_t
         {
             VkPhysicalDeviceFeatures2 f10 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -69,7 +81,7 @@ namespace tau::renderer::device
             VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pe = {
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
 
-            // chained in place, so the struct must not move afterwards
+            // chained in place: don't move
             void chain(bool rt, bool position_fetch, bool pipeline_properties)
             {
                 f10.pNext = &f11;
@@ -263,7 +275,7 @@ namespace tau::renderer::device
             return c;
         }
 
-        // discrete first, then hardware ray tracing (unless compat is forced)
+        // discrete > integrated, then RT
         i32 score(const candidate_t& c)
         {
             if (!c.missing.empty()) { return -1; }
@@ -300,11 +312,10 @@ namespace tau::renderer::device
             validation_features.pEnabledValidationFeatures = enables;
             validation_features.pNext = &messenger_info;
 
-            if (validation)
-            {
-                exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-                exts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
-            }
+            // names in RenderDoc / Nsight in every build
+            const bool debug_utils = validation || has_instance_ext(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            if (debug_utils) { exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME); }
+            if (validation) { exts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME); }
 
             VkApplicationInfo app_info = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
             app_info.pApplicationName = config.app_name.c_str();
@@ -330,7 +341,36 @@ namespace tau::renderer::device
                 vkCreateDebugUtilsMessengerEXT(ctx.instance, &messenger_info, nullptr, &ctx.debug_messenger);
             }
             ctx.caps.validation = validation;
+            ctx.caps.debug_utils = debug_utils;
             return true;
+        }
+    } // namespace
+
+    namespace
+    {
+        void read_identity(VkPhysicalDevice physical)
+        {
+            u32_t ext_count = 0;
+            vkEnumerateDeviceExtensionProperties(physical, nullptr, &ext_count, nullptr);
+            std::vector<VkExtensionProperties> exts(ext_count);
+            vkEnumerateDeviceExtensionProperties(physical, nullptr, &ext_count, exts.data());
+
+            VkPhysicalDevicePCIBusInfoPropertiesEXT pci = {
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT};
+            VkPhysicalDeviceIDProperties id = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+            g_identity.has_pci = has_extension(exts, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME);
+            if (g_identity.has_pci) { id.pNext = &pci; }
+
+            VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id};
+            vkGetPhysicalDeviceProperties2(physical, &props);
+
+            g_identity.vendor_id = props.properties.vendorID;
+            g_identity.device_id = props.properties.deviceID;
+            std::memcpy(g_identity.uuid, id.deviceUUID, sizeof(g_identity.uuid));
+            g_identity.pci_domain = pci.pciDomain;
+            g_identity.pci_bus = pci.pciBus;
+            g_identity.pci_device = pci.pciDevice;
+            g_identity.pci_function = pci.pciFunction;
         }
     } // namespace
 
@@ -423,10 +463,13 @@ namespace tau::renderer::device
             return false;
         }
         volkLoadDevice(ctx.device);
+        read_identity(ctx.physical_device);
 
         vkGetDeviceQueue(ctx.device, chosen.families.graphics_family.value(), 0, &ctx.graphics_queue);
         vkGetDeviceQueue(ctx.device, chosen.families.present_family.value(), 0, &ctx.present_queue);
         vkGetDeviceQueue(ctx.device, chosen.families.transfer_family.value(), 0, &ctx.transfer_queue);
+        name(ctx.graphics_queue, VK_OBJECT_TYPE_QUEUE, "Graphics");
+        if (ctx.transfer_queue != ctx.graphics_queue) { name(ctx.transfer_queue, VK_OBJECT_TYPE_QUEUE, "Transfer"); }
 
         VmaAllocatorCreateInfo allocator_info = {};
         allocator_info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
@@ -466,6 +509,32 @@ namespace tau::renderer::device
         ctx.surface = VK_NULL_HANDLE;
         ctx.debug_messenger = VK_NULL_HANDLE;
         ctx.instance = VK_NULL_HANDLE;
+    }
+
+    const gpu_identity_t& identity() { return g_identity; }
+
+    void set_name(VkObjectType type, u64_t handle, const char* name)
+    {
+        if (!ctx.caps.debug_utils || handle == 0 || name == nullptr) { return; }
+        const VkDebugUtilsObjectNameInfoEXT info = {
+            .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+            .objectType = type,
+            .objectHandle = handle,
+            .pObjectName = name,
+        };
+        vkSetDebugUtilsObjectNameEXT(ctx.device, &info);
+    }
+
+    void begin_label(VkCommandBuffer cmd, const char* name)
+    {
+        if (!ctx.caps.debug_utils || name == nullptr) { return; }
+        const VkDebugUtilsLabelEXT label = {.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT, .pLabelName = name};
+        vkCmdBeginDebugUtilsLabelEXT(cmd, &label);
+    }
+
+    void end_label(VkCommandBuffer cmd)
+    {
+        if (ctx.caps.debug_utils) { vkCmdEndDebugUtilsLabelEXT(cmd); }
     }
 
     u32_t validation_errors() { return error_count.load(std::memory_order_relaxed); }

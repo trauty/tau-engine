@@ -21,18 +21,20 @@ namespace tau::engine
 
     struct engine_config_t
     {
-        // names the window and the per game user:// folder
+        // window title, user:// folder
         std::string name = "tau";
         i32 window_width = 1280;
         i32 window_height = 720;
-        // off: uncapped presentation, for timing runs
+        // off: uncapped (timing runs)
         bool vsync = true;
-        // validation layers with synchronization validation
+        // + sync validation
         bool validation = DEBUG_BUILD;
-        // no hardware ray tracing even where the GPU has it: the minimum spec
+        // no RT, min spec
         bool force_compat = false;
-        // no window and no SDL video, offscreen rendering only (needs no display)
+        // no window / SDL video
         bool headless = false;
+        // load librenderdoc (an injected one is always used)
+        bool renderdoc = false;
     };
 
     TAU_ENGINE_API bool init(const engine_config_t& config);

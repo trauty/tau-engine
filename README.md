@@ -19,6 +19,7 @@
 * SDL 3.4.12
 * slang v2026.19
 * tracy v0.13.1
+* renderdoc_app.h (RenderDoc in-application API 1.7)
 
 ## Building
 

@@ -362,8 +362,7 @@ namespace tau::cooker::shader
         }
     }
 
-    // the shared structs are compiled from gpu_structs.h on both sides; C++ static_asserts each size there,
-    // here Slang's own layout of the same struct must give the same number
+    // gpu_structs.h sizes: C++ static_asserts, Slang checked here
     namespace
     {
         struct gpu_size_t
@@ -599,16 +598,15 @@ namespace tau::cooker::shader
             compiler_options.push_back(entry);
         };
 
-        // slangc rule: scalar layout, row-major matrices (shaders write mul(M, v)), entry points keep
-        // their names, SPIR-V 1.6, debug info in every cook (source in RenderDoc / Nsight)
+        // scalar, row-major (mul(M, v)), named entry points, SPIR-V 1.6
+        // debug info in every cook (RenderDoc / Nsight source)
         add_int_option(slang::CompilerOptionName::EmitSpirvDirectly, 1);
         add_int_option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
         add_int_option(slang::CompilerOptionName::MatrixLayoutRow, 1);
         add_int_option(slang::CompilerOptionName::VulkanUseEntryPointName, 1);
         add_int_option(slang::CompilerOptionName::DebugInformation, SLANG_DEBUG_INFO_LEVEL_STANDARD);
 
-        // skipping optimisation in a debug cook costs about 1% more machine code, the driver optimises anyway
-        // (hopefully)
+        // debug cook unoptimised: ~1% more code, the driver optimises
         add_int_option(slang::CompilerOptionName::Optimization,
                        COOK_SHADER_DEBUG ? SLANG_OPTIMIZATION_LEVEL_NONE : SLANG_OPTIMIZATION_LEVEL_MAXIMAL);
 
@@ -625,7 +623,7 @@ namespace tau::cooker::shader
         session_desc.targetCount = 1;
         session_desc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_ROW_MAJOR;
 
-        // 41012: "profile implicitly upgraded", Slang adding the SPIR-V capabilities an entry point uses
+        // 41012 "profile implicitly upgraded": capabilities Slang adds itself
         slang::CompilerOptionEntry session_options[1] = {};
         session_options[0].name = slang::CompilerOptionName::DisableWarning;
         session_options[0].value.kind = slang::CompilerOptionValueKind::String;
@@ -922,7 +920,7 @@ namespace tau::cooker::shader
         const VkCullModeFlags base_cull = depth_test ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
 
         // reverse z
-        // an opaque surface shader with gbufferMain only ever draws into the gbuffer
+        // opaque gbuffer surfaces never bind forward
         if (!draws_into_gbuffer(config.domain, blend, !res.gbuffer_target_formats.empty()))
         {
             shader_pipeline_desc_t d = blank(pipeline_variant_e::FORWARD);
@@ -937,7 +935,7 @@ namespace tau::cooker::shader
             out.push_back(d);
         }
 
-        // light space depth, not reversed, front faces culled and biased against acne
+        // light space depth (not reversed), front culled, biased
         if (has_material && config.casts_shadow)
         {
             shader_pipeline_desc_t d = blank(pipeline_variant_e::SHADOW);

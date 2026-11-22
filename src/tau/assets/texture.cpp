@@ -3,6 +3,7 @@
 #include "tau/asset.h"
 #include "tau/defines.h"
 #include "tau/log.h"
+#include "tau/rendering/device.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_resources.h"
 #include "tau/rendering/renderer_types.h"
@@ -138,6 +139,8 @@ namespace tau
             TAU_LOG_ERROR("TEXTURE", "Failed to create image view for texture: {}", path);
             return std::nullopt;
         }
+        renderer::device::name(tex.image, VK_OBJECT_TYPE_IMAGE, path.c_str());
+        renderer::device::name(tex.view, VK_OBJECT_TYPE_IMAGE_VIEW, path.c_str());
 
         VkCommandBuffer cmd_buf = renderer::begin_transfer_commands();
 

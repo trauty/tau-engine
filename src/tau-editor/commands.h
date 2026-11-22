@@ -34,6 +34,7 @@ namespace tau::editor::commands
         QUIT,
         RECOMPILE,
         CANCEL_BUILD,
+        CAPTURE_GPU_FRAME,
         COUNT,
     };
 

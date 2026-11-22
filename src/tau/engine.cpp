@@ -8,6 +8,7 @@
 #include "tau/log.h"
 #include "tau/profiling.h"
 #include "tau/reflection.h"
+#include "tau/rendering/renderdoc.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_types.h"
 #include "tau/time.h"
@@ -74,7 +75,16 @@ namespace tau::engine
         tau::reflection::register_types();
         tau::jobs::init();
 
-        // headless needs no display, events still run the loop
+        // before SDL video and the Vulkan instance
+        // RenderDoc's layer has no Wayland surface: X11 (XWayland), SDL_VIDEODRIVER still wins
+        if (renderer::renderdoc::init(config.renderdoc, vfs::resolve("user://captures/" + config.name)))
+        {
+#ifdef __linux__
+            if (!config.headless) { SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11"); }
+#endif
+        }
+
+        // headless: no display, events still run the loop
         SDL_Init(config.headless ? SDL_INIT_EVENTS : SDL_INIT_VIDEO);
 
         tau::input::detail::init();

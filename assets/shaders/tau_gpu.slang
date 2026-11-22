@@ -1,2 +1,2 @@
-// shared GPU records, no `module` line, so every struct is public
+// - gpu_structs.h, no module line: all public
 #include "tau/rendering/gpu_structs.h"

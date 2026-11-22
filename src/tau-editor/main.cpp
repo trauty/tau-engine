@@ -36,6 +36,7 @@
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/physics/physics.h"
+#include "tau/rendering/renderdoc.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_types.h"
 #include "tau/rendering/vulkan.h"
@@ -235,16 +236,25 @@ int main(i32 argc, char** argv)
     // before anything else logs, so the console opens with the whole session
     tau::log::set_history_capacity(4096);
 
+    // tau-editor [project] [--renderdoc]
     std::filesystem::path startup_project;
     bool have_startup_project = false;
-    if (argc >= 2)
+    bool load_renderdoc = false;
+    for (i32 i = 1; i < argc; i++)
     {
+        const std::string_view arg = argv[i];
+        if (arg == "--renderdoc")
+        {
+            load_renderdoc = true;
+            continue;
+        }
+
         std::string resolved;
-        have_startup_project = tau::editor::project_manager::resolve_project_arg(argv[1], resolved);
+        have_startup_project = tau::editor::project_manager::resolve_project_arg(argv[i], resolved);
         if (have_startup_project) { startup_project = resolved; }
         else
         {
-            TAU_LOG_ERROR("EDITOR", "No single .tauproject found at '{}'", argv[1]);
+            TAU_LOG_ERROR("EDITOR", "No single .tauproject found at '{}'", argv[i]);
         }
     }
 
@@ -252,7 +262,7 @@ int main(i32 argc, char** argv)
     const std::string user_dir = tau::editor::project_manager::user_dir();
     tau::vfs::mount("user://", user_dir);
 
-    if (!tau::engine::init({.name = "tau-editor"})) { return -1; }
+    if (!tau::engine::init({.name = "tau-editor", .renderdoc = load_renderdoc})) { return -1; }
 
     SDL_SetHint(SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0");
 
@@ -285,6 +295,12 @@ int main(i32 argc, char** argv)
     tau::editor::play_mode::init(editor_ctx);
     tau::editor::game_code::init(editor_ctx);
     tau::editor::project_open::init(editor_ctx);
+    tau::editor::commands::set(
+        tau::editor::commands::command_e::CAPTURE_GPU_FRAME,
+        {.label = "Capture GPU Frame",
+         .enabled = [](const tau::editor_context_t&) { return tau::renderer::renderdoc::active(); },
+         .run = [](tau::world_t&, tau::editor_context_t&, const tau::editor::commands::request_t&)
+         { tau::renderer::renderdoc::capture_next_frame(); }});
     tau::editor::commands::set(tau::editor::commands::command_e::QUIT,
                                {.label = "Quit",
                                 .discards = tau::editor::commands::discards_e::EVERYTHING,

@@ -23,7 +23,7 @@ int main(int argc, char* argv[])
         TAU_LOG_FATAL("RUNNER",
                       "Usage: tau-runner <project> [--scene=PATH] [--camera=NAME] [--size=WxH] [--frames=N] "
                       "[--dump-hdr=PREFIX] [--timings] [--no-vsync] [--quit-after=SECONDS] [--headless] [--compat] "
-                      "[--validation]");
+                      "[--validation] [--renderdoc] [--capture-frame=N]");
         return -1;
     }
 
@@ -33,6 +33,7 @@ int main(int argc, char* argv[])
         .validation = options.validation || tau::engine::DEBUG_BUILD,
         .force_compat = options.compat,
         .headless = options.headless,
+        .renderdoc = options.renderdoc,
     };
     if (!tau::engine::init(engine_config)) { return -1; }
     tau::project::mount(project, true);

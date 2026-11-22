@@ -79,6 +79,8 @@ namespace tau::os
 {
     lib_handle_t load_lib(const char* path) { return (lib_handle_t)LoadLibraryA(path); }
 
+    lib_handle_t find_loaded_lib(const char* name) { return (lib_handle_t)GetModuleHandleA(name); }
+
     void* get_proc_address(lib_handle_t lib, const char* func_name)
     { return (void*)GetProcAddress((HMODULE)lib, func_name); }
 
@@ -272,6 +274,8 @@ namespace tau::os
 namespace tau::os
 {
     lib_handle_t load_lib(const char* path) { return dlopen(path, RTLD_NOW); }
+
+    lib_handle_t find_loaded_lib(const char* name) { return dlopen(name, RTLD_NOW | RTLD_NOLOAD); }
 
     void* get_proc_address(lib_handle_t lib, const char* func_name) { return dlsym(lib, func_name); }
 

@@ -4,6 +4,7 @@
 #include "tau/assets/material.h"
 #include "tau/assets/mesh_format.h"
 #include "tau/log.h"
+#include "tau/rendering/device.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_resources.h"
 #include "tau/rendering/renderer_types.h"
@@ -140,6 +141,8 @@ namespace tau
             VK_CHECK(vmaCreateBuffer(renderer::ctx.allocator, &mesh_info, &mesh_alloc_info, &asset.index_buffer,
                                      &asset.index_allocation, nullptr));
         }
+        renderer::device::name(asset.vertex_buffer, VK_OBJECT_TYPE_BUFFER, path.c_str());
+        renderer::device::name(asset.index_buffer, VK_OBJECT_TYPE_BUFFER, path.c_str());
 
         VkCommandBuffer cmd_buf = renderer::begin_transfer_commands();
 

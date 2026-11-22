@@ -4,6 +4,7 @@
 #include "tau/assets/shader.h"
 #include "tau/jobs.h"
 #include "tau/log.h"
+#include "tau/rendering/device.h"
 #include "tau/rendering/gpu_structs.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_resources.h"
@@ -51,7 +52,7 @@ namespace tau::renderer::pipelines
             return module;
         }
 
-        // set 0 bindless, set 1 the frame's globals, 2+ what the shader declares
+        // set 0 bindless, 1 frame globals, 2+ the shader's
         bool create_layout(const shader_file_t& file, shader_pipelines_t& out)
         {
             flat_map_t<std::vector<VkDescriptorSetLayoutBinding>> set_bindings;
@@ -286,6 +287,12 @@ namespace tau::renderer::pipelines
             }
 
             note_pipeline_created(ms_since(start));
+            if (result == VK_SUCCESS)
+            {
+                static constexpr const char* VARIANT_NAMES[] = {"forward", "shadow", "gbuffer"};
+                const std::string label = shader_path + " " + VARIANT_NAMES[static_cast<u32_t>(d.variant)];
+                device::name(pipeline, VK_OBJECT_TYPE_PIPELINE, label.c_str());
+            }
             if (result != VK_SUCCESS)
             {
                 TAU_LOG_ERROR("PIPELINES", "Failed to create pipeline {} of {} (VkResult {})",
@@ -336,6 +343,7 @@ namespace tau::renderer::pipelines
             shader_pipelines_t built;
             built.content_hash = file.content_hash;
             if (!create_layout(file, built)) { return {}; }
+            device::name(built.layout, VK_OBJECT_TYPE_PIPELINE_LAYOUT, path.c_str());
 
             modules_t modules;
             modules.create(file);
@@ -383,6 +391,7 @@ namespace tau::renderer::pipelines
 
             p->built.content_hash = p->file.content_hash;
             if (!create_layout(p->file, p->built)) { continue; }
+            device::name(p->built.layout, VK_OBJECT_TYPE_PIPELINE_LAYOUT, path.c_str());
             p->modules.create(p->file);
             pending.push_back(std::move(p));
         }
@@ -393,7 +402,7 @@ namespace tau::renderer::pipelines
             for (const shader_pipeline_desc_t& d : p->file.pipelines) { work.push_back({p.get(), &d}); }
         }
 
-        // pipeline cache and device are internally synchronised, each job writes its own slot
+        // cache + device internally synced, one slot per job
         jobs::counter_t counter;
         work_t* items = work.data();
         jobs::dispatch(

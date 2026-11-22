@@ -26,6 +26,7 @@
 #include "tau/rendering/overlay.h"
 #include "tau/rendering/pipelines.h"
 #include "tau/rendering/readback.h"
+#include "tau/rendering/renderdoc.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/renderer_resources.h"
 #include "tau/rendering/renderer_types.h"
@@ -706,7 +707,7 @@ namespace tau::renderer
         target = persistent_image_t{};
     }
 
-    static void ensure_persistent_image(persistent_image_t& target, const image_desc_t& desc)
+    static void ensure_persistent_image(persistent_image_t& target, const image_desc_t& desc, const char* name)
     {
         if (target.image != VK_NULL_HANDLE && target.desc == desc) { return; }
 
@@ -732,6 +733,7 @@ namespace tau::renderer
         };
 
         VK_CHECK(vmaCreateImage(ctx.allocator, &image_info, &alloc_info, &target.image, &target.allocation, nullptr));
+        device::name(target.image, VK_OBJECT_TYPE_IMAGE, name);
 
         VkImageViewCreateInfo view_info = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -741,8 +743,8 @@ namespace tau::renderer
             .subresourceRange = {
                                  .aspectMask = desc.aspect,
                                  .baseMipLevel = 0,
-                                 .levelCount = 1, // every shared struct with its size in bytes
-                .baseArrayLayer = 0,
+                                 .levelCount = 1,
+                                 .baseArrayLayer = 0,
                                  .layerCount = 1,
                                  }
         };
@@ -1196,8 +1198,8 @@ namespace tau::renderer
         vkDestroyCommandPool(ctx.device, tracy_pool, nullptr);
 #endif
 
-        auto create_mapped_buffer =
-            [](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VmaAllocation& alloc, void*& mapped_mem)
+        auto create_mapped_buffer = [](const char* name, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer,
+                                       VmaAllocation& alloc, void*& mapped_mem)
         {
             VkBufferCreateInfo buf_info = {
                 .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1212,6 +1214,7 @@ namespace tau::renderer
 
             VmaAllocationInfo vma_alloc_info;
             VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, &vma_alloc_info));
+            device::name(buffer, VK_OBJECT_TYPE_BUFFER, name);
             mapped_mem = vma_alloc_info.pMappedData;
         };
 
@@ -1220,7 +1223,7 @@ namespace tau::renderer
             static_cast<u32_t>((sizeof(gpu::GlobalData) + min_alignment - 1) & ~(min_alignment - 1));
 
         void* mapped_global_data;
-        create_mapped_buffer(ctx.global_data_aligned_size * MAX_FRAMES_IN_FLIGHT * MAX_VIEWS_PER_FRAME,
+        create_mapped_buffer("GlobalData", ctx.global_data_aligned_size * MAX_FRAMES_IN_FLIGHT * MAX_VIEWS_PER_FRAME,
                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ctx.global_data_buffer, ctx.global_data_alloc,
                              mapped_global_data);
 
@@ -1677,7 +1680,7 @@ namespace tau::renderer
 
     // one submit carrying the swapchain acquire and the resource upload timeline, then present
     // the timeline value signalled here is what the next frame's readback waits on
-    // headless: only the timelines, nothing to present
+    // headless: timelines only
     static void submit_headless(VkCommandBuffer cmd, per_frame_t& frame_data)
     {
         const u64_t next_timeline_value = ++ctx.timeline_value;
@@ -1808,7 +1811,7 @@ namespace tau::renderer
         return {};
     }
 
-    static void create_device_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer,
+    static void create_device_buffer(const char* name, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer,
                                      VmaAllocation& alloc)
     {
         VkBufferCreateInfo buf_info = {
@@ -1821,6 +1824,7 @@ namespace tau::renderer
         };
 
         VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, nullptr));
+        device::name(buffer, VK_OBJECT_TYPE_BUFFER, name);
     }
 
     void render(ecs::registry_t& reg)
@@ -1891,6 +1895,7 @@ namespace tau::renderer
             .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         };
 
+        renderdoc::frame_begin();
         vkBeginCommandBuffer(cmd, &cmd_begin_info);
 
 #ifdef TAU_ENABLE_PROFILING
@@ -2008,11 +2013,12 @@ namespace tau::renderer
                             vmaDestroyBuffer(ctx.allocator, vgr.cluster_indices_buffer, vgr.cluster_indices_alloc);
                         }
 
-                        create_device_buffer(cluster_count * sizeof(u32_t),
+                        create_device_buffer("ClusterCounts", cluster_count * sizeof(u32_t),
                                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                                              vgr.cluster_counts_buffer, vgr.cluster_counts_alloc);
                         create_device_buffer(
+                            "ClusterIndices",
                             static_cast<VkDeviceSize>(cluster_count) * MAX_LIGHTS_PER_CLUSTER * sizeof(u32_t),
                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                             vgr.cluster_indices_buffer, vgr.cluster_indices_alloc);
@@ -2061,7 +2067,7 @@ namespace tau::renderer
                 {
                     vmaDestroyBuffer(ctx.allocator, vgr.draw_counts_buffer, vgr.draw_counts_alloc);
                 }
-                create_device_buffer(req_counts,
+                create_device_buffer("DrawCounts", req_counts,
                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
                                      vgr.draw_counts_buffer, vgr.draw_counts_alloc);
                 vgr.draw_counts_size = req_counts;
@@ -2073,7 +2079,7 @@ namespace tau::renderer
                 {
                     vmaDestroyBuffer(ctx.allocator, vgr.indirect_buffer, vgr.indirect_alloc);
                 }
-                create_device_buffer(req_indirect,
+                create_device_buffer("DrawIndirect", req_indirect,
                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
                                      vgr.indirect_buffer, vgr.indirect_alloc);
                 vgr.indirect_size = req_indirect;
@@ -2114,7 +2120,7 @@ namespace tau::renderer
                                                          ctx.swapchain.views[index], ctx.swapchain.format,
                                                          ctx.swapchain.extent.width, ctx.swapchain.extent.height);
 
-        // headless renders into an offscreen target, the runner names its size
+        // headless: offscreen target, size from the runner
         const output_target_t default_output = ctx.caps.headless ? output_target_t{"HeadlessOutput"_h, {1280, 720}}
                                                                  : output_target_t{"Swapchain"_h, ctx.swapchain.extent};
         output_target_t final_output = frame_outputs.empty() ? default_output : frame_outputs[0];
@@ -2190,7 +2196,7 @@ namespace tau::renderer
                 rg_resource_id punctual_id = rendergraph.get_resource(sub.depth_target_hash);
                 if (punctual_id == RG_NULL_ID)
                 {
-                    ensure_persistent_image(ctx.punctual_shadow_atlas, sub.depth_desc);
+                    ensure_persistent_image(ctx.punctual_shadow_atlas, sub.depth_desc, "PunctualShadowAtlas");
 
                     punctual_id = rendergraph.import_persistent_image(
                         sub.depth_target_hash, "PunctualShadowAtlas", ctx.punctual_shadow_atlas.image,
@@ -2543,6 +2549,7 @@ namespace tau::renderer
         {
             submit_and_present(cmd, frame_data, index);
         }
+        renderdoc::frame_end();
 
         ctx.cur_frame = (ctx.cur_frame + 1) % MAX_FRAMES_IN_FLIGHT;
         frame_slot_ready = false;
@@ -2904,6 +2911,8 @@ namespace tau::renderer
         std::vector<VkImage> swapchain_images(image_count);
         VK_CHECK(vkGetSwapchainImagesKHR(ctx.device, ctx.swapchain.handle, &image_count, swapchain_images.data()));
         ctx.swapchain.images = swapchain_images;
+        for (VkImage image : ctx.swapchain.images) { device::name(image, VK_OBJECT_TYPE_IMAGE, "Swapchain"); }
+        device::name(ctx.swapchain.depth_image, VK_OBJECT_TYPE_IMAGE, "SwapchainDepth");
 
         if (!ctx.swapchain.release_semaphores.empty())
         {
@@ -3026,8 +3035,8 @@ namespace tau::renderer
         cmd_buf_info.commandBufferCount = 1;
         VK_CHECK(vkAllocateCommandBuffers(ctx.device, &cmd_buf_info, &frame_data.main_command_buffer));
 
-        auto create_mapped_buffer =
-            [](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VmaAllocation& alloc, void*& mapped_mem)
+        auto create_mapped_buffer = [](const char* name, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer,
+                                       VmaAllocation& alloc, void*& mapped_mem)
         {
             VkBufferCreateInfo buf_info = {
                 .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -3042,46 +3051,48 @@ namespace tau::renderer
 
             VmaAllocationInfo vma_alloc_info;
             VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &buffer, &alloc, &vma_alloc_info));
+            device::name(buffer, VK_OBJECT_TYPE_BUFFER, name);
             mapped_mem = vma_alloc_info.pMappedData;
         };
 
-        create_mapped_buffer(sizeof(gpu::ObjectData) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                             frame_data.object_buffer, frame_data.object_allocation,
+        create_mapped_buffer("ObjectData", sizeof(gpu::ObjectData) * ecs::MAX_ENTITIES,
+                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.object_buffer, frame_data.object_allocation,
                              (void*&)frame_data.mapped_object_data);
         frame_data.object_buffer_address = get_buffer_address(frame_data.object_buffer);
 
-        create_mapped_buffer(sizeof(gpu::CullData) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer("CullData", sizeof(gpu::CullData) * ecs::MAX_ENTITIES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.cull_buffer, frame_data.cull_allocation, (void*&)frame_data.mapped_cull_data);
 
-        create_mapped_buffer(MAX_MATERIAL_BUFFER_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.material_buffer,
-                             frame_data.material_allocation, (void*&)frame_data.mapped_material_data);
+        create_mapped_buffer("Materials", MAX_MATERIAL_BUFFER_SIZE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                             frame_data.material_buffer, frame_data.material_allocation,
+                             (void*&)frame_data.mapped_material_data);
 
         VkSemaphoreCreateInfo sem_info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VK_CHECK(vkCreateSemaphore(ctx.device, &sem_info, nullptr, &frame_data.swapchain_acquire_semaphore));
 
-        create_mapped_buffer(sizeof(gpu::DirectionalLight) * MAX_DIR_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                             frame_data.dir_light_buffer, frame_data.dir_light_allocation,
-                             (void*&)frame_data.mapped_dir_lights);
+        create_mapped_buffer("DirectionalLights", sizeof(gpu::DirectionalLight) * MAX_DIR_LIGHTS,
+                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.dir_light_buffer,
+                             frame_data.dir_light_allocation, (void*&)frame_data.mapped_dir_lights);
         frame_data.dir_light_buffer_address = get_buffer_address(frame_data.dir_light_buffer);
 
-        create_mapped_buffer(sizeof(gpu::PointLight) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer("PointLights", sizeof(gpu::PointLight) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.point_light_buffer, frame_data.point_light_allocation,
                              (void*&)frame_data.mapped_point_lights);
         frame_data.point_light_buffer_address = get_buffer_address(frame_data.point_light_buffer);
 
-        create_mapped_buffer(sizeof(gpu::SpotLight) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        create_mapped_buffer("SpotLights", sizeof(gpu::SpotLight) * MAX_LIGHTS, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                              frame_data.spot_light_buffer, frame_data.spot_light_allocation,
                              (void*&)frame_data.mapped_spot_lights);
         frame_data.spot_light_buffer_address = get_buffer_address(frame_data.spot_light_buffer);
 
-        create_mapped_buffer(sizeof(gpu::ShadowTile) * SHADOW_CASCADE_COUNT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                             frame_data.shadow_cascade_buffer, frame_data.shadow_cascade_allocation,
-                             (void*&)frame_data.mapped_shadow_cascades);
+        create_mapped_buffer("ShadowCascades", sizeof(gpu::ShadowTile) * SHADOW_CASCADE_COUNT,
+                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.shadow_cascade_buffer,
+                             frame_data.shadow_cascade_allocation, (void*&)frame_data.mapped_shadow_cascades);
         frame_data.shadow_cascade_buffer_address = get_buffer_address(frame_data.shadow_cascade_buffer);
 
-        create_mapped_buffer(sizeof(gpu::ShadowTile) * MAX_PUNCTUAL_SHADOW_TILES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                             frame_data.punctual_shadow_buffer, frame_data.punctual_shadow_allocation,
-                             (void*&)frame_data.mapped_punctual_shadows);
+        create_mapped_buffer("PunctualShadows", sizeof(gpu::ShadowTile) * MAX_PUNCTUAL_SHADOW_TILES,
+                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, frame_data.punctual_shadow_buffer,
+                             frame_data.punctual_shadow_allocation, (void*&)frame_data.mapped_punctual_shadows);
         frame_data.punctual_shadow_buffer_address = get_buffer_address(frame_data.punctual_shadow_buffer);
 
         {
@@ -3100,6 +3111,7 @@ namespace tau::renderer
             VmaAllocationInfo vma_alloc_info;
             VK_CHECK(vmaCreateBuffer(ctx.allocator, &buf_info, &alloc_info, &frame_data.depth_bounds_buffer,
                                      &frame_data.depth_bounds_allocation, &vma_alloc_info));
+            device::name(frame_data.depth_bounds_buffer, VK_OBJECT_TYPE_BUFFER, "DepthBounds");
             frame_data.mapped_depth_bounds = static_cast<u32_t*>(vma_alloc_info.pMappedData);
             frame_data.depth_bounds_pending = false;
         }

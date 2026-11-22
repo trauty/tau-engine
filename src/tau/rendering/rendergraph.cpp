@@ -3,6 +3,7 @@
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/profiling.h"
+#include "tau/rendering/device.h"
 #include "tau/rendering/gpu_timers.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_constants.h"
@@ -240,6 +241,13 @@ namespace tau::renderer
             if (res.is_imported) { continue; }
 
             transient_image_t* transient = frame_data.transient_pool.acquire(res.desc);
+            // pooled images change owner, renamed when they do
+            if (transient->debug_name != res.debug_name)
+            {
+                transient->debug_name = res.debug_name;
+                device::name(transient->image, VK_OBJECT_TYPE_IMAGE, res.debug_name);
+                device::name(transient->view, VK_OBJECT_TYPE_IMAGE_VIEW, res.debug_name);
+            }
             res.image = transient->image;
             res.view = transient->view;
             res.bindless_id = transient->bindless_id;
@@ -256,6 +264,7 @@ namespace tau::renderer
             TracyVkZoneTransient(static_cast<TracyVkCtx>(profiling_vk_ctx), rg_vk_zone, cmd, rg_zone_name, true);
 #endif
             gpu_timers::begin_pass(cmd, pass.debug_name);
+            device::begin_label(cmd, pass.debug_name);
             bool is_compute = pass.color_writes.empty() && pass.depth_stencil == RG_NULL_ID;
 
             for (rg_resource_id id : pass.storage_writes)
@@ -396,6 +405,7 @@ namespace tau::renderer
                 if (pass.execute_callback) { pass.execute_callback(cmd, reg); }
             }
 
+            device::end_label(cmd);
             gpu_timers::end_pass(cmd);
         }
     }

@@ -8,24 +8,22 @@
 
 struct SDL_Window;
 
-// instance, physical device, logical device, queues and allocator: the one creation path, written into renderer::ctx
 namespace tau::renderer::device
 {
     struct device_config_t
     {
         std::string app_name = "tau";
-        // validation layers with synchronization validation chained
+        // + sync validation
         bool validation = false;
-        // no hardware ray tracing and no 16-bit integers even where the GPU has them: the minimum spec
+        // no RT, no int16
         bool force_compat = false;
-        // no surface and no swapchain: offscreen only, no display needed
+        // no surface / swapchain
         bool headless = false;
-        // VK_KHR_pipeline_executable_properties: driver statistics per pipeline (registers, spills)
+        // VK_KHR_pipeline_executable_properties
         bool pipeline_properties = false;
         std::vector<const char*> instance_exts;
     };
 
-    // what the created device can do; read through renderer::ctx.caps
     struct device_caps_t
     {
         bool ray_query = false;
@@ -34,15 +32,36 @@ namespace tau::renderer::device
         bool pipeline_properties = false;
         bool headless = false;
         bool validation = false;
-        // a compute-only queue family exists (async compute, Part 14); found, not created
+        // object names, command labels
+        bool debug_utils = false;
+        // found, not created
         bool has_compute_family = false;
         u32_t compute_family = 0;
     };
 
-    // window may be null when headless
+    // which GPU this is, for tools outside the renderer (telemetry)
+    struct gpu_identity_t
+    {
+        u32_t vendor_id = 0;
+        u32_t device_id = 0;
+        u8_t uuid[16] = {};
+        bool has_pci = false;
+        u32_t pci_domain = 0, pci_bus = 0, pci_device = 0, pci_function = 0;
+    };
+
+    // window null when headless
     bool create(const device_config_t& config, SDL_Window* window);
     void destroy();
 
-    // validation errors reported since startup
     TAU_ENGINE_API u32_t validation_errors();
+    TAU_ENGINE_API const gpu_identity_t& identity();
+
+    // no-ops without VK_EXT_debug_utils
+    TAU_ENGINE_API void set_name(VkObjectType type, u64_t handle, const char* name);
+    TAU_ENGINE_API void begin_label(VkCommandBuffer cmd, const char* name);
+    TAU_ENGINE_API void end_label(VkCommandBuffer cmd);
+
+    template <typename T>
+    void name(T handle, VkObjectType type, const char* n)
+    { set_name(type, (u64_t)handle, n); }
 } // namespace tau::renderer::device

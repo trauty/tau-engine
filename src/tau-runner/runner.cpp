@@ -1,5 +1,6 @@
 #include "runner.h"
 
+#include "tau-tools/gpu_telemetry.h"
 #include "tau/asset.h"
 #include "tau/components/camera.h"
 #include "tau/components/tag.h"
@@ -10,6 +11,7 @@
 #include "tau/rendering/gpu_timers.h"
 #include "tau/rendering/pipelines.h"
 #include "tau/rendering/readback.h"
+#include "tau/rendering/renderdoc.h"
 #include "tau/rendering/renderer.h"
 #include "tau/rendering/renderer_constants.h"
 #include "tau/rendering/rendergraph.h"
@@ -17,6 +19,7 @@
 #include "tau/world.h"
 
 #include <SDL3/SDL_timer.h>
+#include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <fstream>
@@ -50,6 +53,28 @@ namespace tau::runner
         renderer::readback_ticket_t ticket = renderer::READBACK_NONE;
         VkExtent2D captured_extent = {};
         bool ok = true;
+
+        // over the timed frames; a value < 0 never counts
+        struct telemetry_sum_t
+        {
+            u32_t samples = 0;
+            f64 gpu_mhz = 0.0, mem_mhz = 0.0, power_w = 0.0, temp_c = 0.0, power_limited = 0.0;
+            f32 gpu_mhz_min = 1e9f, gpu_mhz_max = 0.0f, temp_c_max = 0.0f;
+        } telemetry;
+
+        void add_telemetry(const tools::gpu_telemetry::sample_t& s)
+        {
+            if (s.gpu_mhz < 0.0f) { return; }
+            telemetry.samples++;
+            telemetry.gpu_mhz += s.gpu_mhz;
+            telemetry.mem_mhz += std::max(s.mem_mhz, 0.0f);
+            telemetry.power_w += std::max(s.power_w, 0.0f);
+            telemetry.temp_c += std::max(s.temp_c, 0.0f);
+            telemetry.power_limited += std::max(s.power_limited, 0.0f);
+            telemetry.gpu_mhz_min = std::min(telemetry.gpu_mhz_min, s.gpu_mhz);
+            telemetry.gpu_mhz_max = std::max(telemetry.gpu_mhz_max, s.gpu_mhz);
+            telemetry.temp_c_max = std::max(telemetry.temp_c_max, s.temp_c);
+        }
 
         template <typename T>
         bool parse_number(std::string_view text, T& out)
@@ -109,11 +134,23 @@ namespace tau::runner
             {
                 std::printf("timing: %-40s %.3f ms\n", r.name.c_str(), r.mean_ms);
             }
+
+            std::printf("telemetry: %s\n", tools::gpu_telemetry::source().c_str());
+            if (telemetry.samples > 0)
+            {
+                const f64 n = telemetry.samples;
+                std::printf("telemetry: gpu %.0f MHz (%.0f-%.0f), mem %.0f MHz, %.1f W, %.0f C (max %.0f), "
+                            "power limited %.0f %% of %u frames\n",
+                            telemetry.gpu_mhz / n, telemetry.gpu_mhz_min, telemetry.gpu_mhz_max, telemetry.mem_mhz / n,
+                            telemetry.power_w / n, telemetry.temp_c / n, telemetry.temp_c_max,
+                            telemetry.power_limited / n, telemetry.samples);
+            }
         }
 
         void finish()
         {
             if (opts.timings) { print_timings(); }
+            tools::gpu_telemetry::stop();
             if (renderer::ctx.caps.validation)
             {
                 const u32_t errors = renderer::device::validation_errors();
@@ -124,6 +161,12 @@ namespace tau::runner
             const u32_t late = renderer::pipelines::late_count();
             std::printf("late pipelines: %u\n", late);
             if (late > 0) { ok = false; }
+            if (opts.capture_frame > 0)
+            {
+                const std::string capture = renderer::renderdoc::last_capture();
+                std::printf("capture: %s\n", capture.empty() ? "none" : capture.c_str());
+                if (capture.empty()) { ok = false; }
+            }
             std::fflush(stdout);
             phase = phase_e::DONE;
             engine::exit();
@@ -143,12 +186,18 @@ namespace tau::runner
                 renderer::gpu_timers::enable(opts.timings);
             }
 
+            if (phase == phase_e::RUNNING && frame + 1 == opts.capture_frame)
+            {
+                renderer::renderdoc::capture_next_frame();
+            }
+
             capture_this_frame =
                 phase == phase_e::RUNNING && !opts.dump_hdr.empty() && opts.frames > 0 && frame + 1 == opts.frames;
 
             if (phase == phase_e::RUNNING && opts.timings && seconds_since(run_start_ns) >= TIMING_WARMUP_SECONDS)
             {
                 renderer::gpu_timers::accumulate(true);
+                add_telemetry(tools::gpu_telemetry::latest());
             }
         }
 
@@ -212,6 +261,11 @@ namespace tau::runner
             else if (key == "--headless") { out.headless = true; }
             else if (key == "--compat") { out.compat = true; }
             else if (key == "--validation") { out.validation = true; }
+            else if (key == "--renderdoc") { out.renderdoc = true; }
+            else if (key == "--capture-frame")
+            {
+                good = parse_number(value, out.capture_frame) && out.capture_frame > 0;
+            }
             else if (key == "--quit-after") { good = parse_number(value, out.quit_after) && out.quit_after > 0.0; }
             else
             {
@@ -219,7 +273,7 @@ namespace tau::runner
             }
 
             const bool is_switch = key == "--timings" || key == "--no-vsync" || key == "--headless" ||
-                                   key == "--compat" || key == "--validation";
+                                   key == "--compat" || key == "--validation" || key == "--renderdoc";
             if (!good || (eq == std::string_view::npos) != is_switch)
             {
                 TAU_LOG_ERROR("RUNNER", "Bad argument: {}", arg);
@@ -262,6 +316,12 @@ namespace tau::runner
     {
         opts = options;
         if (opts.frames > 0) { time::set_frame_step(FRAME_STEP); }
+        if (opts.timings) { tools::gpu_telemetry::start(renderer::device::identity()); }
+        if (opts.capture_frame > 0 && !renderer::renderdoc::active())
+        {
+            TAU_LOG_ERROR("RUNNER", "--capture-frame needs RenderDoc: --renderdoc, or launch through RenderDoc");
+            ok = false;
+        }
         if (!opts.dump_hdr.empty())
         {
             renderer::register_renderer_feature("RunnerHdrDump"_h, renderer::FEATURE_ORDER_AFTER_POST - 1,

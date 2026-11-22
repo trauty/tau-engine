@@ -5,6 +5,7 @@
 #include "tau-editor/history.h"
 #include "tau-editor/keymap.h"
 #include "tau-editor/prefab_stage.h"
+#include "tau/rendering/renderdoc.h"
 
 #include <string>
 
@@ -58,6 +59,13 @@ namespace tau::editor::panels
             {
                 ctx.show_project_settings = true;
             }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Debug"))
+        {
+            commands::menu_item(ctx, command_e::CAPTURE_GPU_FRAME,
+                                renderer::renderdoc::active() ? nullptr : "Capture GPU Frame (needs RenderDoc)");
             ImGui::EndMenu();
         }
 
