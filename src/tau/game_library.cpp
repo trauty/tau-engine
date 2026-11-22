@@ -1,5 +1,6 @@
 #include "tau/game_library.h"
 
+#include "tau/assets/data.h"
 #include "tau/engine.h"
 #include "tau/game.h"
 #include "tau/input.h"
@@ -24,6 +25,7 @@ namespace tau::game_library
         {
             reflection::remove_registrations_of(lib.module);
             game::remove_hooks_of(lib.module);
+            data::remove_types_of(lib.module);
             os::free_lib(lib.handle);
             lib = {};
         }
@@ -80,12 +82,16 @@ namespace tau::game_library
             return false;
         }
 
+        // its decoded values run its destructors
+        const u32_t data_types = data::remove_types_of(lib.module);
+
         os::free_lib(lib.handle);
         lib = {};
 
         TAU_LOG_INFO("ENGINE",
-                     "Unloaded the game library (released {} input listener(s), {} render feature(s), {} hook(s))",
-                     listeners, features, hooks);
+                     "Unloaded the game library (released {} input listener(s), {} render feature(s), {} hook(s), {} "
+                     "data type(s))",
+                     listeners, features, hooks, data_types);
         return true;
     }
 } // namespace tau::game_library

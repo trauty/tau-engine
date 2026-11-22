@@ -156,11 +156,9 @@ namespace tau::serialization
             return type->id;
         }
 
-        nlohmann::json encode_value(tau::world_t& world, tau::reflection::type_t type, tau::reflection::any_t& value,
-                                    const entity_refs_t& refs, const std::string& field)
+        nlohmann::json encode_value(tau::reflection::ctx_t& ctx, tau::reflection::type_t type,
+                                    tau::reflection::any_t& value, const entity_refs_t& refs, const std::string& field)
         {
-            tau::reflection::ctx_t& ctx = *world.reflection_ctx;
-
             if (const std::optional<scene_value_type_e> tag = tau::reflection::pod_tag(type))
             {
                 const u8_t* bytes = static_cast<const u8_t*>(tau::reflection::value_data(value));
@@ -197,7 +195,7 @@ namespace tau::serialization
                 nlohmann::json elements = nlohmann::json::array();
                 for (tau::reflection::any_t element : list)
                 {
-                    nlohmann::json encoded = encode_value(world, element_type, element, refs, field);
+                    nlohmann::json encoded = encode_value(ctx, element_type, element, refs, field);
                     if (encoded.is_null()) { return {}; }
                     elements.push_back(std::move(encoded));
                 }
@@ -205,7 +203,7 @@ namespace tau::serialization
             }
             else if (type.data().begin() != type.data().end())
             {
-                return tagged(scene_value_type_e::STRUCT, encode_fields(world, type, value, refs));
+                return tagged(scene_value_type_e::STRUCT, encode_fields(ctx, type, value, refs));
             }
 
             TAU_LOG_WARN("SCENE", "Field '{}' has unsupported type '{}' -- not saved", field,
@@ -214,12 +212,10 @@ namespace tau::serialization
         }
 
         // built on `current` so fields missing from the file keep their value, empty when nothing applies
-        tau::reflection::any_t decode_value(tau::world_t& world, const scene_property_t& prop,
+        tau::reflection::any_t decode_value(tau::reflection::ctx_t& ctx, const scene_property_t& prop,
                                             tau::reflection::type_t type, tau::reflection::any_t current,
                                             const entity_refs_t& refs, const std::string& owner)
         {
-            tau::reflection::ctx_t& ctx = *world.reflection_ctx;
-
             if (prop.enum_name != 0 && type.is_enum())
             {
                 if (const tau::reflection::data_t enumerator = type.data(prop.enum_name)) { return enumerator.get({}); }
@@ -272,7 +268,7 @@ namespace tau::serialization
                 if (!current) { current = type.construct(); }
                 if (!current) { return {}; }
 
-                apply_fields(world, current, type, prop.children, refs, owner);
+                apply_fields(ctx, current, type, prop.children, refs, owner);
                 return current;
             }
             case scene_value_type_e::LIST:
@@ -286,7 +282,7 @@ namespace tau::serialization
                 list.clear();
                 for (const scene_property_t& child : prop.children)
                 {
-                    tau::reflection::any_t element = decode_value(world, child, element_type, {}, refs, owner);
+                    tau::reflection::any_t element = decode_value(ctx, child, element_type, {}, refs, owner);
                     if (!element || !element.allow_cast(element_type))
                     {
                         TAU_LOG_WARN("SCENE", "List element on '{}' does not fit the list, dropped", owner);
@@ -320,7 +316,7 @@ namespace tau::serialization
             return guid.is_string() ? tau::assets::parse_guid(guid.get<std::string>()) : 0;
         }
 
-        nlohmann::json encode_fields(tau::world_t& world, tau::reflection::type_t type,
+        nlohmann::json encode_fields(tau::reflection::ctx_t& ctx, tau::reflection::type_t type,
                                      tau::reflection::any_t& instance, const entity_refs_t& refs)
         {
             nlohmann::json fields = nlohmann::json::object();
@@ -357,7 +353,7 @@ namespace tau::serialization
                     continue;
                 }
 
-                nlohmann::json encoded = encode_value(world, data.type(), field_value, refs, prop_key);
+                nlohmann::json encoded = encode_value(ctx, data.type(), field_value, refs, prop_key);
                 if (!encoded.is_null()) { fields[prop_key] = std::move(encoded); }
             }
 
@@ -472,7 +468,7 @@ namespace tau::serialization
             return warned.insert(key).second;
         }
 
-        void apply_fields(tau::world_t& world, tau::reflection::any_t& object, tau::reflection::type_t type,
+        void apply_fields(tau::reflection::ctx_t& ctx, tau::reflection::any_t& object, tau::reflection::type_t type,
                           const std::vector<scene_property_t>& props, const entity_refs_t& refs,
                           const std::string& owner, std::vector<std::string>* unknown)
         {
@@ -491,7 +487,7 @@ namespace tau::serialization
                     continue;
                 }
 
-                tau::reflection::any_t value = decode_value(world, prop, data.type(), data.get(object), refs, owner);
+                tau::reflection::any_t value = decode_value(ctx, prop, data.type(), data.get(object), refs, owner);
                 if (value && !data.set(object, value))
                 {
                     TAU_LOG_WARN("SCENE", "Field '{}' on '{}' does not take the saved value, value dropped",

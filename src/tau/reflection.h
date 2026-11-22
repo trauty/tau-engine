@@ -92,6 +92,8 @@ namespace tau::reflection
     {
         const char* name = "Unknown";
         u64_t asset_type_hash = 0;
+        // data_ref_t<T> fields: the data type's hash
+        u32_t data_type = 0;
         unit_e unit = unit_e::NONE;
         prop_flags_e flags = prop_flags_e::NONE;
 
@@ -118,6 +120,7 @@ namespace tau::reflection
     {
         static constexpr u64_t type_id = 0;
         static constexpr bool is_list = false;
+        static constexpr u32_t data_type = 0;
     };
 
     template <typename A>
@@ -125,6 +128,7 @@ namespace tau::reflection
     {
         static constexpr u64_t type_id = get_type_id<A>();
         static constexpr bool is_list = false;
+        static constexpr u32_t data_type = 0;
     };
 
     template <typename A>
@@ -132,6 +136,7 @@ namespace tau::reflection
     {
         static constexpr u64_t type_id = get_type_id<A>();
         static constexpr bool is_list = true;
+        static constexpr u32_t data_type = 0;
     };
 
     inline std::string meta_key(std::string_view name, u32_t id)
@@ -166,7 +171,12 @@ namespace tau::reflection
     editor_prop_t field_prop(const char* label)
     {
         using field_t = asset_field_t<std::remove_cv_t<typename member_type_t<decltype(MemberPtr)>::type>>;
-        if constexpr (field_t::type_id != 0) { return editor_prop_t{label, field_t::type_id, field_t::is_list}; }
+        if constexpr (field_t::type_id != 0)
+        {
+            editor_prop_t prop{label, field_t::type_id, field_t::is_list};
+            prop.data_type = field_t::data_type;
+            return prop;
+        }
         else
         {
             return editor_prop_t{label};
@@ -229,8 +239,14 @@ namespace tau::reflection
         template <auto MemberPtr>
         Self& bind_field(u32_t id, const char* name, editor_prop_t prop)
         {
-            static_assert(!is_entity_ref<std::remove_cv_t<typename member_type_t<decltype(MemberPtr)>::type>>,
-                          "store ecs::entity_t, entity_ref_t holds a world pointer");
+            using member_t = std::remove_cv_t<typename member_type_t<decltype(MemberPtr)>::type>;
+            static_assert(!is_entity_ref<member_t>, "store ecs::entity_t, entity_ref_t holds a world pointer");
+            if constexpr (requires { Self::NO_ENTITY_FIELDS; })
+            {
+                static_assert(!std::is_same_v<member_t, ecs::entity_t> &&
+                                  !std::is_same_v<member_t, std::vector<ecs::entity_t>>,
+                              "a data asset lives in no world, it cannot name an entity");
+            }
             m_factory.template data<MemberPtr>(id, name).template custom<editor_prop_t>(prop);
             return self();
         }

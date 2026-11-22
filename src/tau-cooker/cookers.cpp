@@ -6,6 +6,7 @@
 #include "tau-cooker/shader_cooker.h"
 #include "tau-cooker/texture_cooker.h"
 #include "tau/asset_sources.h"
+#include "tau/assets/data.h"
 #include "tau/assets/import_settings.h"
 #include "tau/assets/texture.h"
 #include "tau/vfs.h"
@@ -23,6 +24,9 @@ namespace tau::cooker
         template <bool (*Fn)(const std::string&, const std::string&)>
         cook_result_t simple(const cook_env_t&, const std::string& in, const std::string& out)
         { return {Fn(in, out), true, {fs::path(in)}, {}}; }
+
+        // the engine's function, wrapped: a dll import is no constant for the template
+        bool cook_data(const std::string& in, const std::string& out) { return data::cook(in, out); }
 
         cook_result_t shader_asset(const cook_env_t& env, const std::string& in, const std::string& out)
         {
@@ -129,6 +133,7 @@ namespace tau::cooker
             {"material", {&simple<&material::cook_material>}                               },
             {"scene",    {&scene_asset}                                                    },
             {"prefab",   {&simple<&scene::cook_prefab>}                                    },
+            {"data",     {&simple<&cook_data>}                                             },
             {"texture",  {&texture_asset, &texture_prepare}                                },
         };
     } // namespace

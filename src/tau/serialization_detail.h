@@ -20,13 +20,16 @@ namespace tau::serialization::detail
         const std::unordered_map<u64_t, tau::ecs::entity_t>* by_file_id = nullptr;
         bool search_world = false;
 
-        u64_t encode(tau::ecs::entity_t entity) const { return tau::guid_system::of(*reg, entity); }
+        u64_t encode(tau::ecs::entity_t entity) const { return reg ? tau::guid_system::of(*reg, entity) : 0; }
 
         tau::ecs::entity_t decode(u64_t file_id) const
         {
-            const auto it = by_file_id->find(file_id);
-            if (it != by_file_id->end()) { return it->second; }
-            return search_world ? tau::guid_system::find(*reg, file_id) : tau::ecs::NULL_ENTITY;
+            if (by_file_id)
+            {
+                const auto it = by_file_id->find(file_id);
+                if (it != by_file_id->end()) { return it->second; }
+            }
+            return search_world && reg ? tau::guid_system::find(*reg, file_id) : tau::ecs::NULL_ENTITY;
         }
     };
 
@@ -37,13 +40,13 @@ namespace tau::serialization::detail
 
     std::unordered_map<u32_t, tau::reflection::type_t> component_types_by_pool(tau::world_t& world);
 
-    nlohmann::json encode_fields(tau::world_t& world, tau::reflection::type_t type, tau::reflection::any_t& instance,
-                                 const entity_refs_t& refs);
+    nlohmann::json encode_fields(tau::reflection::ctx_t& ctx, tau::reflection::type_t type,
+                                 tau::reflection::any_t& instance, const entity_refs_t& refs);
 
     bool parse_value(const nlohmann::json& val, const std::string& prop_key, scene_property_t& prop);
     void adopt_index_refs(std::vector<scene_property_t>& props, bool generated_ids);
 
-    void apply_fields(tau::world_t& world, tau::reflection::any_t& object, tau::reflection::type_t type,
+    void apply_fields(tau::reflection::ctx_t& ctx, tau::reflection::any_t& object, tau::reflection::type_t type,
                       const std::vector<scene_property_t>& props, const entity_refs_t& refs, const std::string& owner,
                       std::vector<std::string>* unknown = nullptr);
 

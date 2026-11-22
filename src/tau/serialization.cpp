@@ -108,7 +108,7 @@ namespace tau::serialization
                 if (!instance) { continue; }
 
                 components[tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias()))] =
-                    encode_fields(world, type, instance, refs);
+                    encode_fields(*world.reflection_ctx, type, instance, refs);
             }
 
             return components;
@@ -197,7 +197,7 @@ namespace tau::serialization
                 if (!instance) { continue; }
 
                 scene_data["entities"][slot_it->second]["components"][type_key] =
-                    encode_fields(world, type, instance, refs);
+                    encode_fields(*world.reflection_ctx, type, instance, refs);
             }
         }
 
@@ -377,7 +377,8 @@ namespace tau::serialization
                 if (!instance) { continue; }
 
                 std::vector<std::string> unknown;
-                apply_fields(world, instance, type, comp.properties, refs, describe_key(comp.type_name, comp.type_hash),
+                apply_fields(*world.reflection_ctx, instance, type, comp.properties, refs,
+                             describe_key(comp.type_name, comp.type_hash),
                              comp.source_json.empty() ? nullptr : &unknown);
                 if (!unknown.empty())
                 {
@@ -387,7 +388,10 @@ namespace tau::serialization
                     {
                         if (saved.is_object() && saved.contains(key)) { kept[key] = saved[key]; }
                     }
-                    if (!kept.empty()) { unknown_fields[tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias()))] = kept; }
+                    if (!kept.empty())
+                    {
+                        unknown_fields[tau::reflection::meta_key(type.name(), static_cast<u32_t>(type.alias()))] = kept;
+                    }
                 }
 
                 if (tau::reflection::func_t on_changed = type.func("on_changed"_h); on_changed)

@@ -1,5 +1,6 @@
 #include "tau/asset_types.h"
 #include "tau/assets/clip.h"
+#include "tau/assets/data.h"
 #include "tau/assets/import_settings.h"
 #include "tau/assets/material.h"
 #include "tau/assets/mesh.h"
@@ -39,6 +40,10 @@ namespace tau::assets
                       .cooked_extension = ".tauscene",
                       .source_extensions = {".scene"},
                       .guid_in_source = true});
+        reg<data_asset_t>({.display_name = "Data",
+                           .cooked_extension = ".taudata",
+                           .source_extensions = {".data"},
+                           .guid_in_source = true});
         reg<prefab_t>({.display_name = "Prefab",
                        .cooked_extension = ".tauprefab",
                        .source_extensions = {".prefab"},
