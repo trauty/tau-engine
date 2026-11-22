@@ -14,10 +14,12 @@ namespace tau::jobs
         counter_t(i32_t v = 0) : std::atomic<i32_t>(v) {}
     };
 
+    // frame workers run HIGH, then LOW while HIGH is empty; one dedicated thread runs IO
     enum class priority_e
     {
-        LOW, // io assets
-        HIGH // everything else basically
+        LOW,  // asset loading work
+        HIGH, // frame work
+        IO,   // blocking file reads
     };
 
     template <size_t Capacity = 64>
@@ -110,10 +112,11 @@ namespace tau::jobs
     void init();
     void shutdown();
 
+    // helps with HIGH jobs only: a frame wait never starts a load
     TAU_ENGINE_API void wait(counter_t* counter);
 
-    // waits until no job is queued or running, helping meanwhile, for at most `timeout_ms`, false if work remained
-    // unloading a game library waits on this, as its jobs run its code
+    // waits until no job is queued or running, helping with every queue, for at most `timeout_ms`, false if work
+    // remained unloading a game library waits on this, as its jobs run its code
     TAU_ENGINE_API bool wait_idle(u32_t timeout_ms);
 
     TAU_ENGINE_API u32_t get_worker_count();
