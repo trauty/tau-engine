@@ -8,6 +8,7 @@
 #include "tau/math.h"
 #include "tau/profiling.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -16,15 +17,51 @@ namespace tau::transform_system
 {
     namespace
     {
-        // per registry, parents before children
-        struct order_t
+        constexpr u32_t NO_ROW = ~0u;
+
+        // per registry, a parent's row before its children's (holes allowed); the hot data
+        struct table_t
         {
+            std::vector<ecs::entity_t> entity;
+            std::vector<u32_t> parent;
+            std::vector<mat4> world;
+            std::vector<mat4> local;
+            std::vector<u8_t> dirty;
+            std::vector<ecs::entity_t> changed;
+            // lowest dirty row, NO_ROW: nothing to propagate
+            u32_t first_dirty = NO_ROW;
+
+            // created or reparented since the last update, placed then
+            std::vector<ecs::entity_t> pending;
+            // rows of destroyed transforms
+            u32_t holes = 0;
+
+            // rebuild scratch, kept for its capacity
             std::vector<ecs::entity_t> stack;
-            std::vector<ecs::entity_t> sorted;
-            bool dirty = true;
+            std::vector<ecs::entity_t> next_entity;
+            std::vector<u32_t> next_parent;
+            std::vector<mat4> next_world;
+            std::vector<mat4> next_local;
         };
 
-        void mark_dirty(ecs::registry_t& reg) { reg.ctx().emplace<order_t>().dirty = true; }
+        void mark_pending(ecs::registry_t& reg, ecs::entity_t entity)
+        { reg.ctx().emplace<table_t>().pending.push_back(entity); }
+
+        void append_row(table_t& table, ecs::entity_t entity, u32_t parent, const mat4& world, const mat4& local)
+        {
+            table.entity.push_back(entity);
+            table.parent.push_back(parent);
+            table.world.push_back(world);
+            table.local.push_back(local);
+            table.dirty.push_back(0);
+        }
+
+        void clear_row(table_t& table, u32_t row)
+        {
+            table.entity[row] = ecs::NULL_ENTITY;
+            table.parent[row] = NO_ROW;
+            table.holes++;
+        }
 
         struct orphans_t
         { std::vector<ecs::entity_t> entities; };
@@ -39,9 +76,6 @@ namespace tau::transform_system
         template <typename T>
         bool same_bits(const T& a, const T& b)
         { return std::memcmp(&a, &b, sizeof(T)) == 0; }
-
-        void build_local(const vec3& position, const quat& rotation, const vec3& scale, mat4& out)
-        { out = trs(position, rotation, scale); }
     } // namespace
 
     struct internal_t
@@ -141,7 +175,7 @@ namespace tau::transform_system
             unlink(reg, child, child_transform);
             link(reg, child, child_transform, parent, before);
 
-            mark_dirty(reg);
+            mark_pending(reg, child);
             child_transform.is_dirty = true;
         }
 
@@ -152,9 +186,12 @@ namespace tau::transform_system
             transform.first_child = ecs::NULL_ENTITY;
             transform.next_sibling = ecs::NULL_ENTITY;
             transform.prev_sibling = ecs::NULL_ENTITY;
+            transform.row = NO_ROW;
+            transform.is_dirty = true;
+            transform.has_shown = reg.all_of<shown_pose_t>(entity);
 
             link(reg, entity, transform, ecs::NULL_ENTITY, ecs::NULL_ENTITY);
-            mark_dirty(reg);
+            mark_pending(reg, entity);
         }
 
         // children are destroyed in the next update, destroying them inside entt's signal breaks range destroy
@@ -178,7 +215,8 @@ namespace tau::transform_system
             }
             transform.first_child = ecs::NULL_ENTITY;
 
-            mark_dirty(reg);
+            table_t* table = reg.ctx().find<table_t>();
+            if (table && transform.row < table->entity.size()) { clear_row(*table, transform.row); }
         }
 
         static void destroy_orphans(ecs::registry_t& reg)
@@ -194,36 +232,277 @@ namespace tau::transform_system
             }
         }
 
-        static void rebuild_hierarchy(ecs::registry_t& reg)
+        static void on_shown_construct(ecs::registry_t& reg, ecs::entity_t entity)
         {
-            auto view = reg.view<transform_t>();
+            if (transform_t* transform = reg.try_get<transform_t>(entity)) { transform->has_shown = true; }
+        }
 
-            order_t& order = reg.ctx().emplace<order_t>();
-            order.stack.clear();
-            order.sorted.clear();
+        static void on_shown_destroy(ecs::registry_t& reg, ecs::entity_t entity)
+        {
+            if (transform_t* transform = reg.try_get<transform_t>(entity)) { transform->has_shown = false; }
+        }
 
-            for (ecs::entity_t entity : view)
+        // new hierarchy order; rows that existed keep their matrices, new ones are built in the compare pass
+        static void rebuild_order(ecs::registry_t& reg, table_t& table)
+        {
+            ZoneScoped;
+
+            auto& transforms = reg.storage<transform_t>();
+
+            table.next_entity.clear();
+            table.next_parent.clear();
+            table.next_world.clear();
+            table.next_local.clear();
+
+            // headroom for the rows appended until the next re-sort, so churn does not reallocate
+            const size_t capacity = transforms.size() + transforms.size() / 4 + 64;
+            table.next_entity.reserve(capacity);
+            table.next_parent.reserve(capacity);
+            table.next_world.reserve(capacity);
+            table.next_local.reserve(capacity);
+            table.dirty.reserve(capacity);
+
+            const roots_t* roots = reg.ctx().find<roots_t>();
+            for (ecs::entity_t root = roots ? roots->first : ecs::NULL_ENTITY; root != ecs::NULL_ENTITY;
+                 root = transforms.get(root).next_sibling)
             {
-                if (view.get<transform_t>(entity).parent == ecs::NULL_ENTITY) { order.stack.push_back(entity); }
-            }
+                table.stack.clear();
+                table.stack.push_back(root);
 
-            // iterative dfs flatten
-            while (!order.stack.empty())
-            {
-                ecs::entity_t entity = order.stack.back();
-                order.stack.pop_back();
-
-                order.sorted.push_back(entity);
-
-                ecs::entity_t child = view.get<transform_t>(entity).first_child;
-                while (child != ecs::NULL_ENTITY)
+                // preorder, siblings in order
+                while (!table.stack.empty())
                 {
-                    order.stack.push_back(child);
-                    child = view.get<transform_t>(child).next_sibling;
+                    const ecs::entity_t entity = table.stack.back();
+                    table.stack.pop_back();
+
+                    transform_t& transform = transforms.get(entity);
+                    const u32_t row = static_cast<u32_t>(table.next_entity.size());
+                    const u32_t old_row = transform.row;
+
+                    table.next_entity.push_back(entity);
+                    table.next_parent.push_back(
+                        transform.parent != ecs::NULL_ENTITY ? transforms.get(transform.parent).row : NO_ROW);
+                    if (old_row != NO_ROW)
+                    {
+                        table.next_world.push_back(table.world[old_row]);
+                        table.next_local.push_back(table.local[old_row]);
+                    }
+                    else
+                    {
+                        table.next_world.emplace_back();
+                        table.next_local.emplace_back();
+                        transform.is_dirty = true;
+                    }
+                    transform.row = row;
+
+                    ecs::entity_t last = transform.first_child;
+                    while (last != ecs::NULL_ENTITY && transforms.get(last).next_sibling != ecs::NULL_ENTITY)
+                    {
+                        last = transforms.get(last).next_sibling;
+                    }
+                    for (ecs::entity_t child = last; child != ecs::NULL_ENTITY;
+                         child = transforms.get(child).prev_sibling)
+                    {
+                        table.stack.push_back(child);
+                    }
                 }
             }
 
-            order.dirty = false;
+            if (table.next_entity.size() != transforms.size())
+            {
+                TAU_LOG_WARN("TRANSFORM", "{} transforms not reachable from a root",
+                             transforms.size() - table.next_entity.size());
+                for (auto [entity, transform] : transforms.each())
+                {
+                    if (transform.row >= table.next_entity.size() || table.next_entity[transform.row] != entity)
+                    {
+                        transform.row = NO_ROW;
+                    }
+                }
+            }
+
+            table.entity.swap(table.next_entity);
+            table.parent.swap(table.next_parent);
+            table.world.swap(table.next_world);
+            table.local.swap(table.next_local);
+            table.dirty.assign(table.entity.size(), 0);
+            table.first_dirty = NO_ROW;
+            table.pending.clear();
+            table.holes = 0;
+        }
+
+        // the entity and everything below it to the end, the old rows become holes
+        static void relocate(ecs::registry_t& reg, table_t& table, ecs::entity_t root)
+        {
+            auto& transforms = reg.storage<transform_t>();
+
+            table.stack.clear();
+            table.stack.push_back(root);
+            while (!table.stack.empty())
+            {
+                const ecs::entity_t entity = table.stack.back();
+                table.stack.pop_back();
+
+                transform_t& transform = transforms.get(entity);
+                const u32_t parent =
+                    transform.parent != ecs::NULL_ENTITY ? transforms.get(transform.parent).row : NO_ROW;
+                const u32_t old_row = transform.row;
+                if (old_row != NO_ROW)
+                {
+                    const mat4 world = table.world[old_row];
+                    const mat4 local = table.local[old_row];
+                    clear_row(table, old_row);
+                    append_row(table, entity, parent, world, local);
+                }
+                else
+                {
+                    append_row(table, entity, parent, mat4{}, mat4{});
+                    transform.is_dirty = true;
+                }
+                transform.row = static_cast<u32_t>(table.entity.size() - 1);
+
+                for (ecs::entity_t child = transform.first_child; child != ecs::NULL_ENTITY;
+                     child = transforms.get(child).next_sibling)
+                {
+                    table.stack.push_back(child);
+                }
+            }
+        }
+
+        static void reserve(table_t& table, size_t capacity)
+        {
+            table.entity.reserve(capacity);
+            table.parent.reserve(capacity);
+            table.world.reserve(capacity);
+            table.local.reserve(capacity);
+            table.dirty.reserve(capacity);
+        }
+
+        // holes squeezed out in place, the order kept; linear over the table, then over the transforms
+        static void compact(ecs::registry_t& reg, table_t& table)
+        {
+            ZoneScoped;
+
+            const u32_t rows = static_cast<u32_t>(table.entity.size());
+            table.next_parent.resize(rows);
+            u32_t* remap = table.next_parent.data();
+
+            u32_t kept = 0;
+            for (u32_t row = 0; row < rows; row++)
+            {
+                if (table.entity[row] == ecs::NULL_ENTITY)
+                {
+                    remap[row] = NO_ROW;
+                    continue;
+                }
+                remap[row] = kept;
+                const u32_t parent = table.parent[row];
+                table.entity[kept] = table.entity[row];
+                table.parent[kept] = parent == NO_ROW ? NO_ROW : remap[parent];
+                table.world[kept] = table.world[row];
+                table.local[kept] = table.local[row];
+                kept++;
+            }
+            table.entity.resize(kept);
+            table.parent.resize(kept);
+            table.world.resize(kept);
+            table.local.resize(kept);
+            table.dirty.resize(kept);
+
+            for (auto [entity, transform] : reg.storage<transform_t>().each())
+            {
+                if (transform.row != NO_ROW) { transform.row = remap[transform.row]; }
+            }
+            table.holes = 0;
+        }
+
+        // keeps a parent's row before its children's
+        static void place(ecs::registry_t& reg, table_t& table, ecs::entity_t entity)
+        {
+            auto& transforms = reg.storage<transform_t>();
+            transform_t& transform = transforms.get(entity);
+
+            if (transform.parent != ecs::NULL_ENTITY && transforms.get(transform.parent).row == NO_ROW)
+            {
+                // a new parent takes its whole subtree along, this one included
+                place(reg, table, transform.parent);
+                return;
+            }
+
+            const u32_t parent = transform.parent != ecs::NULL_ENTITY ? transforms.get(transform.parent).row : NO_ROW;
+            if (transform.row != NO_ROW && (parent == NO_ROW || parent < transform.row))
+            {
+                table.parent[transform.row] = parent;
+                return;
+            }
+            relocate(reg, table, entity);
+        }
+
+        static void place_pending(ecs::registry_t& reg, table_t& table)
+        {
+            ZoneScoped;
+
+            for (const ecs::entity_t entity : table.pending)
+            {
+                if (reg.valid(entity) && reg.all_of<transform_t>(entity)) { place(reg, table, entity); }
+            }
+            table.pending.clear();
+        }
+
+        // locals (or the shown pose) against what the local matrix was built from, in storage order
+        static void compare(ecs::registry_t& reg, table_t& table)
+        {
+            ZoneScoped;
+
+            auto& shown = reg.storage<shown_pose_t>();
+
+            for (auto [entity, transform] : reg.storage<transform_t>().each())
+            {
+                if (transform.row == NO_ROW) { continue; }
+
+                const shown_pose_t* pose = transform.has_shown ? &shown.get(entity) : nullptr;
+                const vec3& position = pose ? pose->position : transform.local_position;
+                const quat& rotation = pose ? pose->rotation : transform.local_rotation;
+                const vec3& scale = transform.local_scale;
+
+                if (!transform.is_dirty && same_bits(position, transform.built_position) &&
+                    std::memcmp(&rotation, transform.built_rotation, sizeof(quat)) == 0 &&
+                    same_bits(scale, transform.built_scale))
+                {
+                    continue;
+                }
+
+                transform.built_position = position;
+                std::memcpy(transform.built_rotation, &rotation, sizeof(quat));
+                transform.built_scale = scale;
+                transform.is_dirty = false;
+                table.local[transform.row] = trs(position, rotation, scale);
+                table.dirty[transform.row] = 1;
+                table.first_dirty = std::min(table.first_dirty, transform.row);
+            }
+        }
+
+        // a row is rebuilt when it or its parent changed, in hierarchy order
+        static void propagate(table_t& table)
+        {
+            ZoneScoped;
+
+            table.changed.clear();
+            if (table.first_dirty == NO_ROW) { return; }
+
+            const u32_t count = static_cast<u32_t>(table.entity.size());
+            for (u32_t row = table.first_dirty; row < count; row++)
+            {
+                const u32_t parent = table.parent[row];
+                if (!table.dirty[row] && (parent == NO_ROW || !table.dirty[parent])) { continue; }
+
+                table.dirty[row] = 1;
+                table.world[row] = parent == NO_ROW ? table.local[row] : table.world[parent] * table.local[row];
+                table.changed.push_back(table.entity[row]);
+            }
+
+            std::fill(table.dirty.begin() + table.first_dirty, table.dirty.end(), u8_t{0});
+            table.first_dirty = NO_ROW;
         }
 
         static void update(ecs::registry_t& reg)
@@ -232,46 +511,29 @@ namespace tau::transform_system
 
             destroy_orphans(reg);
 
-            order_t& order = reg.ctx().emplace<order_t>();
-            if (order.dirty) { rebuild_hierarchy(reg); }
-
-            auto view = reg.view<transform_t>();
-            auto& shown = reg.storage<shown_pose_t>();
-
-            for (ecs::entity_t entity : order.sorted)
+            table_t& table = reg.ctx().emplace<table_t>();
+            const size_t rows = table.entity.size();
+            // bulk changes (loads): a full re-sort for locality; else compact the holes, place the rest
+            if (table.pending.size() * 4 > rows) { rebuild_order(reg, table); }
+            else
             {
-                transform_t& transform = view.get<transform_t>(entity);
-
-                const shown_pose_t* pose = shown.contains(entity) ? &shown.get(entity) : nullptr;
-                const vec3& position = pose ? pose->position : transform.local_position;
-                const quat& rotation = pose ? pose->rotation : transform.local_rotation;
-
-                if (transform.is_dirty || !same_bits(position, transform.built_position) ||
-                    !same_bits(rotation, transform.built_rotation) ||
-                    !same_bits(transform.local_scale, transform.built_scale))
-                {
-                    build_local(position, rotation, transform.local_scale, transform.local_mat);
-
-                    transform.built_position = position;
-                    transform.built_rotation = rotation;
-                    transform.built_scale = transform.local_scale;
-                    transform.is_dirty = true;
-                }
-
-                if (transform.parent != ecs::NULL_ENTITY)
-                {
-                    transform_t& parent_transform = view.get<transform_t>(transform.parent);
-
-                    if (transform.is_dirty || parent_transform.is_dirty)
-                    {
-                        transform.world_mat = parent_transform.world_mat * transform.local_mat;
-                        transform.is_dirty = true;
-                    }
-                }
-                else if (transform.is_dirty) { transform.world_mat = transform.local_mat; }
+                // compacting is linear and keeps the order; a table without many holes grows instead
+                const bool full = rows + table.pending.size() > table.entity.capacity();
+                if (table.holes * 4 > rows || (full && table.holes * 8 >= rows)) { compact(reg, table); }
+                else if (full) { reserve(table, rows + rows / 2 + 64); }
+                if (!table.pending.empty()) { place_pending(reg, table); }
             }
 
-            for (ecs::entity_t entity : order.sorted) { view.get<transform_t>(entity).is_dirty = false; }
+            compare(reg, table);
+            propagate(table);
+        }
+
+        static mat4 world_matrix(const ecs::registry_t& reg, ecs::entity_t entity)
+        {
+            const transform_t& transform = reg.get<transform_t>(entity);
+            const table_t* table = reg.ctx().find<table_t>();
+            if (table && transform.row < table->world.size()) { return table->world[transform.row]; }
+            return compose_world(reg, entity);
         }
     };
 
@@ -293,14 +555,17 @@ namespace tau::transform_system
         transform.local_scale = new_scale;
     }
 
-    vec3 get_world_position(ecs::registry_t& reg, ecs::entity_t entity)
-    { return translation_of(reg.get<transform_t>(entity).world_mat); }
+    mat4 world_matrix(const ecs::registry_t& reg, ecs::entity_t entity)
+    { return internal_t::world_matrix(reg, entity); }
 
-    vec3 get_world_scale(ecs::registry_t& reg, ecs::entity_t entity)
-    { return scale_of(reg.get<transform_t>(entity).world_mat); }
+    vec3 get_world_position(const ecs::registry_t& reg, ecs::entity_t entity)
+    { return translation_of(world_matrix(reg, entity)); }
 
-    quat get_world_rotation(ecs::registry_t& reg, ecs::entity_t entity)
-    { return rotation_of(reg.get<transform_t>(entity).world_mat); }
+    vec3 get_world_scale(const ecs::registry_t& reg, ecs::entity_t entity)
+    { return scale_of(world_matrix(reg, entity)); }
+
+    quat get_world_rotation(const ecs::registry_t& reg, ecs::entity_t entity)
+    { return rotation_of(world_matrix(reg, entity)); }
 
     void set_world_position(ecs::registry_t& reg, ecs::entity_t entity, vec3 target_world_pos)
     {
@@ -312,9 +577,7 @@ namespace tau::transform_system
             return;
         }
 
-        transform_t& parent_t = reg.get<transform_t>(t.get_parent());
-
-        set_local_position(reg, entity, transform_point(inverse(parent_t.world_mat), target_world_pos));
+        set_local_position(reg, entity, transform_point(inverse(world_matrix(reg, t.get_parent())), target_world_pos));
     }
 
     void set_world_rotation(ecs::registry_t& reg, ecs::entity_t entity, quat world_rot)
@@ -365,6 +628,12 @@ namespace tau::transform_system
         return world;
     }
 
+    std::span<const ecs::entity_t> changed(const ecs::registry_t& reg)
+    {
+        const table_t* table = reg.ctx().find<table_t>();
+        return table ? std::span<const ecs::entity_t>(table->changed) : std::span<const ecs::entity_t>();
+    }
+
     ecs::entity_t first_root(const ecs::registry_t& reg)
     {
         const roots_t* roots = reg.ctx().find<roots_t>();
@@ -375,9 +644,11 @@ namespace tau::transform_system
     {
         reg.ctx().emplace<orphans_t>();
         reg.ctx().emplace<roots_t>();
-        reg.ctx().emplace<order_t>();
+        reg.ctx().emplace<table_t>();
         reg.on_construct<transform_t>().connect<&internal_t::on_construct>();
         reg.on_destroy<transform_t>().connect<&internal_t::on_destroy>();
+        reg.on_construct<shown_pose_t>().connect<&internal_t::on_shown_construct>();
+        reg.on_destroy<shown_pose_t>().connect<&internal_t::on_shown_destroy>();
     }
 
     void update(ecs::registry_t& reg) { internal_t::update(reg); }

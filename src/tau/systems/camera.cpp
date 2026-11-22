@@ -5,6 +5,7 @@
 #include "tau/math.h"
 #include "tau/render/frame.h"
 #include "tau/rhi/context.h"
+#include "tau/systems/transform.h"
 
 namespace tau::camera_system
 {
@@ -32,18 +33,22 @@ namespace tau::camera_system
 
         f32 cur_aspect = static_cast<f32>(cur_width) / static_cast<f32>(cur_height);
 
-        for (auto [entity, cam, transform] : reg.view<camera_t, transform_t>().each())
+        auto view = reg.view<camera_t, transform_t>();
+        for (const ecs::entity_t entity : view)
         {
+            camera_t& cam = view.get<camera_t>(entity);
+            const mat4 world = transform_system::world_matrix(reg, entity);
+
             if (std::abs(cam.aspect - cur_aspect) > 0.001f)
             {
                 cam.aspect = cur_aspect;
                 cam.is_dirty = true;
             }
 
-            vec3 eye = {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]};
+            const vec3 eye = translation_of(world);
             // looks down its -Z
-            vec3 forward = {-transform.world_mat[2][0], -transform.world_mat[2][1], -transform.world_mat[2][2]};
-            vec3 up = {transform.world_mat[1][0], transform.world_mat[1][1], transform.world_mat[1][2]};
+            const vec3 forward = -world[2].xyz();
+            const vec3 up = world[1].xyz();
 
             build_view_projection(eye, forward, up, cam.fov_deg, cam.aspect, cam.near_plane, cam.far_plane, cam.view,
                                   cam.projection, cam.view_proj);

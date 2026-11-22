@@ -16,6 +16,7 @@
 #include "tau/rhi/material_heap.h"
 #include "tau/rhi/renderer_constants.h"
 #include "tau/systems/camera.h"
+#include "tau/systems/transform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -50,11 +51,11 @@ namespace tau::renderer::post
         std::vector<const material_t*> bound_materials;
         std::vector<const volume_sample_t*> influences;
 
-        f32 volume_influence(const profile_volume_t& volume, const transform_t& transform, const vec3& point)
+        f32 volume_influence(const profile_volume_t& volume, const vec3& center_pos, const vec3& point)
         {
             if (volume.is_global) { return 1.0f; }
 
-            const f32 center[3] = {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]};
+            const f32 center[3] = {center_pos.x, center_pos.y, center_pos.z};
             const f32 half[3] = {std::abs(volume.extents.x), std::abs(volume.extents.y), std::abs(volume.extents.z)};
             const f32 p[3] = {point.x, point.y, point.z};
 
@@ -102,9 +103,12 @@ namespace tau::renderer::post
         {
             samples.clear();
 
-            for (auto [entity, volume, transform] : reg.view<profile_volume_t, transform_t>().each())
+            auto view = reg.view<profile_volume_t, transform_t>();
+            for (const ecs::entity_t entity : view)
             {
-                const f32 w = volume_influence(volume, transform, view_pos) * volume.weight;
+                const profile_volume_t& volume = view.get<profile_volume_t>(entity);
+                const vec3 center = volume.is_global ? vec3{} : transform_system::get_world_position(reg, entity);
+                const f32 w = volume_influence(volume, center, view_pos) * volume.weight;
                 if (w <= 0.0f) { continue; }
 
                 for (const asset_t<material_t> handle : volume.effect_overrides)

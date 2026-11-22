@@ -21,9 +21,6 @@ namespace tau
         quat local_rotation;
         vec3 local_scale = {1.0f, 1.0f, 1.0f};
 
-        // read only, the transform system writes it, use it for visual only
-        mat4 world_mat;
-
         ecs::entity_t get_parent() const { return parent; }
         ecs::entity_t get_first_child() const { return first_child; }
         ecs::entity_t get_next_sibling() const { return next_sibling; }
@@ -32,11 +29,9 @@ namespace tau
       private:
         friend struct transform_system::internal_t;
 
-        mat4 local_mat;
-
-        // what local_mat was built from, to detect moves
+        // what the local matrix was built from, to detect moves; the rotation unaligned keeps it at 112 bytes
         vec3 built_position;
-        quat built_rotation;
+        f32 built_rotation[4] = {};
         vec3 built_scale;
 
         ecs::entity_t parent = ecs::NULL_ENTITY;
@@ -44,6 +39,9 @@ namespace tau
         ecs::entity_t next_sibling = ecs::NULL_ENTITY;
         ecs::entity_t prev_sibling = ecs::NULL_ENTITY;
 
+        // row in the transform table, none until the next update places it
+        u32_t row = ~0u;
         bool is_dirty = true;
+        bool has_shown = false;
     };
 } // namespace tau

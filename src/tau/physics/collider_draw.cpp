@@ -2,6 +2,7 @@
 #include "tau/components/transform.h"
 #include "tau/physics/physics.h"
 #include "tau/render/overlay.h"
+#include "tau/systems/transform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,13 +48,13 @@ namespace tau::physics
             vec3 at(const vec3& p) const { return origin + axes[0] * p.x + axes[1] * p.y + axes[2] * p.z; }
         };
 
-        frame_t frame_of(const transform_t& transform)
+        frame_t frame_of(const mat4& world)
         {
             frame_t frame;
-            frame.origin = translation_of(transform.world_mat);
+            frame.origin = translation_of(world);
             for (u32_t i = 0; i < 3; i++)
             {
-                const vec3 column = transform.world_mat[i].xyz();
+                const vec3 column = world[i].xyz();
                 const f32 length = tau::length(column);
                 frame.axes[i] = length > 0.0f ? column * (1.0f / length) : vec3{};
                 (&frame.scale.x)[i] = length;
@@ -147,7 +148,7 @@ namespace tau::physics
     {
         std::vector<renderer::overlay_line_t> out;
 
-        for (auto [entity, transform] : reg.view<transform_t>().each())
+        for (const ecs::entity_t entity : reg.view<transform_t>())
         {
             const box_collider_t* box = reg.try_get<box_collider_t>(entity);
             const sphere_collider_t* sphere = reg.try_get<sphere_collider_t>(entity);
@@ -155,7 +156,7 @@ namespace tau::physics
             const rigidbody_t* rb = reg.try_get<rigidbody_t>(entity);
             if (!box && !sphere && !capsule && !rb) { continue; }
 
-            const frame_t frame = frame_of(transform);
+            const frame_t frame = frame_of(transform_system::world_matrix(reg, entity));
             lines_t lines{out, frame, color_of(rb)};
             if (box) { add_box(lines, box->extents, box->offset); }
             else if (sphere) { add_sphere(lines, sphere->radius, sphere->offset); }

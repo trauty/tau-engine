@@ -26,6 +26,7 @@
 #include "tau/rhi/swapchain.h"
 #include "tau/rhi/transfer.h"
 #include "tau/systems/camera.h"
+#include "tau/systems/transform.h"
 #include "tau/time.h"
 
 #include <algorithm>
@@ -98,9 +99,6 @@ namespace tau::renderer::frame
 #ifdef TAU_ENABLE_PROFILING
         TracyVkCtx tracy_vk_ctx = nullptr;
 #endif
-
-        vec3 world_position(const transform_t& transform)
-        { return {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]}; }
 
         // the extents follow a new swapchain; an output target overrides them until the next one
         void resize_swapchain()
@@ -571,14 +569,13 @@ namespace tau::renderer::frame
             if (active_cam != ecs::NULL_ENTITY)
             {
                 camera_t& cam = reg.get<camera_t>(active_cam);
-                transform_t& cam_transform = reg.get<transform_t>(active_cam);
 
                 render_view_t v{};
                 v.name_hash = "PrimaryView"_h;
                 v.view = cam.view;
                 v.projection = cam.projection;
                 v.view_proj = cam.view_proj;
-                v.position = world_position(cam_transform);
+                v.position = transform_system::get_world_position(reg, active_cam);
                 v.color_target_hash = "SceneColor"_h;
                 v.depth_target_hash = "SceneDepth"_h;
                 v.extent = g_render_extent;
@@ -719,8 +716,7 @@ namespace tau::renderer::frame
         ecs::entity_t cam_e = camera_system::get_active_camera(reg);
         if (cam_e != ecs::NULL_ENTITY)
         {
-            transform_t& t = reg.get<transform_t>(cam_e);
-            out_pos = {t.world_mat[3][0], t.world_mat[3][1], t.world_mat[3][2]};
+            out_pos = transform_system::get_world_position(reg, cam_e);
             return true;
         }
 

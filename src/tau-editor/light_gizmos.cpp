@@ -6,6 +6,7 @@
 #include "tau/ecs.h"
 #include "tau/render/overlay.h"
 #include "tau/systems/guid.h"
+#include "tau/systems/transform.h"
 
 #include <cmath>
 #include <vector>
@@ -46,9 +47,8 @@ namespace tau::editor::light_gizmos
             }
         };
 
-        frame_t frame_of(const transform_t& transform)
+        frame_t frame_of(const mat4& m)
         {
-            const mat4& m = transform.world_mat;
             return {
                 {m[3][0], m[3][1], m[3][2]},
                 normalize(vec3{m[0][0], m[0][1], m[0][2]}
@@ -111,11 +111,13 @@ namespace tau::editor::light_gizmos
         std::vector<renderer::overlay_line_t> out;
         lines_t lines{out};
 
-        for (auto [entity, light, transform] : reg.view<light_t, transform_t>().each())
+        auto view = reg.view<light_t, transform_t>();
+        for (const ecs::entity_t entity : view)
         {
+            const light_t& light = view.get<light_t>(entity);
             if (!ctx.show_lights && !ctx.selection.contains(guid_system::of(reg, entity))) { continue; }
 
-            const frame_t f = frame_of(transform);
+            const frame_t f = frame_of(transform_system::world_matrix(reg, entity));
             switch (light.type)
             {
             case light_type_e::SUN: add_sun(lines, f); break;

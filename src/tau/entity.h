@@ -133,6 +133,11 @@ namespace tau
             return {world, transform ? transform->get_first_child() : ecs::NULL_ENTITY};
         }
 
+        // the shown pose as of the last update (needs a transform_t)
+        mat4 world_matrix() const { return transform_system::world_matrix(world->registry, id); }
+        vec3 world_position() const { return transform_system::get_world_position(world->registry, id); }
+        quat world_rotation() const { return transform_system::get_world_rotation(world->registry, id); }
+
         // a stored id of the same world
         entity_ref_t other(ecs::entity_t entity) const { return {world, entity}; }
     };

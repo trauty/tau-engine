@@ -110,7 +110,7 @@ namespace tau::editor::viewport_input
             const mesh_t* mesh = assets::get(world.registry.get<mesh_renderer_t>(entity).mesh);
             if (!mesh) { continue; }
 
-            const vec3 c = transform_point(world.registry.get<transform_t>(entity).world_mat, mesh->local_center);
+            const vec3 c = transform_point(transform_system::world_matrix(world.registry, entity), mesh->local_center);
             const vec3 scale = transform_system::get_world_scale(world.registry, entity);
             merge(c, std::max(mesh->local_radius * std::max({scale.x, scale.y, scale.z}), 0.01f));
         }
