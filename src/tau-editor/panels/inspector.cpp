@@ -517,6 +517,7 @@ namespace tau::editor::panels
 
                 tau::reflection::editor_prop_t* prop = data.custom();
                 if (prop && has_flag(prop->flags, prop_flags_e::HIDDEN)) { continue; }
+                if (prop && prop->visible && !prop->visible(tau::reflection::value_data(instance))) { continue; }
 
                 const bool is_view = prop && has_flag(prop->flags, prop_flags_e::NOT_SAVED);
                 if (overridden && (overridden->contains(tau::reflection::meta_key(data.name(), id)) ||

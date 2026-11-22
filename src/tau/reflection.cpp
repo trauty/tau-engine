@@ -102,10 +102,11 @@ namespace tau::reflection
         factory<vec3>{ctx}.type("vec3"_h, "vec3").data<&vec3::x>("x"_h).data<&vec3::y>("y"_h).data<&vec3::z>("z"_h);
 
         reflect_transform(ctx);
+        reflect_view_profile(ctx);
         reflect_camera(ctx);
-        reflect_lighting(ctx);
+        reflect_light(ctx);
         reflect_physics(ctx);
-        reflect_post_process(ctx);
+        reflect_profile_volume(ctx);
         reflect_mesh_renderer(ctx);
         reflect_import_settings(ctx);
         reflect_graphics_settings(ctx);

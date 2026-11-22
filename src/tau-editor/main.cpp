@@ -13,6 +13,7 @@
 #include "tau-editor/handles.h"
 #include "tau-editor/history.h"
 #include "tau-editor/import_edit.h"
+#include "tau-editor/light_gizmos.h"
 #include "tau-editor/material_edit.h"
 #include "tau-editor/panels/asset_browser.h"
 #include "tau-editor/panels/console.h"
@@ -315,6 +316,10 @@ int main(i32 argc, char** argv)
         {
             if (editor_ctx.show_colliders) { tau::physics::draw_colliders(reg, "PrimaryView"_h); }
         });
+    tau::renderer::frame::register_producer(
+        "EditorLights"_h, tau::renderer::FEATURE_ORDER_OVERLAY - 1,
+        [](tau::renderer::graph::graph_t&, const tau::renderer::frame::targets_t&, tau::ecs::registry_t& reg)
+        { tau::editor::light_gizmos::draw(reg, editor_ctx, "PrimaryView"_h); });
     tau::editor::settings::load(editor_ctx);
 
     if (have_startup_project) { tau::editor::project_open::request(startup_project, editor_ctx); }

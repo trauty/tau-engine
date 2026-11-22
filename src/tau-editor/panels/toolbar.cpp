@@ -122,6 +122,10 @@ namespace tau::editor::panels
         }
 
         ImGui::SameLine();
+        ImGui::Checkbox("Lights", &ctx.show_lights);
+        if (ImGui::IsItemHovered()) { ImGui::SetTooltip("Every light's shape; the selected ones show without it."); }
+
+        ImGui::SameLine();
         ImGui::SetNextItemWidth(150.0f);
 
 #define TAU_DEBUG_VIEW_LABEL(name, value, label) label,

@@ -3,11 +3,13 @@
 #include "tau/asset.h"
 #include "tau/assets/material.h"
 #include "tau/assets/shader.h"
-#include "tau/components/post_process.h"
+#include "tau/components/camera.h"
+#include "tau/components/profile_volume.h"
 #include "tau/components/transform.h"
 #include "tau/ecs.h"
 #include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/render/view_profile.h"
 #include "tau/rhi/bindless.h"
 #include "tau/rhi/context.h"
 #include "tau/rhi/gpu_structs.h"
@@ -36,6 +38,9 @@ namespace tau::renderer::post
             i32_t priority;
         };
 
+        constexpr const char* FINAL_PASS_PATH = "engine://assets/materials/uberpost.mat";
+        constexpr u32_t FINAL_PASS_SLOT = 0xFFFFFFFFu;
+
         asset_t<material_t> g_final_pass;
         // per view and slot, a base material with the volumes' overrides
         std::unordered_map<u64_t, std::unique_ptr<material_t>> g_resolved;
@@ -45,7 +50,7 @@ namespace tau::renderer::post
         std::vector<const material_t*> bound_materials;
         std::vector<const volume_sample_t*> influences;
 
-        f32 volume_influence(const post_volume_t& volume, const transform_t& transform, const vec3& point)
+        f32 volume_influence(const profile_volume_t& volume, const transform_t& transform, const vec3& point)
         {
             if (volume.is_global) { return 1.0f; }
 
@@ -97,18 +102,17 @@ namespace tau::renderer::post
         {
             samples.clear();
 
-            for (auto [entity, volume, transform] : reg.view<post_volume_t, transform_t>().each())
+            for (auto [entity, volume, transform] : reg.view<profile_volume_t, transform_t>().each())
             {
-                if (!volume.overrides.is_valid()) { continue; }
-
-                material_t* over = assets::get(volume.overrides);
-                if (!over || !over->shader.is_valid()) { continue; }
-                if (over->authored_properties.empty()) { continue; }
-
                 const f32 w = volume_influence(volume, transform, view_pos) * volume.weight;
                 if (w <= 0.0f) { continue; }
 
-                samples.push_back({over, over->shader, std::min(w, 1.0f), volume.priority});
+                for (const asset_t<material_t> handle : volume.effect_overrides)
+                {
+                    material_t* over = assets::get(handle);
+                    if (!over || !over->shader.is_valid() || over->authored_properties.empty()) { continue; }
+                    samples.push_back({over, over->shader, std::min(w, 1.0f), volume.priority});
+                }
             }
 
             std::stable_sort(samples.begin(), samples.end(), [](const volume_sample_t& a, const volume_sample_t& b)
@@ -158,36 +162,35 @@ namespace tau::renderer::post
             return &resolved;
         }
 
-        bool target_matches(const material_t* effect, VkFormat dst_format, u32_t slot, bool is_final)
+        // the profile's values into the final pass, until part 11's LUT bake
+        void apply_profile(material_t& final_pass, const view_profile_t& profile)
+        {
+            final_pass.set_property_if_present("exposure"_h, view_profile::exposure(profile));
+            final_pass.set_property_if_present("tonemap_op"_h, static_cast<u32_t>(profile.tonemap));
+            final_pass.set_property_if_present("contrast"_h, profile.contrast);
+            final_pass.set_property_if_present("saturation"_h, profile.saturation);
+            final_pass.set_property_if_present("vignette_strength"_h, profile.vignette);
+            final_pass.set_property_if_present("vignette_radius"_h, profile.vignette_radius);
+            final_pass.set_property_if_present("grain_strength"_h, profile.grain);
+        }
+
+        bool target_matches(const material_t* effect, VkFormat dst_format, u32_t slot)
         {
             shader_t* shader = assets::get(effect->shader);
             if (!shader || shader->target_formats.empty()) { return true; }
             if (shader->target_formats[0] == dst_format) { return true; }
 
             static std::mutex warned_mutex;
-            static std::unordered_set<u64_t> warned;
+            static std::unordered_set<u32_t> warned;
             {
-                const u64_t warn_key = (static_cast<u64_t>(is_final ? 1u : 0u) << 32) | slot;
                 std::scoped_lock lock(warned_mutex);
-                if (!warned.insert(warn_key).second) { return false; }
+                if (!warned.insert(slot).second) { return false; }
             }
 
-            if (is_final)
-            {
-                TAU_LOG_ERROR("RENDERER",
-                              "Final pass renders to format {} but the display image is {}. A final pass has to "
-                              "declare [RenderTarget(\"Swapchain\")], only chain effects target the HDR chain. "
-                              "Falling back to the stock final pass.",
-                              static_cast<i32>(shader->target_formats[0]), static_cast<i32>(dst_format));
-            }
-            else
-            {
-                TAU_LOG_ERROR("RENDERER",
-                              "Post effect in slot {} renders to format {} but the chain runs at {}. A chain effect "
-                              "has to declare [RenderTarget(\"RGBA16_FLOAT\")], only the final pass targets the "
-                              "display, skipping it.",
-                              slot, static_cast<i32>(shader->target_formats[0]), static_cast<i32>(dst_format));
-            }
+            TAU_LOG_ERROR("RENDERER",
+                          "Post effect in slot {} renders to format {} but the chain runs at {}. A post effect has to "
+                          "declare [RenderTarget(\"RGBA16_FLOAT\")], skipping it.",
+                          slot, static_cast<i32>(shader->target_formats[0]), static_cast<i32>(dst_format));
             return false;
         }
 
@@ -250,7 +253,7 @@ namespace tau::renderer::post
         }
     } // namespace
 
-    void init() { g_final_pass = assets::pin(assets::load<material_t>(DEFAULT_FINAL_PASS_PATH)); }
+    void init() { g_final_pass = assets::pin(assets::load<material_t>(FINAL_PASS_PATH)); }
 
     void shutdown()
     {
@@ -261,13 +264,15 @@ namespace tau::renderer::post
     void build(graph::graph_t& g, const frame::targets_t& t, ecs::registry_t& reg, u32_t view_hash,
                const vec3& view_pos, bool enabled)
     {
-        const post_process_t* stack = nullptr;
-        const ecs::entity_t cam = camera_system::get_active_camera(reg);
-        if (cam != ecs::NULL_ENTITY && reg.all_of<post_process_t>(cam))
+        // post off (the editor's toggle): the default profile, no effects, no volumes
+        static const view_profile_t default_profile;
+        const camera_t* camera = nullptr;
+        if (enabled)
         {
-            const post_process_t& candidate = reg.get<post_process_t>(cam);
-            if (candidate.enabled) { stack = &candidate; }
+            const ecs::entity_t cam = camera_system::get_active_camera(reg);
+            if (cam != ecs::NULL_ENTITY) { camera = reg.try_get<camera_t>(cam); }
         }
+        const view_profile_t& profile = camera ? camera->profile : default_profile;
 
         post_volumes.clear();
         if (enabled) { gather_post_volumes(reg, view_pos, post_volumes); }
@@ -297,11 +302,11 @@ namespace tau::renderer::post
                                                 .height = graph::extent(g, t.scene_color).height,
                                                 .clear = {.color = {{0.01f, 0.01f, 0.01f, 1.0f}}}};
 
-        if (stack && enabled)
+        if (camera)
         {
-            for (u32_t slot = 0; slot < static_cast<u32_t>(stack->effects.size()); slot++)
+            for (u32_t slot = 0; slot < static_cast<u32_t>(camera->effects.size()); slot++)
             {
-                material_t* effect = resolve_unique(stack->effects[slot], slot);
+                material_t* effect = resolve_unique(camera->effects[slot], slot);
                 if (!effect || !effect->shader.is_valid()) { continue; }
 
                 if (!ping.valid())
@@ -310,25 +315,18 @@ namespace tau::renderer::post
                     pong = graph::create_image(g, "PostPong", chain_desc);
                 }
                 const graph::image_h dst = chain_src.index == ping.index ? pong : ping;
-                if (!target_matches(effect, chain_desc.format, slot, false)) { continue; }
+                if (!target_matches(effect, chain_desc.format, slot)) { continue; }
 
                 add_fullscreen(g, "PostEffect", effect, chain_src, t.scene_depth, dst, view_hash);
                 chain_src = dst;
             }
         }
 
-        const asset_t<material_t> final_handle =
-            (enabled && stack && stack->final_pass.is_valid()) ? stack->final_pass : g_final_pass;
-        material_t* final_mat =
-            enabled ? resolve_unique(final_handle, POST_FINAL_PASS_SLOT) : assets::get(g_final_pass);
-
-        if (final_mat && final_mat->shader.is_valid() &&
-            !target_matches(final_mat, graph::format(g, t.final_output), POST_FINAL_PASS_SLOT, true))
-        {
-            final_mat = assets::get(g_final_pass);
-        }
+        // an instance per view: the profile writes into it
+        material_t* final_mat = resolve_post_effect(g_final_pass, post_volumes, view_hash, FINAL_PASS_SLOT, true);
         if (final_mat && final_mat->shader.is_valid())
         {
+            apply_profile(*final_mat, profile);
             add_fullscreen(g, "UberPost", final_mat, chain_src, t.scene_depth, t.final_output, view_hash);
         }
     }

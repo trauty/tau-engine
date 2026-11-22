@@ -48,7 +48,8 @@ public OverlayVertexOut overlayVertex(uint vertex_id, uint instance_id, uint bas
     float2 offset = float2(-dir.y, dir.x) * (item.line_width * 0.5f) / half_size;
 
     bool at_b = corner == 2 || corner == 4 || corner == 5;
-    float side = (corner == 1 || corner == 2 || corner == 4) ? -1.0f : 1.0f;
+    // counter-clockwise on screen, the front face
+    float side = (corner == 1 || corner == 2 || corner == 4) ? 1.0f : -1.0f;
 
     float4 clip = at_b ? clip_b : clip_a;
     clip.xy += offset * side * clip.w;

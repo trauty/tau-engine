@@ -71,6 +71,8 @@ namespace tau
 
         bool post_processing = true;
         bool show_colliders = false;
+        // every light's shape, not only the selected ones
+        bool show_lights = false;
 
         std::vector<panel_draw_func> custom_panels;
 

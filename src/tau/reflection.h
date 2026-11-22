@@ -98,6 +98,8 @@ namespace tau::reflection
         prop_flags_e flags = prop_flags_e::NONE;
 
         bool is_list = false;
+        // the inspector skips the field when false; gets the owning struct
+        bool (*visible)(const void* instance) = nullptr;
 
         editor_prop_t() = default;
         editor_prop_t(const char* n) : name(n) {}
@@ -212,16 +214,27 @@ namespace tau::reflection
         template <auto Setter, auto Getter>
         Self& accessor(const char* label, stable_id id, prop_flags_e flags = prop_flags_e::NONE)
         {
+            m_last = flagged(editor_prop_t{label}, flags);
             m_factory.template data<Setter, Getter>(tau::hash_string(id.name), id.name)
-                .template custom<editor_prop_t>(flagged(editor_prop_t{label}, flags));
+                .template custom<editor_prop_t>(m_last);
             return self();
         }
 
         template <auto Setter, auto Getter>
         Self& accessor(const char* label, unit_e unit, stable_id id, prop_flags_e flags = prop_flags_e::NONE)
         {
+            m_last = flagged(editor_prop_t{label, unit}, flags);
             m_factory.template data<Setter, Getter>(tau::hash_string(id.name), id.name)
-                .template custom<editor_prop_t>(flagged(editor_prop_t{label, unit}, flags));
+                .template custom<editor_prop_t>(m_last);
+            return self();
+        }
+
+        // the field before is shown only while Fn(const T&) holds (fields of one light type, say)
+        template <auto Fn>
+        Self& visible_if()
+        {
+            m_last.visible = [](const void* instance) { return Fn(*static_cast<const T*>(instance)); };
+            m_factory.template custom<editor_prop_t>(m_last);
             return self();
         }
 
@@ -247,11 +260,13 @@ namespace tau::reflection
                                   !std::is_same_v<member_t, std::vector<ecs::entity_t>>,
                               "a data asset lives in no world, it cannot name an entity");
             }
-            m_factory.template data<MemberPtr>(id, name).template custom<editor_prop_t>(prop);
+            m_last = prop;
+            m_factory.template data<MemberPtr>(id, name).template custom<editor_prop_t>(m_last);
             return self();
         }
 
         factory<T> m_factory;
+        editor_prop_t m_last;
     };
 
     template <typename T>

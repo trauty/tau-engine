@@ -7,30 +7,20 @@ struct UberPostShader
     [Hidden]
     uint scene_color_tex;
 
-    [Range(0.0, 8.0)]
-    [Tooltip("Linear multiplier applied before the tonemap")]
+    // the rest is written from the view's profile every frame
+    [Hidden]
     float exposure;
-
-    [Enum("Off,ACES,Reinhard")]
+    [Hidden]
     uint tonemap_op;
-
-    [Range(0.0, 1.0)]
-    [Tooltip("0.0 disables vignette")]
+    [Hidden]
     float vignette_strength;
-
-    [Range(0.05, 2.0)]
+    [Hidden]
     float vignette_radius;
-
-    [Range(0.0, 0.5)]
-    [Tooltip("0.0 disables film grain")]
+    [Hidden]
     float grain_strength;
-
-    [Range(0.0, 2.0)]
-    [Tooltip("1.0 is default")]
+    [Hidden]
     float saturation;
-
-    [Range(0.0, 2.0)]
-    [Tooltip("1.0 default")]
+    [Hidden]
     float contrast;
 };
 

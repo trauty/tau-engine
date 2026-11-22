@@ -150,24 +150,6 @@
         },
         {
             "components": {
-                "directional_light_t": {
-                    "casts_shadow": {
-                        "ty": 3,
-                        "v": true
-                    },
-                    "color": {
-                        "ty": 5,
-                        "v": [
-                            1.0,
-                            0.9599999785423279,
-                            0.8999999761581421
-                        ]
-                    },
-                    "intensity": {
-                        "ty": 2,
-                        "v": 3.5
-                    }
-                },
                 "tag_t": {
                     "name": {
                         "ty": 4,
@@ -200,6 +182,30 @@
                             1.0
                         ]
                     }
+                },
+                "light_t": {
+                    "type": {
+                        "ty": 0,
+                        "v": 0,
+                        "n": "SUN"
+                    },
+                    "shadows": {
+                        "ty": 0,
+                        "v": 1,
+                        "n": "ON"
+                    },
+                    "color": {
+                        "ty": 5,
+                        "v": [
+                            1.0,
+                            0.9599999785423279,
+                            0.8999999761581421
+                        ]
+                    },
+                    "intensity": {
+                        "ty": 2,
+                        "v": 28672.0
+                    }
                 }
             }
         },
@@ -222,25 +228,50 @@
                     "near_plane": {
                         "ty": 2,
                         "v": 0.10000000149011612
-                    }
-                },
-                "post_process_t": {
+                    },
+                    "profile": {
+                        "ty": 9,
+                        "v": {
+                            "exposure_mode": {
+                                "ty": 0,
+                                "v": 1,
+                                "n": "AUTO"
+                            },
+                            "compensation": {
+                                "ty": 2,
+                                "v": 0.163499
+                            },
+                            "tonemap": {
+                                "ty": 0,
+                                "v": 1,
+                                "n": "ACES"
+                            },
+                            "contrast": {
+                                "ty": 2,
+                                "v": 1.0
+                            },
+                            "saturation": {
+                                "ty": 2,
+                                "v": 1.0
+                            },
+                            "vignette": {
+                                "ty": 2,
+                                "v": 0.0
+                            },
+                            "vignette_radius": {
+                                "ty": 2,
+                                "v": 0.75
+                            },
+                            "grain": {
+                                "ty": 2,
+                                "v": 0.0
+                            }
+                        }
+                    },
                     "effects": {
                         "ty": 7,
                         "v": {
                             "e": [],
-                            "t": "material"
-                        }
-                    },
-                    "enabled": {
-                        "ty": 3,
-                        "v": true
-                    },
-                    "final_pass": {
-                        "ty": 6,
-                        "v": {
-                            "g": "81dae41f7ec5eca9",
-                            "p": "engine://assets/materials/uberpost.mat",
                             "t": "material"
                         }
                     }

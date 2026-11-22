@@ -182,6 +182,7 @@ namespace tau::editor::data_edit
                 {
                     continue;
                 }
+                if (prop && prop->visible && !prop->visible(reflection::value_data(instance))) { continue; }
 
                 const u32_t path = data::path_hash(parent, id);
                 const char* label = prop ? prop->name : "Unknown";
