@@ -1,7 +1,7 @@
 #include "tau/components/physics.h"
 #include "tau/components/transform.h"
 #include "tau/physics/physics.h"
-#include "tau/rhi/overlay.h"
+#include "tau/render/overlay.h"
 
 #include <algorithm>
 #include <cmath>

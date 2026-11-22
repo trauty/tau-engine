@@ -22,6 +22,8 @@ namespace tau::renderer
     // two colour views own separately named gbuffers
     using pass_execute_func_t = tau::arena_function<void(rendergraph_t&, tau::material_t&)>;
 
+    // legacy block only (passes drawing through it), gone in part 3 of the renderer port; new passes:
+    // frame::register_producer
     TAU_ENGINE_API void register_renderer_feature(u32_t name_hash, i32 order, graph_builder_func_t builder);
 
     // features whose builder is code in that module (see os::module_base_of)

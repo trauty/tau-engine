@@ -192,8 +192,9 @@ namespace tau::renderer::graph
 
     TAU_ENGINE_API image_h create_image(graph_t& g, const char* name, const image_desc_t& desc);
     // kept across frames by name, contents and layout survive; a changed desc starts it over
-    TAU_ENGINE_API image_h persistent_image(graph_t& g, const char* name, const image_desc_t& desc);
-    // final_layout UNDEFINED: left as the last pass used it
+    // key 0: the name's hash
+    TAU_ENGINE_API image_h persistent_image(graph_t& g, const char* name, const image_desc_t& desc, u32_t key = 0);
+    // final_layout UNDEFINED: left as the last pass used it; set: reached even when no pass uses the image
     TAU_ENGINE_API image_h import_image(graph_t& g, const char* name, VkImage image, VkImageView view,
                                         const image_desc_t& desc, VkImageLayout layout, VkImageLayout final_layout,
                                         u32_t sampled_id = NONE);

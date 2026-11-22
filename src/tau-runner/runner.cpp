@@ -7,6 +7,7 @@
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/render/frame.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_timers.h"
 #include "tau/rhi/pipelines.h"
@@ -14,7 +15,6 @@
 #include "tau/rhi/renderdoc.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/rendergraph.h"
 #include "tau/time.h"
 #include "tau/world.h"
 
@@ -51,6 +51,10 @@ namespace tau::runner
         u64_t run_start_ns = 0;
         bool capture_this_frame = false;
         renderer::readback_ticket_t ticket = renderer::READBACK_NONE;
+        renderer::readback_ticket_t ldr_ticket = renderer::READBACK_NONE;
+        VkFormat ldr_format = VK_FORMAT_UNDEFINED;
+        bool hdr_written = false;
+        bool ldr_written = false;
         VkExtent2D captured_extent = {};
         bool ok = true;
 
@@ -85,32 +89,55 @@ namespace tau::runner
 
         f64 seconds_since(u64_t start_ns) { return static_cast<f64>(SDL_GetTicksNS() - start_ns) * 1e-9; }
 
-        void build_dump_pass(renderer::rendergraph_t& graph, ecs::registry_t&)
+        void record_dump(const renderer::graph::record_ctx_t& rc, const void* data)
         {
-            if (!capture_this_frame) { return; }
-
-            const renderer::rg_resource_id color = graph.get_resource("SceneColor"_h);
-            if (color == renderer::RG_NULL_ID) { return; }
-
-            captured_extent = renderer::ctx.render_extent;
-            renderer::rg_pass_t& pass = graph.add_pass("RunnerHdrDump"_h, "RunnerHdrDump");
-            pass.texture_reads = {color};
-            pass.execute_callback = [&graph, color](VkCommandBuffer cmd, ecs::registry_t&)
-            {
-                const VkRect2D rect = {
-                    {0, 0},
-                    captured_extent
-                };
-                ticket =
-                    renderer::record_readback(cmd, graph.get_image(color), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                              VK_IMAGE_ASPECT_COLOR_BIT, 8, rect);
+            const renderer::graph::image_h color = *static_cast<const renderer::graph::image_h*>(data);
+            const VkRect2D rect = {
+                {0, 0},
+                captured_extent
             };
+            ticket =
+                renderer::record_readback(rc.cmd, renderer::graph::image(*rc.graph, color),
+                                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, 8, rect);
         }
 
-        bool write_dump(const std::vector<u8_t>& texels)
+        void build_dump_pass(renderer::graph::graph_t& g, const renderer::frame::targets_t& t, ecs::registry_t&)
         {
-            const std::string path = opts.dump_hdr + "_hdr.bin";
-            const u32_t header[4] = {captured_extent.width, captured_extent.height, 8, HDR_FORMAT_RGBA16F};
+            if (!capture_this_frame || opts.dump_hdr.empty() || !t.scene_color.valid()) { return; }
+
+            captured_extent = renderer::ctx.render_extent;
+            const renderer::graph::pass_h pass = renderer::graph::add_pass(
+                g, "RunnerHdrDump", &record_dump, t.scene_color, renderer::graph::PASS_SIDE_EFFECT);
+            renderer::graph::use(g, pass, t.scene_color, renderer::graph::access_e::TRANSFER_SRC);
+        }
+
+        void record_ldr(const renderer::graph::record_ctx_t& rc, const void* data)
+        {
+            const renderer::graph::image_h output = *static_cast<const renderer::graph::image_h*>(data);
+            const VkRect2D rect = {
+                {0, 0},
+                captured_extent
+            };
+            ldr_ticket =
+                renderer::record_readback(rc.cmd, renderer::graph::image(*rc.graph, output),
+                                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, 4, rect);
+        }
+
+        // after everything, the UI included
+        void build_ldr_pass(renderer::graph::graph_t& g, const renderer::frame::targets_t& t, ecs::registry_t&)
+        {
+            if (!capture_this_frame || opts.dump_ldr.empty() || !t.final_output.valid()) { return; }
+
+            captured_extent = renderer::graph::extent(g, t.final_output);
+            ldr_format = renderer::graph::format(g, t.final_output);
+            const renderer::graph::pass_h pass = renderer::graph::add_pass(
+                g, "RunnerLdrDump", &record_ldr, t.final_output, renderer::graph::PASS_SIDE_EFFECT);
+            renderer::graph::use(g, pass, t.final_output, renderer::graph::access_e::TRANSFER_SRC);
+        }
+
+        bool write_dump(const std::vector<u8_t>& texels, const std::string& path, u32_t texel_size, u32_t format)
+        {
+            const u32_t header[4] = {captured_extent.width, captured_extent.height, texel_size, format};
             std::ofstream file(path, std::ios::binary | std::ios::trunc);
             file.write(reinterpret_cast<const char*>(header), sizeof(header));
             file.write(reinterpret_cast<const char*>(texels.data()), static_cast<std::streamsize>(texels.size()));
@@ -191,8 +218,8 @@ namespace tau::runner
                 renderer::renderdoc::capture_next_frame();
             }
 
-            capture_this_frame =
-                phase == phase_e::RUNNING && !opts.dump_hdr.empty() && opts.frames > 0 && frame + 1 == opts.frames;
+            capture_this_frame = phase == phase_e::RUNNING && (!opts.dump_hdr.empty() || !opts.dump_ldr.empty()) &&
+                                 opts.frames > 0 && frame + 1 == opts.frames;
 
             if (phase == phase_e::RUNNING && opts.timings && seconds_since(run_start_ns) >= TIMING_WARMUP_SECONDS)
             {
@@ -209,9 +236,10 @@ namespace tau::runner
                 if (capture_this_frame)
                 {
                     capture_this_frame = false;
-                    if (ticket == renderer::READBACK_NONE)
+                    if ((!opts.dump_hdr.empty() && ticket == renderer::READBACK_NONE) ||
+                        (!opts.dump_ldr.empty() && ldr_ticket == renderer::READBACK_NONE))
                     {
-                        TAU_LOG_ERROR("RUNNER", "The HDR readback was not recorded (no SceneColor this frame?)");
+                        TAU_LOG_ERROR("RUNNER", "A readback was not recorded (no SceneColor / output this frame?)");
                         ok = false;
                         finish();
                         return;
@@ -229,8 +257,18 @@ namespace tau::runner
             if (phase == phase_e::WAIT_DUMP)
             {
                 std::vector<u8_t> texels;
-                if (!renderer::fetch_readback(ticket, texels)) { return; }
-                ok = write_dump(texels);
+                if (!opts.dump_hdr.empty() && !hdr_written)
+                {
+                    if (!renderer::fetch_readback(ticket, texels)) { return; }
+                    ok &= write_dump(texels, opts.dump_hdr + "_hdr.bin", 8, HDR_FORMAT_RGBA16F);
+                    hdr_written = true;
+                }
+                if (!opts.dump_ldr.empty() && !ldr_written)
+                {
+                    if (!renderer::fetch_readback(ldr_ticket, texels)) { return; }
+                    ok &= write_dump(texels, opts.dump_ldr + "_ldr.bin", 4, static_cast<u32_t>(ldr_format));
+                    ldr_written = true;
+                }
                 finish();
             }
         }
@@ -256,6 +294,7 @@ namespace tau::runner
             }
             else if (key == "--frames") { good = parse_number(value, out.frames) && out.frames > 0; }
             else if (key == "--dump-hdr") { out.dump_hdr = value; }
+            else if (key == "--dump-ldr") { out.dump_ldr = value; }
             else if (key == "--timings") { out.timings = true; }
             else if (key == "--no-vsync") { out.vsync = false; }
             else if (key == "--headless") { out.headless = true; }
@@ -281,9 +320,9 @@ namespace tau::runner
             }
         }
 
-        if (!out.dump_hdr.empty() && out.frames == 0)
+        if ((!out.dump_hdr.empty() || !out.dump_ldr.empty()) && out.frames == 0)
         {
-            TAU_LOG_ERROR("RUNNER", "--dump-hdr needs --frames");
+            TAU_LOG_ERROR("RUNNER", "--dump-hdr / --dump-ldr need --frames");
             return false;
         }
         if (out.headless && out.width == 0)
@@ -324,8 +363,12 @@ namespace tau::runner
         }
         if (!opts.dump_hdr.empty())
         {
-            renderer::register_renderer_feature("RunnerHdrDump"_h, renderer::FEATURE_ORDER_AFTER_POST - 1,
-                                                &build_dump_pass);
+            renderer::frame::register_producer("RunnerHdrDump"_h, renderer::FEATURE_ORDER_AFTER_POST - 1,
+                                               &build_dump_pass);
+        }
+        if (!opts.dump_ldr.empty())
+        {
+            renderer::frame::register_producer("RunnerLdrDump"_h, renderer::FEATURE_ORDER_UI + 10, &build_ldr_pass);
         }
         std::printf("runner: GPU %s (%s%s)\n", renderer::ctx.properties.deviceName,
                     renderer::ctx.caps.ray_query ? "ray query" : "compat",

@@ -75,6 +75,8 @@ namespace tau::renderer
         VkFormat get_format(rg_resource_id id) const;
         VkImage get_image(rg_resource_id id) const;
         u32_t get_bindless_id(rg_resource_id id) const;
+        // image, view, desc and the layout execute() left it in
+        const rg_resource_t* find(rg_resource_id id) const;
 
         void add_alias(u32_t name_hash, u32_t alias_name);
 

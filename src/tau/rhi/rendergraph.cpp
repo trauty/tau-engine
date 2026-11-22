@@ -437,6 +437,9 @@ namespace tau::renderer
 
     VkImage rendergraph_t::get_image(rg_resource_id id) const { return resources[id].image; }
 
+    const rg_resource_t* rendergraph_t::find(rg_resource_id id) const
+    { return id < active_resource_count ? &resources[id] : nullptr; }
+
     u32_t rendergraph_t::get_bindless_id(rg_resource_id id) const { return resources[id].bindless_id; }
 
     void rendergraph_t::add_alias(u32_t alias_name, u32_t target_name) { aliases.push_back({alias_name, target_name}); }

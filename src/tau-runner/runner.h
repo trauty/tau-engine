@@ -19,6 +19,8 @@ namespace tau::runner
         u32_t frames = 0;
         // PREFIX_hdr.bin: last SceneColor, RGBA16F, 16 B header
         std::string dump_hdr;
+        // PREFIX_ldr.bin: the final output after every pass, 4 bytes per texel, 16 B header
+        std::string dump_ldr;
         bool timings = false;
         bool vsync = true;
         // wall seconds after loading

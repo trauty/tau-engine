@@ -20,10 +20,10 @@ int main(int argc, char* argv[])
     tau::runner::options_t options;
     if (argc < 2 || !tau::project_t::load(argv[1], project) || !tau::runner::parse(argc, argv, 2, options))
     {
-        TAU_LOG_FATAL("RUNNER",
-                      "Usage: tau-runner <project> [--scene=PATH] [--camera=NAME] [--size=WxH] [--frames=N] "
-                      "[--dump-hdr=PREFIX] [--timings] [--no-vsync] [--quit-after=SECONDS] [--headless] [--compat] "
-                      "[--validation] [--renderdoc] [--capture-frame=N]");
+        TAU_LOG_FATAL("RUNNER", "Usage: tau-runner <project> [--scene=PATH] [--camera=NAME] [--size=WxH] [--frames=N] "
+                                "[--dump-hdr=PREFIX] [--dump-ldr=PREFIX] [--timings] [--no-vsync] "
+                                "[--quit-after=SECONDS] [--headless] [--compat] "
+                                "[--validation] [--renderdoc] [--capture-frame=N]");
         return -1;
     }
 

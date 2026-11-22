@@ -20,10 +20,11 @@
 #include "tau/memory/linear_allocator.h"
 #include "tau/os.h"
 #include "tau/profiling.h"
+#include "tau/render/frame.h"
+#include "tau/render/overlay.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/frame_upload.h"
 #include "tau/rhi/gpu_timers.h"
-#include "tau/rhi/overlay.h"
 #include "tau/rhi/pipelines.h"
 #include "tau/rhi/readback.h"
 #include "tau/rhi/renderdoc.h"
@@ -174,43 +175,6 @@ namespace tau::renderer
             {
                 TAU_LOG_WARN("VULKAN", "Failed to recreate Vulkan surface on resume");
             }
-        }
-    } // namespace
-
-    namespace
-    {
-        bool post_pass_target_matches(const material_t* effect, VkFormat dst_format, u32_t slot, bool is_final)
-        {
-            shader_t* shader = assets::get(effect->shader);
-            if (!shader || shader->target_formats.empty()) { return true; } // nothing to check against
-
-            if (shader->target_formats[0] == dst_format) { return true; }
-
-            static std::mutex warned_mutex;
-            static std::unordered_set<u64_t> warned;
-            {
-                const u64_t warn_key = (static_cast<u64_t>(is_final ? 1u : 0u) << 32) | slot;
-                std::scoped_lock lock(warned_mutex);
-                if (!warned.insert(warn_key).second) { return false; }
-            }
-
-            if (is_final)
-            {
-                TAU_LOG_ERROR("RENDERER",
-                              "Final pass renders to format {} but the display image is {}. A final pass has to "
-                              "declare [RenderTarget(\"Swapchain\")], only chain effects target the HDR chain. "
-                              "Falling back to the stock final pass.",
-                              static_cast<i32>(shader->target_formats[0]), static_cast<i32>(dst_format));
-            }
-            else
-            {
-                TAU_LOG_ERROR("RENDERER",
-                              "Post effect in slot {} renders to format {} but the chain runs at {}. A chain effect "
-                              "has to declare [RenderTarget(\"RGBA16_FLOAT\")], only the final pass targets the "
-                              "display, skipoping it.",
-                              slot, static_cast<i32>(shader->target_formats[0]), static_cast<i32>(dst_format));
-            }
-            return false;
         }
     } // namespace
 
@@ -451,139 +415,6 @@ namespace tau::renderer
             vkCmdDrawIndirectCount(cmd, vgr.indirect_buffer, p.first_object * 16, vgr.draw_counts_buffer,
                                    p.pipeline_index * sizeof(u32_t), p.object_count, 16);
         }
-    }
-
-    static f32 volume_influence(const post_volume_t& volume, const transform_t& transform, const vec3& point)
-    {
-        if (volume.is_global) { return 1.0f; }
-
-        const f32 center[3] = {transform.world_mat[3][0], transform.world_mat[3][1], transform.world_mat[3][2]};
-        const f32 half[3] = {std::abs(volume.extents.x), std::abs(volume.extents.y), std::abs(volume.extents.z)};
-        const f32 p[3] = {point.x, point.y, point.z};
-
-        f32 dist_sq = 0.0f;
-        for (u32_t i = 0; i < 3; i++)
-        {
-            const f32 outside = std::abs(p[i] - center[i]) - half[i];
-            if (outside > 0.0f) { dist_sq += outside * outside; }
-        }
-
-        if (dist_sq <= 0.0f) { return 1.0f; }
-        if (volume.blend_distance <= 0.0f) { return 0.0f; }
-
-        const f32 t = std::sqrt(dist_sq) / volume.blend_distance;
-        return (t >= 1.0f) ? 0.0f : (1.0f - t);
-    }
-
-    static void blend_property(u8* dst, const u8* src, const shader_member_t& member, f32 w)
-    {
-        auto lerp_floats = [&](u32_t count)
-        {
-            for (u32_t i = 0; i < count; i++)
-            {
-                f32 a, b;
-                std::memcpy(&a, dst + member.offset + i * sizeof(f32), sizeof(f32));
-                std::memcpy(&b, src + member.offset + i * sizeof(f32), sizeof(f32));
-                const f32 blended = a + (b - a) * w;
-                std::memcpy(dst + member.offset + i * sizeof(f32), &blended, sizeof(f32));
-            }
-        };
-
-        switch (member.type)
-        {
-        case shader_member_type_e::FLOAT: lerp_floats(1); break;
-        case shader_member_type_e::FLOAT2: lerp_floats(2); break;
-        case shader_member_type_e::FLOAT3: lerp_floats(3); break;
-        case shader_member_type_e::FLOAT4: lerp_floats(4); break;
-        default:
-            if (w >= 0.5f) { std::memcpy(dst + member.offset, src + member.offset, member.size); }
-            break;
-        }
-    }
-
-    struct volume_sample_t
-    {
-        const tau::material_t* overrides;
-        asset_t<shader_t> shader;
-        f32 weight;
-        i32_t priority;
-    };
-
-    namespace
-    {
-        // post process scratch, kept between frames for its capacity alone
-        std::vector<volume_sample_t> post_volumes;
-        std::vector<const material_t*> bound_materials;
-    } // namespace
-
-    // fills `samples` so the caller can hand the same buffer back every frame
-    static void gather_post_volumes(ecs::registry_t& reg, const vec3& view_pos, std::vector<volume_sample_t>& samples)
-    {
-        samples.clear();
-
-        for (auto [entity, volume, transform] : reg.view<post_volume_t, transform_t>().each())
-        {
-            if (!volume.overrides.is_valid()) { continue; }
-
-            tau::material_t* over = assets::get(volume.overrides);
-            if (!over || !over->shader.is_valid()) { continue; }
-            if (over->authored_properties.empty()) { continue; }
-
-            const f32 w = volume_influence(volume, transform, view_pos) * volume.weight;
-            if (w <= 0.0f) { continue; }
-
-            samples.push_back({over, over->shader, std::min(w, 1.0f), volume.priority});
-        }
-
-        std::stable_sort(samples.begin(), samples.end(),
-                         [](const volume_sample_t& a, const volume_sample_t& b) { return a.priority < b.priority; });
-    }
-
-    static tau::material_t* resolve_post_effect(asset_t<material_t> effect_handle,
-                                                const std::vector<volume_sample_t>& volumes, u32_t view_name_hash,
-                                                u32_t slot, bool force_instance)
-    {
-        tau::material_t* base = assets::get(effect_handle);
-        if (!base || !base->shader.is_valid()) { return nullptr; }
-
-        // static: this runs once per post effect per frame and the list is never held past the call
-        static std::vector<const volume_sample_t*> influences;
-        influences.clear();
-
-        for (const volume_sample_t& sample : volumes)
-        {
-            if (sample.shader == base->shader) { influences.push_back(&sample); }
-        }
-
-        if (influences.empty() && !force_instance) { return base; }
-
-        const u64_t key = (static_cast<u64_t>(view_name_hash) << 32) | slot;
-        auto it = ctx.resolved_post_effects.find(key);
-        if (it == ctx.resolved_post_effects.end() || it->second->shader != base->shader)
-        {
-            auto instance = std::make_unique<tau::material_t>(base->shader);
-            it = ctx.resolved_post_effects.insert_or_assign(key, std::move(instance)).first;
-        }
-
-        tau::material_t& resolved = *it->second;
-        resolved.data = base->data;
-
-        const shader_t* shader = assets::get(base->shader);
-        if (shader)
-        {
-            for (const volume_sample_t* inf : influences)
-            {
-                for (u32_t name_hash : inf->overrides->authored_properties)
-                {
-                    const shader_member_t* member = shader->module.members.find(name_hash);
-                    if (member == nullptr) { continue; }
-                    blend_property(resolved.data.data(), inf->overrides->data.data(), *member, inf->weight);
-                }
-            }
-        }
-
-        resolved.dirty_frames = MAX_FRAMES_IN_FLIGHT;
-        return &resolved;
     }
 
     static u32_t view_global_offset(const per_frame_t& fd, u32_t view_name_hash)
@@ -1196,6 +1027,9 @@ namespace tau::renderer
         rendergraph.profiling_vk_ctx = tracy_vk_ctx;
 
         vkDestroyCommandPool(ctx.device, tracy_pool, nullptr);
+        frame::init(tracy_vk_ctx);
+#else
+        frame::init(nullptr);
 #endif
 
         auto create_mapped_buffer = [](const char* name, VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer,
@@ -1313,6 +1147,7 @@ namespace tau::renderer
         gpu_timers::shutdown();
         overlay::shutdown();
         frame_upload::shutdown();
+        frame::shutdown();
         pipelines::shutdown();
         save_pipeline_cache();
         if (ctx.pipeline_cache != VK_NULL_HANDLE)
@@ -2114,12 +1949,6 @@ namespace tau::renderer
 
         rendergraph.clear();
 
-        const rg_resource_id swapchain_res =
-            ctx.caps.headless ? RG_NULL_ID
-                              : rendergraph.import_image("Swapchain"_h, "Swapchain", ctx.swapchain.images[index],
-                                                         ctx.swapchain.views[index], ctx.swapchain.format,
-                                                         ctx.swapchain.extent.width, ctx.swapchain.extent.height);
-
         // headless: offscreen target, size from the runner
         const output_target_t default_output = ctx.caps.headless ? output_target_t{"HeadlessOutput"_h, {1280, 720}}
                                                                  : output_target_t{"Swapchain"_h, ctx.swapchain.extent};
@@ -2162,22 +1991,6 @@ namespace tau::renderer
         };
 
         rendergraph.create_image("SceneDepth"_h, "SceneDepth", depth_desc);
-
-        if (output_to_swapchain) { rendergraph.add_alias("FinalOutput"_h, "Swapchain"_h); }
-        else
-        {
-            image_desc_t output_desc = {
-                .width = ctx.render_extent.width,
-                .height = ctx.render_extent.height,
-                .format = ctx.swapchain.format,
-                .usage =
-                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
-            };
-
-            rendergraph.create_image(final_output.target_hash, "OutputTarget", output_desc);
-            rendergraph.add_alias("FinalOutput"_h, final_output.target_hash);
-        }
 
         rg_resource_id shadow_atlas_res = RG_NULL_ID;
         rg_resource_id punctual_atlas_res = RG_NULL_ID;
@@ -2354,134 +2167,8 @@ namespace tau::renderer
             }
         }
 
-        size_t feature_idx = 0;
-        for (; feature_idx < custom_renderer_features.size(); feature_idx++)
-        {
-            const renderer_feature_t& feature = custom_renderer_features[feature_idx];
-            if (feature.order >= FEATURE_ORDER_AFTER_POST) { break; }
-            feature.builder(rendergraph, reg);
-        }
-
-        {
-            const post_process_t* stack = nullptr;
-            ecs::entity_t cam = camera_system::get_active_camera(reg);
-            if (cam != ecs::NULL_ENTITY && reg.all_of<post_process_t>(cam))
-            {
-                const post_process_t& candidate = reg.get<post_process_t>(cam);
-                if (candidate.enabled) { stack = &candidate; }
-            }
-
-            vec3 view_pos = {0.0f, 0.0f, 0.0f};
-            u32_t post_view_hash = "PrimaryView"_h;
-            rg_resource_id post_depth = RG_NULL_ID;
-            for (const render_view_t& v : frame_views)
-            {
-                if (v.kind == view_kind_e::COLOR && v.name_hash == "PrimaryView"_h)
-                {
-                    view_pos = v.position;
-                    post_view_hash = v.name_hash;
-                    post_depth = rendergraph.get_resource(v.depth_target_hash);
-                    break;
-                }
-            }
-            // no colour view this frame (an empty scene has no camera), but a post effect declaring depth_tex
-            // still gets the primary depth
-            if (post_depth == RG_NULL_ID) { post_depth = rendergraph.get_resource("SceneDepth"_h); }
-
-            const bool* post_flag = view_post_processing.find(post_view_hash);
-            const bool post_enabled = (post_flag == nullptr) || *post_flag;
-
-            post_volumes.clear();
-            if (post_enabled) { gather_post_volumes(reg, view_pos, post_volumes); }
-
-            // a handful of pointers at most, so a linear scan over a flat array beats hashing
-            bound_materials.clear();
-
-            auto already_bound = [](const material_t* mat)
-            {
-                for (const material_t* bound : bound_materials)
-                {
-                    if (bound == mat) { return true; }
-                }
-
-                return false;
-            };
-
-            auto resolve_unique = [&](asset_t<material_t> handle, u32_t slot) -> material_t*
-            {
-                material_t* mat = resolve_post_effect(handle, post_volumes, post_view_hash, slot, false);
-                if (!mat) { return nullptr; }
-
-                if (!already_bound(mat))
-                {
-                    bound_materials.push_back(mat);
-                    return mat;
-                }
-
-                mat = resolve_post_effect(handle, post_volumes, post_view_hash, slot, true);
-                if (mat) { bound_materials.push_back(mat); }
-
-                return mat;
-            };
-
-            rg_resource_id chain_src = rendergraph.get_resource("SceneColor"_h);
-            rg_resource_id ping = RG_NULL_ID;
-            rg_resource_id pong = RG_NULL_ID;
-
-            if (stack && post_enabled)
-            {
-                for (u32_t slot = 0; slot < static_cast<u32_t>(stack->effects.size()); slot++)
-                {
-                    material_t* effect = resolve_unique(stack->effects[slot], slot);
-                    if (!effect || !effect->shader.is_valid()) { continue; }
-
-                    if (ping == RG_NULL_ID)
-                    {
-                        ping = rendergraph.create_image("PostPing"_h, "PostPing", color_desc);
-                        pong = rendergraph.create_image("PostPong"_h, "PostPong", color_desc);
-                    }
-
-                    const rg_resource_id dst = (chain_src == ping) ? pong : ping;
-
-                    if (!post_pass_target_matches(effect, rendergraph.get_format(dst), slot, false)) { continue; }
-
-                    const rg_resource_id effect_reads[] = {chain_src};
-                    const rg_resource_id effect_writes[] = {dst};
-
-                    add_fullscreen_pass(rendergraph, "PostEffect"_h + slot, "PostEffect", effect, effect_reads,
-                                        effect_writes, {}, post_view_hash, post_depth);
-                    chain_src = dst;
-                }
-            }
-
-            const asset_t<material_t> final_handle =
-                (post_enabled && stack && stack->final_pass.is_valid()) ? stack->final_pass : ctx.uberpost_material;
-            material_t* final_mat =
-                post_enabled ? resolve_unique(final_handle, POST_FINAL_PASS_SLOT) : assets::get(ctx.uberpost_material);
-
-            rg_resource_id final_target = rendergraph.get_resource("FinalOutput"_h);
-            const VkFormat final_format = rendergraph.get_format(final_target);
-
-            if (final_mat && final_mat->shader.is_valid() &&
-                !post_pass_target_matches(final_mat, final_format, POST_FINAL_PASS_SLOT, true))
-            {
-                final_mat = assets::get(ctx.uberpost_material);
-            }
-
-            if (final_mat && final_mat->shader.is_valid())
-            {
-                const rg_resource_id final_reads[] = {chain_src};
-                const rg_resource_id final_writes[] = {final_target};
-
-                add_fullscreen_pass(rendergraph, "UberPost"_h, "UberPost", final_mat, final_reads, final_writes, {},
-                                    post_view_hash, post_depth);
-            }
-        }
-
-        for (; feature_idx < custom_renderer_features.size(); feature_idx++)
-        {
-            custom_renderer_features[feature_idx].builder(rendergraph, reg);
-        }
+        // the legacy block's features (picking ids, selection mask); everything else is a frame producer
+        for (const renderer_feature_t& feature : custom_renderer_features) { feature.builder(rendergraph, reg); }
 
         rendergraph.compile(frame_data);
 
@@ -2515,13 +2202,6 @@ namespace tau::renderer
             }
         }
 
-        ctx.output_texture_ids.clear();
-        if (!output_to_swapchain)
-        {
-            ctx.output_texture_ids[final_output.target_hash] =
-                rendergraph.get_bindless_id(rendergraph.get_resource(final_output.target_hash));
-        }
-
         rendergraph.execute(cmd, reg);
 
         if (punctual_atlas_res != RG_NULL_ID)
@@ -2529,15 +2209,47 @@ namespace tau::renderer
             ctx.punctual_shadow_atlas.layout = rendergraph.get_layout(punctual_atlas_res);
         }
 
-        if (swapchain_res != RG_NULL_ID)
+        // hand over to graph v2: post, overlay, editor passes, UI
+        frame::inputs_t inputs;
+        auto hand_over = [&](rg_resource_id id, const char* name)
         {
-            const VkImageLayout final_layout = rendergraph.get_layout(swapchain_res);
-            if (final_layout != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+            const rg_resource_t* r = rendergraph.find(id);
+            if (r == nullptr || inputs.legacy_count >= frame::inputs_t::MAX_LEGACY) { return; }
+            inputs.legacy[inputs.legacy_count++] = {
+                name,          r->image,      r->view, r->desc.format, {r->desc.width, r->desc.height},
+                r->cur_layout, r->bindless_id
+            };
+        };
+
+        inputs.post_view_hash = "PrimaryView"_h;
+        rg_resource_id post_depth = RG_NULL_ID;
+        for (const render_view_t& v : frame_views)
+        {
+            if (v.kind == view_kind_e::COLOR && v.name_hash == "PrimaryView"_h)
             {
-                transition_image(cmd, ctx.swapchain.images[index], final_layout, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                                 VK_IMAGE_ASPECT_COLOR_BIT);
+                inputs.post_view_pos = v.position;
+                post_depth = rendergraph.get_resource(v.depth_target_hash);
+                break;
             }
         }
+        // no colour view (an empty scene has no camera): the primary depth
+        if (post_depth == RG_NULL_ID) { post_depth = rendergraph.get_resource("SceneDepth"_h); }
+        const bool* post_flag = view_post_processing.find(inputs.post_view_hash);
+        inputs.post_enabled = post_flag == nullptr || *post_flag;
+
+        hand_over(rendergraph.get_resource("SceneColor"_h), "SceneColor");
+        hand_over(post_depth, "SceneDepth");
+        hand_over(rendergraph.get_resource("EditorSelectionMask"_h), "EditorSelectionMask");
+
+        if (!ctx.caps.headless)
+        {
+            inputs.swapchain = ctx.swapchain.images[index];
+            inputs.swapchain_view = ctx.swapchain.views[index];
+        }
+        inputs.to_swapchain = output_to_swapchain;
+        inputs.output_hash = final_output.target_hash;
+        inputs.output_extent = ctx.render_extent;
+        frame::record(cmd, reg, inputs);
 
         gpu_timers::end_frame(cmd);
         vkEndCommandBuffer(cmd);

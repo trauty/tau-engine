@@ -8,11 +8,11 @@
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/math.h"
+#include "tau/render/frame.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
 #include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
-#include "tau/rhi/rendergraph.h"
 #include "tau/rhi/vulkan.h"
 #include "vulkan/vulkan_core.h"
 
@@ -580,6 +580,183 @@ namespace tau::editor::imgui
         pio.Renderer_SwapBuffers = viewport_swap_buffers;
     }
 
+    namespace
+    {
+        void record_ui(const renderer::graph::record_ctx_t& rc, const void*)
+        {
+            VkCommandBuffer cmd = rc.cmd;
+            if (!ctx.draw_data || ctx.draw_data->CmdListsCount == 0) { return; }
+
+            if (ctx.draw_data->DisplaySize.x <= 0.0f || ctx.draw_data->DisplaySize.y <= 0.0f) { return; }
+
+            ImDrawData* draw_data = ctx.draw_data;
+            u32_t cur_frame = renderer::ctx.cur_frame;
+
+            size_t vertex_size = draw_data->TotalVtxCount * sizeof(ImDrawVert);
+            size_t index_size = draw_data->TotalIdxCount * sizeof(u32_t);
+
+            if (ctx.vertex_buffer_size[cur_frame] < vertex_size)
+            {
+                if (ctx.vertex_buffer[cur_frame])
+                {
+                    vmaDestroyBuffer(renderer::ctx.allocator, ctx.vertex_buffer[cur_frame],
+                                     ctx.vertex_alloc[cur_frame]);
+                }
+                VkBufferCreateInfo buf_info = {
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                    .size = vertex_size + 5000,
+                    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                };
+                VmaAllocationCreateInfo alloc_info = {
+                    .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                    .usage = VMA_MEMORY_USAGE_AUTO,
+                    .requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                };
+                VmaAllocationInfo vma_alloc_info;
+                VK_CHECK(vmaCreateBuffer(renderer::ctx.allocator, &buf_info, &alloc_info, &ctx.vertex_buffer[cur_frame],
+                                         &ctx.vertex_alloc[cur_frame], &vma_alloc_info));
+                ctx.vertex_mapped[cur_frame] = vma_alloc_info.pMappedData;
+                ctx.vertex_buffer_size[cur_frame] = vertex_size + 5000;
+            }
+
+            if (ctx.index_buffer_size[cur_frame] < index_size)
+            {
+                if (ctx.index_buffer[cur_frame])
+                {
+                    vmaDestroyBuffer(renderer::ctx.allocator, ctx.index_buffer[cur_frame], ctx.index_alloc[cur_frame]);
+                }
+                VkBufferCreateInfo buf_info = {
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                    .size = index_size + 5000,
+                    .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                };
+                VmaAllocationCreateInfo alloc_info = {
+                    .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                    .usage = VMA_MEMORY_USAGE_AUTO,
+                    .requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                };
+                VmaAllocationInfo vma_alloc_info;
+                VK_CHECK(vmaCreateBuffer(renderer::ctx.allocator, &buf_info, &alloc_info, &ctx.index_buffer[cur_frame],
+                                         &ctx.index_alloc[cur_frame], &vma_alloc_info));
+                ctx.index_mapped[cur_frame] = vma_alloc_info.pMappedData;
+                ctx.index_buffer_size[cur_frame] = index_size + 5000;
+            }
+
+            ImDrawVert* vtx_dst = (ImDrawVert*)ctx.vertex_mapped[cur_frame];
+            u32_t* idx_dst = (u32_t*)ctx.index_mapped[cur_frame];
+
+            i32 global_vtx_offset = 0;
+
+            for (i32 i = 0; i < draw_data->CmdListsCount; i++)
+            {
+                const ImDrawList* cmd_list = draw_data->CmdLists[i];
+                std::memcpy(vtx_dst, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
+
+                for (i32 j = 0; j < cmd_list->IdxBuffer.Size; j++)
+                {
+                    idx_dst[j] = (u32_t)(cmd_list->IdxBuffer.Data[j]) + global_vtx_offset;
+                }
+
+                vtx_dst += cmd_list->VtxBuffer.Size;
+                idx_dst += cmd_list->IdxBuffer.Size;
+                global_vtx_offset += cmd_list->VtxBuffer.Size;
+            }
+
+            vec2 scale = {
+                2.0f / draw_data->DisplaySize.x,
+                2.0f / draw_data->DisplaySize.y,
+            };
+            vec2 translate = {
+                -1.0f - draw_data->DisplayPos.x * scale.x,
+                -1.0f - draw_data->DisplayPos.y * scale.y,
+            };
+
+            material_t* mat = &ctx.material;
+
+            mat->set_property("scale"_h, scale);
+            mat->set_property("translate"_h, translate);
+            mat->set_property("vertex_buffer"_h, renderer::get_buffer_address(ctx.vertex_buffer[cur_frame]));
+            mat->sync();
+
+            shader_t* shader = assets::get(mat->shader);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->get_pipeline(pipeline_variant_e::FORWARD));
+
+            VkDescriptorSet sets[] = {renderer::res_system.global_set, renderer::res_system.frame_set};
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
+                                    &renderer::ctx.per_frame_objects[renderer::ctx.cur_frame].global_data_offset);
+
+            vkCmdBindIndexBuffer(cmd, ctx.index_buffer[cur_frame], 0, VK_INDEX_TYPE_UINT32);
+
+            gpu::PushConstants pc = {
+                .material_buffer = renderer::res_system.material_heap.device_address,
+                .custom_data = mat->heap_offset[cur_frame],
+            };
+
+            VkViewport viewport = {0, 0, draw_data->DisplaySize.x, draw_data->DisplaySize.y, 0.0f, 1.0f};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            i32 global_index_offset = 0;
+            ImVec2 clip_off = draw_data->DisplayPos;
+
+            for (i32 i = 0; i < draw_data->CmdListsCount; i++)
+            {
+                const ImDrawList* cmd_list = draw_data->CmdLists[i];
+                for (i32 cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
+                {
+                    const ImDrawCmd* cmd_ptr = &cmd_list->CmdBuffer[cmd_i];
+
+                    ImVec2 clip_min(cmd_ptr->ClipRect.x - clip_off.x, cmd_ptr->ClipRect.y - clip_off.y);
+                    ImVec2 clip_max(cmd_ptr->ClipRect.z - clip_off.x, cmd_ptr->ClipRect.w - clip_off.y);
+
+                    clip_min.x = std::max(0.0f, clip_min.x);
+                    clip_min.y = std::max(0.0f, clip_min.y);
+
+                    float max_w = (f32)renderer::ctx.swapchain.extent.width;
+                    float max_h = (f32)renderer::ctx.swapchain.extent.height;
+
+                    clip_max.x = std::min(max_w, clip_max.x);
+                    clip_max.y = std::min(max_h, clip_max.y);
+
+                    if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y) { continue; }
+
+                    VkRect2D scissor = {
+                        {(i32_t)clip_min.x,                (i32_t)clip_min.y               },
+                        {(u32_t)(clip_max.x - clip_min.x), (u32_t)(clip_max.y - clip_min.y)}
+                    };
+                    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+                    pc.texture_id = (u32_t)(intptr_t)cmd_ptr->GetTexID();
+                    vkCmdPushConstants(cmd, shader->pipeline_layout,
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                       sizeof(gpu::PushConstants), &pc);
+                    vkCmdDrawIndexed(cmd, cmd_ptr->ElemCount, 1, cmd_ptr->IdxOffset + global_index_offset, 0, 0);
+                }
+
+                global_index_offset += cmd_list->IdxBuffer.Size;
+            }
+        }
+
+        // the game view is sampled by the UI, the swapchain cleared under it
+        void build_ui(renderer::graph::graph_t& g, const renderer::frame::targets_t& t, ecs::registry_t&)
+        {
+            if (!t.swapchain.valid()) { return; }
+            const renderer::graph::pass_h pass = renderer::graph::add_pass(g, "ImGuiPass", &record_ui);
+            if (t.final_is_swapchain)
+            {
+                renderer::graph::use(g, pass, t.swapchain, renderer::graph::access_e::COLOR_READ_WRITE);
+            }
+            else
+            {
+                renderer::graph::use(g, pass, t.final_output, renderer::graph::access_e::SAMPLED,
+                                     renderer::graph::load_e::LOAD, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
+                renderer::graph::use(g, pass, t.swapchain, renderer::graph::access_e::COLOR_WRITE,
+                                     renderer::graph::load_e::CLEAR);
+            }
+        }
+    } // namespace
+
     void init()
     {
 
@@ -728,178 +905,7 @@ namespace tau::editor::imgui
             });
         }
 
-        renderer::register_renderer_feature(
-            "ImGui"_h, renderer::FEATURE_ORDER_UI,
-            [](renderer::rendergraph_t& graph, ecs::registry_t&)
-            {
-                renderer::rg_pass_t& pass = graph.add_pass("ImGuiPass"_h, "ImGuiPass");
-
-                pass.color_writes = {graph.get_resource("Swapchain"_h)};
-                pass.texture_reads.push_back(graph.get_resource("FinalOutput"_h));
-
-                pass.execute_callback = [](VkCommandBuffer cmd, ecs::registry_t&)
-                {
-                    if (!ctx.draw_data || ctx.draw_data->CmdListsCount == 0) { return; }
-
-                    if (ctx.draw_data->DisplaySize.x <= 0.0f || ctx.draw_data->DisplaySize.y <= 0.0f) { return; }
-
-                    ImDrawData* draw_data = ctx.draw_data;
-                    u32_t cur_frame = renderer::ctx.cur_frame;
-
-                    size_t vertex_size = draw_data->TotalVtxCount * sizeof(ImDrawVert);
-                    size_t index_size = draw_data->TotalIdxCount * sizeof(u32_t);
-
-                    if (ctx.vertex_buffer_size[cur_frame] < vertex_size)
-                    {
-                        if (ctx.vertex_buffer[cur_frame])
-                        {
-                            vmaDestroyBuffer(renderer::ctx.allocator, ctx.vertex_buffer[cur_frame],
-                                             ctx.vertex_alloc[cur_frame]);
-                        }
-                        VkBufferCreateInfo buf_info = {
-                            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                            .size = vertex_size + 5000,
-                            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                        };
-                        VmaAllocationCreateInfo alloc_info = {
-                            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                                     VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-                            .usage = VMA_MEMORY_USAGE_AUTO,
-                            .requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        };
-                        VmaAllocationInfo vma_alloc_info;
-                        VK_CHECK(vmaCreateBuffer(renderer::ctx.allocator, &buf_info, &alloc_info,
-                                                 &ctx.vertex_buffer[cur_frame], &ctx.vertex_alloc[cur_frame],
-                                                 &vma_alloc_info));
-                        ctx.vertex_mapped[cur_frame] = vma_alloc_info.pMappedData;
-                        ctx.vertex_buffer_size[cur_frame] = vertex_size + 5000;
-                    }
-
-                    if (ctx.index_buffer_size[cur_frame] < index_size)
-                    {
-                        if (ctx.index_buffer[cur_frame])
-                        {
-                            vmaDestroyBuffer(renderer::ctx.allocator, ctx.index_buffer[cur_frame],
-                                             ctx.index_alloc[cur_frame]);
-                        }
-                        VkBufferCreateInfo buf_info = {
-                            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                            .size = index_size + 5000,
-                            .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                        };
-                        VmaAllocationCreateInfo alloc_info = {
-                            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                                     VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-                            .usage = VMA_MEMORY_USAGE_AUTO,
-                            .requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        };
-                        VmaAllocationInfo vma_alloc_info;
-                        VK_CHECK(vmaCreateBuffer(renderer::ctx.allocator, &buf_info, &alloc_info,
-                                                 &ctx.index_buffer[cur_frame], &ctx.index_alloc[cur_frame],
-                                                 &vma_alloc_info));
-                        ctx.index_mapped[cur_frame] = vma_alloc_info.pMappedData;
-                        ctx.index_buffer_size[cur_frame] = index_size + 5000;
-                    }
-
-                    ImDrawVert* vtx_dst = (ImDrawVert*)ctx.vertex_mapped[cur_frame];
-                    u32_t* idx_dst = (u32_t*)ctx.index_mapped[cur_frame];
-
-                    i32 global_vtx_offset = 0;
-
-                    for (i32 i = 0; i < draw_data->CmdListsCount; i++)
-                    {
-                        const ImDrawList* cmd_list = draw_data->CmdLists[i];
-                        std::memcpy(vtx_dst, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
-
-                        for (i32 j = 0; j < cmd_list->IdxBuffer.Size; j++)
-                        {
-                            idx_dst[j] = (u32_t)(cmd_list->IdxBuffer.Data[j]) + global_vtx_offset;
-                        }
-
-                        vtx_dst += cmd_list->VtxBuffer.Size;
-                        idx_dst += cmd_list->IdxBuffer.Size;
-                        global_vtx_offset += cmd_list->VtxBuffer.Size;
-                    }
-
-                    vec2 scale = {
-                        2.0f / draw_data->DisplaySize.x,
-                        2.0f / draw_data->DisplaySize.y,
-                    };
-                    vec2 translate = {
-                        -1.0f - draw_data->DisplayPos.x * scale.x,
-                        -1.0f - draw_data->DisplayPos.y * scale.y,
-                    };
-
-                    material_t* mat = &ctx.material;
-
-                    mat->set_property("scale"_h, scale);
-                    mat->set_property("translate"_h, translate);
-                    mat->set_property("vertex_buffer"_h, renderer::get_buffer_address(ctx.vertex_buffer[cur_frame]));
-                    mat->sync();
-
-                    shader_t* shader = assets::get(mat->shader);
-
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      shader->get_pipeline(pipeline_variant_e::FORWARD));
-
-                    VkDescriptorSet sets[] = {renderer::res_system.global_set, renderer::res_system.frame_set};
-
-                    vkCmdBindDescriptorSets(
-                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
-                        &renderer::ctx.per_frame_objects[renderer::ctx.cur_frame].global_data_offset);
-
-                    vkCmdBindIndexBuffer(cmd, ctx.index_buffer[cur_frame], 0, VK_INDEX_TYPE_UINT32);
-
-                    gpu::PushConstants pc = {
-                        .material_buffer = renderer::res_system.material_heap.device_address,
-                        .custom_data = mat->heap_offset[cur_frame],
-                    };
-
-                    VkViewport viewport = {0, 0, draw_data->DisplaySize.x, draw_data->DisplaySize.y, 0.0f, 1.0f};
-                    vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-                    i32 global_index_offset = 0;
-                    ImVec2 clip_off = draw_data->DisplayPos;
-
-                    for (i32 i = 0; i < draw_data->CmdListsCount; i++)
-                    {
-                        const ImDrawList* cmd_list = draw_data->CmdLists[i];
-                        for (i32 cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
-                        {
-                            const ImDrawCmd* cmd_ptr = &cmd_list->CmdBuffer[cmd_i];
-
-                            ImVec2 clip_min(cmd_ptr->ClipRect.x - clip_off.x, cmd_ptr->ClipRect.y - clip_off.y);
-                            ImVec2 clip_max(cmd_ptr->ClipRect.z - clip_off.x, cmd_ptr->ClipRect.w - clip_off.y);
-
-                            clip_min.x = std::max(0.0f, clip_min.x);
-                            clip_min.y = std::max(0.0f, clip_min.y);
-
-                            float max_w = (f32)renderer::ctx.swapchain.extent.width;
-                            float max_h = (f32)renderer::ctx.swapchain.extent.height;
-
-                            clip_max.x = std::min(max_w, clip_max.x);
-                            clip_max.y = std::min(max_h, clip_max.y);
-
-                            if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y) { continue; }
-
-                            VkRect2D scissor = {
-                                {(i32_t)clip_min.x,                (i32_t)clip_min.y               },
-                                {(u32_t)(clip_max.x - clip_min.x), (u32_t)(clip_max.y - clip_min.y)}
-                            };
-                            vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-                            pc.texture_id = (u32_t)(intptr_t)cmd_ptr->GetTexID();
-                            vkCmdPushConstants(cmd, shader->pipeline_layout,
-                                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                               sizeof(gpu::PushConstants), &pc);
-                            vkCmdDrawIndexed(cmd, cmd_ptr->ElemCount, 1, cmd_ptr->IdxOffset + global_index_offset, 0,
-                                             0);
-                        }
-
-                        global_index_offset += cmd_list->IdxBuffer.Size;
-                    }
-                };
-            });
+        renderer::frame::register_producer("ImGui"_h, renderer::FEATURE_ORDER_UI, &build_ui);
     }
 
     void shutdown()

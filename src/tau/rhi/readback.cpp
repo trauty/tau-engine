@@ -85,7 +85,9 @@ namespace tau::renderer
             create(slot, std::max(MIN_CAPACITY, size * 2));
         }
 
-        transition_image(cmd, image, layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, aspect);
+        // graph v2 passes hand it over as a transfer source already
+        const bool transition = layout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        if (transition) { transition_image(cmd, image, layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, aspect); }
 
         const VkBufferImageCopy region = {
             .bufferOffset = offset,
@@ -95,7 +97,7 @@ namespace tau::renderer
         };
         vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot.buffer, 1, &region);
 
-        transition_image(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layout, aspect);
+        if (transition) { transition_image(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, layout, aspect); }
 
         // semaphore wait alone does not make transfer writes host visible
         const VkBufferMemoryBarrier2 to_host = {

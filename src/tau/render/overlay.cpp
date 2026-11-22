@@ -5,11 +5,11 @@
 #include "tau/assets/shader.h"
 #include "tau/engine.h"
 #include "tau/hash.h"
+#include "tau/render/frame.h"
 #include "tau/rhi/frame_upload.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
 #include "tau/rhi/renderer_resources.h"
-#include "tau/rhi/rendergraph.h"
 
 #include <algorithm>
 #include <cstring>
@@ -88,7 +88,12 @@ namespace tau::renderer
             }
         }
 
-        void build(rendergraph_t& graph, ecs::registry_t&)
+        void record_scene(const graph::record_ctx_t& rc, const void*)
+        { draw(rc.cmd, assets::get(scene_shader), scene_draws); }
+        void record_top(const graph::record_ctx_t& rc, const void*)
+        { draw(rc.cmd, assets::get(top_shader), top_draws); }
+
+        void build(graph::graph_t& g, const frame::targets_t& t, ecs::registry_t&)
         {
             scene_draws.clear();
             top_draws.clear();
@@ -137,34 +142,25 @@ namespace tau::renderer
             pending.clear();
             pending_lines.clear();
 
-            const rg_resource_id output = graph.get_resource("FinalOutput"_h);
-            if (output == RG_NULL_ID) { return; }
+            if (!t.final_output.valid()) { return; }
 
-            if (!scene_draws.empty())
+            if (!scene_draws.empty() && t.scene_depth.valid())
             {
-                rg_pass_t& pass = graph.add_pass("OverlayScene"_h, "OverlayScene");
-                pass.color_writes = {output};
-                pass.depth_stencil = graph.get_resource("SceneDepth"_h);
-                pass.execute_callback = [](VkCommandBuffer cmd, ecs::registry_t&)
-                { draw(cmd, assets::get(scene_shader), scene_draws); };
+                const graph::pass_h pass = graph::add_pass(g, "OverlayScene", &record_scene);
+                graph::use(g, pass, t.final_output, graph::access_e::COLOR_READ_WRITE);
+                graph::use(g, pass, t.scene_depth, graph::access_e::DEPTH_READ);
             }
 
             if (!top_draws.empty())
             {
-                const image_desc_t depth_desc = {
-                    .width = ctx.render_extent.width,
-                    .height = ctx.render_extent.height,
-                    .format = ctx.swapchain.depth_format,
-                    .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                    .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
-                    .depth_clear = 0.0f,
-                };
-
-                rg_pass_t& pass = graph.add_pass("OverlayTop"_h, "OverlayTop");
-                pass.color_writes = {output};
-                pass.depth_stencil = graph.create_image("OverlayDepth"_h, "OverlayDepth", depth_desc);
-                pass.execute_callback = [](VkCommandBuffer cmd, ecs::registry_t&)
-                { draw(cmd, assets::get(top_shader), top_draws); };
+                const graph::image_h depth = graph::create_image(g, "OverlayDepth",
+                                                                 {.format = ctx.swapchain.depth_format,
+                                                                  .width = ctx.render_extent.width,
+                                                                  .height = ctx.render_extent.height,
+                                                                  .clear = {.depthStencil = {0.0f, 0}}});
+                const graph::pass_h pass = graph::add_pass(g, "OverlayTop", &record_top);
+                graph::use(g, pass, t.final_output, graph::access_e::COLOR_READ_WRITE);
+                graph::use(g, pass, depth, graph::access_e::DEPTH_WRITE, graph::load_e::CLEAR);
             }
         }
     } // namespace
@@ -205,7 +201,7 @@ namespace tau::renderer
         {
             scene_shader = assets::pin(assets::load<shader_t>(SCENE_SHADER_PATH));
             top_shader = assets::pin(assets::load<shader_t>(TOP_SHADER_PATH));
-            register_renderer_feature("Overlay"_h, FEATURE_ORDER_OVERLAY, &build);
+            frame::register_producer("Overlay"_h, FEATURE_ORDER_OVERLAY, &build);
         }
 
         void shutdown()

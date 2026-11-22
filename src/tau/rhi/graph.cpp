@@ -917,11 +917,11 @@ namespace tau::renderer::graph
         return {static_cast<u32_t>(g.images.size() - 1)};
     }
 
-    image_h persistent_image(graph_t& g, const char* name, const image_desc_t& desc)
+    image_h persistent_image(graph_t& g, const char* name, const image_desc_t& desc, u32_t key)
     {
         const image_h h = create_image(g, name, desc);
         g.images[h.index].kind = PERSISTENT;
-        g.images[h.index].persistent_hash = hash_name(name);
+        g.images[h.index].persistent_hash = key != 0 ? key : hash_name(name);
         return h;
     }
 
@@ -1244,7 +1244,9 @@ namespace tau::renderer::graph
         for (u32_t i = 0; i < g.images.size(); i++)
         {
             graph_t::image_t& img = g.images[i];
-            if (img.first == NONE) { continue; }
+            const bool unused_import = img.first == NONE && img.kind == IMPORTED && img.image != VK_NULL_HANDLE;
+            if (unused_import) { image_sync[i] = imported_sync(img.initial_layout); }
+            if (img.first == NONE && !unused_import) { continue; }
             sync_t& s = image_sync[i];
             if (img.kind == IMPORTED && img.final_layout != VK_IMAGE_LAYOUT_UNDEFINED && img.final_layout != s.layout)
             {

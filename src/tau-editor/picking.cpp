@@ -6,6 +6,7 @@
 #include "tau/ecs.h"
 #include "tau/engine.h"
 #include "tau/hash.h"
+#include "tau/render/frame.h"
 #include "tau/rhi/frame_upload.h"
 #include "tau/rhi/readback.h"
 #include "tau/rhi/renderer.h"
@@ -140,32 +141,33 @@ namespace tau::editor::picking
             };
         }
 
-        void build_outline(renderer::rendergraph_t& graph, ecs::registry_t&)
+        void record_outline(const renderer::graph::record_ctx_t& rc, const void* data)
         {
-            if (selected_ids.empty()) { return; }
+            const renderer::graph::image_h mask = *static_cast<const renderer::graph::image_h*>(data);
+            shader_t* shader = assets::get(outline_shader);
+            const VkPipeline pipeline = shader ? shader->get_pipeline(pipeline_variant_e::FORWARD) : VK_NULL_HANDLE;
+            if (pipeline == VK_NULL_HANDLE) { return; }
 
-            const renderer::rg_resource_id mask = graph.get_resource("EditorSelectionMask"_h);
-            const renderer::rg_resource_id output = graph.get_resource("FinalOutput"_h);
-            if (mask == renderer::RG_NULL_ID || output == renderer::RG_NULL_ID) { return; }
+            vkCmdBindPipeline(rc.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            if (!renderer::bind_view_descriptors(rc.cmd, shader->pipeline_layout, VIEW)) { return; }
 
-            renderer::rg_pass_t& pass = graph.add_pass("EditorOutline"_h, "EditorOutline");
-            pass.texture_reads = {mask};
-            pass.color_writes = {output};
-            pass.execute_callback = [&graph, mask](VkCommandBuffer cmd, ecs::registry_t&)
-            {
-                shader_t* shader = assets::get(outline_shader);
-                const VkPipeline pipeline = shader ? shader->get_pipeline(pipeline_variant_e::FORWARD) : VK_NULL_HANDLE;
-                if (pipeline == VK_NULL_HANDLE) { return; }
+            const gpu::PushConstants pc = {0, 0, 0, renderer::graph::sampled_id(*rc.graph, mask)};
+            vkCmdPushConstants(rc.cmd, shader->pipeline_layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(gpu::PushConstants),
+                               &pc);
+            vkCmdDraw(rc.cmd, 3, 1, 0, 0);
+        }
 
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-                if (!renderer::bind_view_descriptors(cmd, shader->pipeline_layout, VIEW)) { return; }
+        void build_outline(renderer::graph::graph_t& g, const renderer::frame::targets_t& t, ecs::registry_t&)
+        {
+            if (selected_ids.empty() || !t.final_output.valid()) { return; }
 
-                const gpu::PushConstants pc = {0, 0, 0, graph.get_bindless_id(mask)};
-                vkCmdPushConstants(cmd, shader->pipeline_layout,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(gpu::PushConstants), &pc);
-                vkCmdDraw(cmd, 3, 1, 0, 0);
-            };
+            const renderer::graph::image_h mask = renderer::graph::find_image(g, "EditorSelectionMask");
+            if (!mask.valid()) { return; }
+
+            const renderer::graph::pass_h pass = renderer::graph::add_pass(g, "EditorOutline", &record_outline, mask);
+            renderer::graph::use(g, pass, mask, renderer::graph::access_e::SAMPLED);
+            renderer::graph::use(g, pass, t.final_output, renderer::graph::access_e::COLOR_READ_WRITE);
         }
     } // namespace
 
@@ -177,7 +179,7 @@ namespace tau::editor::picking
         outline_shader = assets::pin(assets::load<shader_t>(OUTLINE_SHADER_PATH));
 
         renderer::register_renderer_feature("EditorPicking"_h, FEATURE_ORDER_PICKING, &build_picking);
-        renderer::register_renderer_feature("EditorOutline"_h, renderer::FEATURE_ORDER_AFTER_POST, &build_outline);
+        renderer::frame::register_producer("EditorOutline"_h, renderer::FEATURE_ORDER_AFTER_POST, &build_outline);
     }
 
     void update(world_t& world, editor_context_t& ctx)

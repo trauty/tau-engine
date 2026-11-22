@@ -36,6 +36,7 @@
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/physics/physics.h"
+#include "tau/render/frame.h"
 #include "tau/rhi/renderdoc.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_types.h"
@@ -307,14 +308,12 @@ int main(i32 argc, char** argv)
                                 .run = [](tau::world_t&, tau::editor_context_t&,
                                           const tau::editor::commands::request_t&) { tau::engine::exit(); }});
     // after the transform update, before the overlay
-    tau::renderer::register_renderer_feature("EditorColliders"_h, tau::renderer::FEATURE_ORDER_OVERLAY - 1,
-                                             [](tau::renderer::rendergraph_t&, tau::ecs::registry_t& reg)
-                                             {
-                                                 if (editor_ctx.show_colliders)
-                                                 {
-                                                     tau::physics::draw_colliders(reg, "PrimaryView"_h);
-                                                 }
-                                             });
+    tau::renderer::frame::register_producer(
+        "EditorColliders"_h, tau::renderer::FEATURE_ORDER_OVERLAY - 1,
+        [](tau::renderer::graph::graph_t&, const tau::renderer::frame::targets_t&, tau::ecs::registry_t& reg)
+        {
+            if (editor_ctx.show_colliders) { tau::physics::draw_colliders(reg, "PrimaryView"_h); }
+        });
     tau::editor::settings::load(editor_ctx);
 
     if (have_startup_project) { tau::editor::project_open::request(startup_project, editor_ctx); }

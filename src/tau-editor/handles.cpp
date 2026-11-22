@@ -12,10 +12,10 @@
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/input.h"
-#include "tau/rhi/overlay.h"
+#include "tau/render/frame.h"
+#include "tau/render/overlay.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/rendergraph.h"
 #include "tau/systems/guid.h"
 #include "tau/systems/transform.h"
 #include "tau/world.h"
@@ -584,7 +584,7 @@ namespace tau::editor::handles
         }
 
         // drawn at render, after the transform update
-        void build_handles(renderer::rendergraph_t&, ecs::registry_t& reg)
+        void build_handles(renderer::graph::graph_t&, const renderer::frame::targets_t&, ecs::registry_t& reg)
         {
             if (!g_ctx || g_ctx->cur_mode != editor_mode_e::EDIT || g_ctx->handle_mode == handle_mode_e::NONE)
             {
@@ -604,7 +604,7 @@ namespace tau::editor::handles
                    {
                        if (drag) { end_drag(world); }
                    });
-        renderer::register_renderer_feature("EditorHandles"_h, renderer::FEATURE_ORDER_OVERLAY - 1, &build_handles);
+        renderer::frame::register_producer("EditorHandles"_h, renderer::FEATURE_ORDER_OVERLAY - 1, &build_handles);
 
         meshes.move = assets::pin(assets::load<mesh_t>("engine://assets/models/move.glb/move.mesh"));
         meshes.rotate = assets::pin(assets::load<mesh_t>("engine://assets/models/rotate.glb/rotate.mesh"));
