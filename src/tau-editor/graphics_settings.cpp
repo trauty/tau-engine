@@ -20,17 +20,17 @@ namespace tau::editor::graphics_settings
             const std::string current(renderer::settings::preset());
             if (ImGui::BeginCombo("Preset", current.c_str()))
             {
-                for (const renderer::settings::preset_t& p : renderer::settings::presets())
+                for (const std::string& name : renderer::settings::presets())
                 {
-                    const std::string name(p.name);
-                    if (ImGui::Selectable(name.c_str(), name == current)) { renderer::settings::select_preset(p.name); }
+                    if (ImGui::Selectable(name.c_str(), name == current)) { renderer::settings::select_preset(name); }
                 }
                 ImGui::EndCombo();
             }
             ImGui::TextDisabled("Field edits last until the preset changes.");
             ImGui::Separator();
 
-            reflection::any_t value{renderer::settings::get()};
+            // the engine's context: types live there, not in the editor's own
+            reflection::any_t value{*world.reflection_ctx, renderer::settings::get()};
             if (panels::draw_fields(world, value))
             {
                 renderer::settings::set(value.cast<renderer::graphics_settings_t>());

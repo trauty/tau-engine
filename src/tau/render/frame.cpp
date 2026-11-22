@@ -454,6 +454,7 @@ namespace tau::renderer::frame
         const ecs::entity_t frame_cascade_light = submitted_cascade_light;
         submitted_cascade_light = ecs::NULL_ENTITY;
 
+        settings::refresh();
         const bool vsync = settings::get().renderer.vsync;
         if (vsync != swapchain::vsync() && !ctx.caps.headless)
         {

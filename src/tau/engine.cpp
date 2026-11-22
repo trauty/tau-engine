@@ -74,8 +74,8 @@ namespace tau::engine
         if (!cooked_root.empty()) { tau::assets::read_guid_map(cooked_root + "/guid_map.json"); }
 
         tau::reflection::register_types();
-        tau::renderer::settings::init(config.settings);
         tau::jobs::init();
+        tau::renderer::settings::init(config.settings);
 
         // before SDL video and the Vulkan instance
         // RenderDoc's layer has no Wayland surface: X11 (XWayland), SDL_VIDEODRIVER still wins

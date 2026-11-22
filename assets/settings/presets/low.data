@@ -1,0 +1,15 @@
+{
+    "guid": "e73407605a2fb6a6",
+    "type": "graphics_settings_t",
+    "fields": {
+        "shadows": {
+            "ty": 9,
+            "v": {
+                "distance_scale": {
+                    "ty": 2,
+                    "v": 0.6
+                }
+            }
+        }
+    }
+}

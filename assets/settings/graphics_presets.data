@@ -1,0 +1,66 @@
+{
+    "guid": "b049a9c586a2cf0d",
+    "type": "graphics_presets_t",
+    "fields": {
+        "presets": {
+            "ty": 10,
+            "v": [
+                {
+                    "ty": 9,
+                    "v": {
+                        "name": {
+                            "ty": 4,
+                            "v": "low"
+                        },
+                        "layer": {
+                            "ty": 6,
+                            "v": {
+                                "g": "e73407605a2fb6a6",
+                                "p": "engine://assets/settings/presets/low.data",
+                                "t": "data"
+                            }
+                        }
+                    }
+                },
+                {
+                    "ty": 9,
+                    "v": {
+                        "name": {
+                            "ty": 4,
+                            "v": "medium"
+                        },
+                        "layer": {
+                            "ty": 6,
+                            "v": {
+                                "g": "a98eeea9e7a7f5e8",
+                                "p": "engine://assets/settings/presets/medium.data",
+                                "t": "data"
+                            }
+                        }
+                    }
+                },
+                {
+                    "ty": 9,
+                    "v": {
+                        "name": {
+                            "ty": 4,
+                            "v": "high"
+                        },
+                        "layer": {
+                            "ty": 6,
+                            "v": {
+                                "g": "c987a5a5cbf3622a",
+                                "p": "engine://assets/settings/presets/high.data",
+                                "t": "data"
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        "default_preset": {
+            "ty": 4,
+            "v": "high"
+        }
+    }
+}

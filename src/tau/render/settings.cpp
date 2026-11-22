@@ -1,36 +1,50 @@
 #include "tau/render/settings.h"
 
+#include "tau/asset.h"
+#include "tau/assets/data.h"
 #include "tau/components/reflect.h"
 #include "tau/log.h"
 #include "tau/reflection.h"
 #include "tau/reflection_json.h"
 
 #include "json/json.hpp"
-#include <array>
+#include <algorithm>
+
+namespace tau::renderer
+{
+    struct graphics_preset_ref_t
+    {
+        std::string name;
+        data_ref_t<graphics_settings_t> layer;
+    };
+
+    struct graphics_presets_t
+    {
+        std::vector<graphics_preset_ref_t> presets;
+        std::string default_preset = "high";
+    };
+} // namespace tau::renderer
 
 namespace tau::renderer::settings
 {
     namespace
     {
-        // lower scales first, the menu shows them in this order
-        constexpr std::array PRESETS = {
-            preset_t{"low",    R"({"shadows": {"distance_scale": 0.6}})"},
-            preset_t{"medium", R"({"shadows": {"distance_scale": 0.8}})"},
-            preset_t{"high",   "{}"                                     },
-        };
+        asset_t<data_asset_t> g_table;
+        // what the last resolve read, a change resolves again
+        u32_t g_table_version = 0;
+        u32_t g_layer_version = 0;
+        asset_handle_t g_layer;
 
+        std::vector<std::string> g_names;
         graphics_settings_t g_settings;
-        std::string g_preset(DEFAULT_PRESET);
+        std::string g_preset;
         std::vector<std::string> g_overrides;
         bool g_clean = true;
 
-        const preset_t* find_preset(std::string_view name)
+        u32_t version_of(asset_handle_t handle)
         {
-            for (const preset_t& p : PRESETS)
-            {
-                if (p.name == name) { return &p; }
-            }
-            return nullptr;
+            const data_asset_t* asset = assets::get(asset_t<data_asset_t>{handle});
+            return asset ? asset->version : 0;
         }
 
         // "shadows.split_lambda=0.5" -> {"shadows": {"split_lambda": 0.5}}
@@ -72,21 +86,51 @@ namespace tau::renderer::settings
             return rejected.empty();
         }
 
+        // a preset applies only the fields its file sets
+        bool apply_preset(graphics_settings_t& value)
+        {
+            const graphics_presets_t* table = data::get<graphics_presets_t>(g_table);
+            g_table_version = version_of(g_table);
+            g_layer = {};
+            g_layer_version = 0;
+            g_names.clear();
+            if (table == nullptr)
+            {
+                TAU_LOG_ERROR("SETTINGS", "No preset table at {}, using the struct defaults", PRESETS_PATH);
+                return false;
+            }
+
+            for (const graphics_preset_ref_t& row : table->presets) { g_names.push_back(row.name); }
+            if (g_preset.empty()) { g_preset = table->default_preset; }
+
+            auto row = std::ranges::find(table->presets, g_preset, &graphics_preset_ref_t::name);
+            bool ok = true;
+            if (row == table->presets.end())
+            {
+                TAU_LOG_ERROR("SETTINGS", "Unknown preset '{}', using '{}'", g_preset, table->default_preset);
+                g_preset = table->default_preset;
+                row = std::ranges::find(table->presets, g_preset, &graphics_preset_ref_t::name);
+                ok = false;
+                if (row == table->presets.end()) { return false; }
+            }
+
+            g_layer = row->layer.handle;
+            g_layer_version = version_of(g_layer);
+            const data_asset_t* layer = assets::get(asset_t<data_asset_t>{g_layer});
+            if (layer == nullptr || layer->type_hash != data::type_hash<graphics_settings_t>())
+            {
+                TAU_LOG_ERROR("SETTINGS", "Preset '{}' names no graphics settings asset", g_preset);
+                return false;
+            }
+            return data::decode(layer->type_hash, &value, layer->fields, assets::path_of(g_layer)) && ok;
+        }
+
         bool resolve()
         {
-            bool ok = true;
-            reflection::any_t value{std::in_place_type<graphics_settings_t>};
+            graphics_settings_t resolved;
+            bool ok = apply_preset(resolved);
 
-            const preset_t* p = find_preset(g_preset);
-            if (p == nullptr)
-            {
-                TAU_LOG_ERROR("SETTINGS", "Unknown preset '{}', using '{}'", g_preset, DEFAULT_PRESET);
-                g_preset = DEFAULT_PRESET;
-                p = find_preset(g_preset);
-                ok = false;
-            }
-            ok &= apply_layer(value, nlohmann::json::parse(p->layer), "preset " + g_preset);
-
+            reflection::any_t value{std::in_place_type<graphics_settings_t>, resolved};
             for (const std::string& text : g_overrides)
             {
                 nlohmann::json layer;
@@ -128,7 +172,8 @@ namespace tau::renderer::settings
 
     bool init(const args_t& args)
     {
-        g_preset = args.preset.empty() ? std::string(DEFAULT_PRESET) : args.preset;
+        g_table = assets::pin(assets::load<data_asset_t>(PRESETS_PATH));
+        g_preset = args.preset;
         g_overrides = args.overrides;
         g_clean = true;
         const bool ok = resolve();
@@ -140,13 +185,21 @@ namespace tau::renderer::settings
 
     void set(const graphics_settings_t& value) { g_settings = value; }
 
-    std::span<const preset_t> presets() { return PRESETS; }
+    void refresh()
+    {
+        if (version_of(g_table) != g_table_version || (g_layer && version_of(g_layer) != g_layer_version))
+        {
+            resolve();
+        }
+    }
+
+    std::span<const std::string> presets() { return g_names; }
 
     std::string_view preset() { return g_preset; }
 
     bool select_preset(std::string_view name)
     {
-        if (find_preset(name) == nullptr)
+        if (std::ranges::find(g_names, name) == g_names.end())
         {
             TAU_LOG_ERROR("SETTINGS", "Unknown preset '{}'", name);
             return false;
@@ -174,8 +227,16 @@ namespace tau::reflection
             .field<&shadows_t::punctual_depth_bias>("Punctual Depth Bias")
             .field<&shadows_t::punctual_tile_budget>("Punctual Tile Budget");
 
-        structure<renderer::graphics_settings_t>(ctx, "Graphics Settings")
+        data_type<renderer::graphics_settings_t>(ctx, "Graphics Settings")
+            .partial()
             .field<&renderer::graphics_settings_t::renderer>("Renderer")
             .field<&renderer::graphics_settings_t::shadows>("Shadows");
+
+        structure<renderer::graphics_preset_ref_t>(ctx, "Graphics Preset")
+            .field<&renderer::graphics_preset_ref_t::name>("Name")
+            .field<&renderer::graphics_preset_ref_t::layer>("Layer");
+        data_type<renderer::graphics_presets_t>(ctx, "Graphics Presets")
+            .field<&renderer::graphics_presets_t::presets>("Presets")
+            .field<&renderer::graphics_presets_t::default_preset>("Default Preset");
     }
 } // namespace tau::reflection

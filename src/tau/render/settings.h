@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-// graphics settings: struct defaults <- preset <- command line --set
+// graphics settings: struct defaults <- preset (a partial data asset) <- command line --set
 // every value is read when used, a module that built something from one compares at the frame boundary
 namespace tau::renderer
 {
@@ -40,35 +40,32 @@ namespace tau::renderer
 
 namespace tau::renderer::settings
 {
-    // a partial layer over the struct defaults, as JSON text; becomes project data later
-    struct preset_t
-    {
-        std::string_view name;
-        std::string_view layer;
-    };
+    // the preset table: named partial graphics_settings_t assets, in menu order
+    constexpr std::string_view PRESETS_PATH = "engine://assets/settings/graphics_presets.data";
 
     struct args_t
     {
-        // empty: DEFAULT_PRESET
+        // empty: the table's default
         std::string preset;
         // "shadows.split_lambda=0.5"
         std::vector<std::string> overrides;
     };
 
-    constexpr std::string_view DEFAULT_PRESET = "high";
-
     // --preset=NAME, --set PATH=VALUE, --set=PATH=VALUE; i moves past what it took
     TAU_ENGINE_API bool take_arg(i32 argc, char** argv, i32& i, args_t& out);
 
-    // false: an unknown preset or a rejected override, each logged; the rest still applies
+    // false: no preset table, an unknown preset or a rejected override, each logged; the rest still applies
     bool init(const args_t& args);
+    // resolves again when the table or the selected preset changed (an edit, a reload); once per frame
+    void refresh();
 
     TAU_ENGINE_API const graphics_settings_t& get();
     TAU_ENGINE_API void set(const graphics_settings_t& value);
 
-    TAU_ENGINE_API std::span<const preset_t> presets();
+    // names in the table's order
+    TAU_ENGINE_API std::span<const std::string> presets();
     TAU_ENGINE_API std::string_view preset();
-    // re-resolves defaults <- preset <- the command line
+    // resolves defaults <- preset <- the command line again
     TAU_ENGINE_API bool select_preset(std::string_view name);
 
     // init and every later select took every value
