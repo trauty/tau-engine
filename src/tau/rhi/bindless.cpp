@@ -1,8 +1,8 @@
 #include "bindless.h"
 
 #include "tau/log.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/deletion.h"
-#include "tau/rhi/renderer.h"
 #include "tau/rhi/samplers.h"
 
 #include <algorithm>

@@ -4,9 +4,8 @@
 #include "tau/assets/material_format.h"
 #include "tau/assets/shader.h"
 #include "tau/log.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/material_heap.h"
-#include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_types.h"
 #include "tau/vfs.h"
 
 #include <cstring>

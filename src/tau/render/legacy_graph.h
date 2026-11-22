@@ -3,12 +3,68 @@
 #include "tau/defines.h"
 #include "tau/ecs_fwd.h"
 #include "tau/memory/arena_function.h"
-#include "tau/rhi/renderer_types.h"
+#include "tau/rhi/bindless.h"
+#include "tau/rhi/vulkan.h"
 
+#include <deque>
 #include <vector>
 
+// the legacy block's graph, deleted with it in part 3
 namespace tau::renderer
 {
+    struct image_desc_t
+    {
+        u32_t width;
+        u32_t height;
+        VkFormat format;
+        VkImageUsageFlags usage;
+        VkImageAspectFlags aspect;
+        f32 depth_clear = 0.0f;
+        VkClearColorValue color_clear = {
+            {0.01f, 0.01f, 0.01f, 1.0f}
+        };
+
+        bool operator==(const image_desc_t& other) const
+        {
+            return width == other.width && height == other.height && format == other.format && usage == other.usage &&
+                   aspect == other.aspect;
+        }
+    };
+
+    struct transient_image_t
+    {
+        image_desc_t desc;
+        VkImage image = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        u32_t bindless_id = BINDLESS_NULL_HANDLE;
+        bindless_h bindless;
+        bool in_use = false;
+        u32_t frames_unused = 0;
+        const char* debug_name = nullptr;
+    };
+
+    struct persistent_image_t
+    {
+        image_desc_t desc{};
+        VkImage image = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        u32_t bindless_id = BINDLESS_NULL_HANDLE;
+        bindless_h bindless;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bool needs_full_clear = true;
+    };
+
+    struct transient_pool_t
+    {
+        std::deque<transient_image_t> images;
+
+        transient_image_t* acquire(const image_desc_t& desc);
+        void reset();
+        void shutdown();
+    };
+
     using rg_resource_id = u32_t;
     constexpr rg_resource_id RG_NULL_ID = 0xffffffff;
 
@@ -67,7 +123,7 @@ namespace tau::renderer
 
         rg_pass_t& add_pass(u32_t name_hash, const char* debug_name);
 
-        void compile(per_frame_t& frame_data);
+        void compile(transient_pool_t& pool);
         void execute(VkCommandBuffer cmd, ecs::registry_t& reg);
 
         rg_resource_id get_resource(u32_t name_hash) const;

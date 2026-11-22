@@ -18,7 +18,8 @@
 #include "tau/engine.h"
 #include "tau/guid.h"
 #include "tau/input.h"
-#include "tau/rhi/renderer.h"
+#include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 #include "tau/systems/guid.h"
 #include "tau/systems/transform.h"
 
@@ -74,7 +75,7 @@ namespace tau::editor::panels
             tau::input::set_viewport_offset(viewport_pos.x, viewport_pos.y);
             tau::input::set_viewport_size(viewport_size.x, viewport_size.y);
 
-            u32_t tex_id = tau::renderer::get_target_texture_id("EditorViewport"_h);
+            u32_t tex_id = tau::renderer::frame::get_target_texture_id("EditorViewport"_h);
             if (tex_id != tau::renderer::BINDLESS_NULL_HANDLE)
             {
                 ImGui::Image((ImTextureID)(intptr_t)(tex_id), viewport_size);

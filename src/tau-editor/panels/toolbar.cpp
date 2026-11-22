@@ -7,7 +7,8 @@
 #include "tau-editor/prefab_stage.h"
 #include "tau-editor/settings.h"
 #include "tau/ecs_fwd.h"
-#include "tau/rhi/renderer_types.h"
+#include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 
 namespace tau::editor::panels
 {
@@ -129,7 +130,7 @@ namespace tau::editor::panels
         i32 current = static_cast<i32>(ctx.debug_view);
         if (ImGui::Combo("##debug_view", &current, DEBUG_VIEW_NAMES, IM_ARRAYSIZE(DEBUG_VIEW_NAMES)))
         {
-            ctx.debug_view = static_cast<tau::renderer::debug_view_e>(current);
+            ctx.debug_view = static_cast<tau::renderer::frame::debug_view_e>(current);
         }
 
         ImGui::End();

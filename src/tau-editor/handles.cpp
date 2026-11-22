@@ -14,7 +14,7 @@
 #include "tau/input.h"
 #include "tau/render/frame.h"
 #include "tau/render/overlay.h"
-#include "tau/rhi/renderer.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/renderer_constants.h"
 #include "tau/systems/guid.h"
 #include "tau/systems/transform.h"

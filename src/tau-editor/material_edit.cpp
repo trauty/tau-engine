@@ -13,7 +13,7 @@
 #include "tau/assets/texture.h"
 #include "tau/hash.h"
 #include "tau/log.h"
-#include "tau/rhi/renderer.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/renderer_constants.h"
 
 #include <algorithm>

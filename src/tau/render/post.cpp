@@ -9,16 +9,18 @@
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/rhi/bindless.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/gpu_structs.h"
 #include "tau/rhi/material_heap.h"
-#include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_types.h"
+#include "tau/rhi/renderer_constants.h"
 #include "tau/systems/camera.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -33,6 +35,10 @@ namespace tau::renderer::post
             f32 weight;
             i32_t priority;
         };
+
+        asset_t<material_t> g_final_pass;
+        // per view and slot, a base material with the volumes' overrides
+        std::unordered_map<u64_t, std::unique_ptr<material_t>> g_resolved;
 
         // scratch kept for its capacity
         std::vector<volume_sample_t> post_volumes;
@@ -124,11 +130,11 @@ namespace tau::renderer::post
             if (influences.empty() && !force_instance) { return base; }
 
             const u64_t key = (static_cast<u64_t>(view_name_hash) << 32) | slot;
-            auto it = ctx.resolved_post_effects.find(key);
-            if (it == ctx.resolved_post_effects.end() || it->second->shader != base->shader)
+            auto it = g_resolved.find(key);
+            if (it == g_resolved.end() || it->second->shader != base->shader)
             {
                 auto instance = std::make_unique<material_t>(base->shader);
-                it = ctx.resolved_post_effects.insert_or_assign(key, std::move(instance)).first;
+                it = g_resolved.insert_or_assign(key, std::move(instance)).first;
             }
 
             material_t& resolved = *it->second;
@@ -214,19 +220,16 @@ namespace tau::renderer::post
             const VkPipeline pipeline = shader ? shader->get_pipeline(pipeline_variant_e::FORWARD) : VK_NULL_HANDLE;
             if (pipeline == VK_NULL_HANDLE) { return; }
 
-            per_frame_t& fd = ctx.per_frame_objects[ctx.cur_frame];
             vkCmdBindPipeline(rc.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
             // no such view this frame (no camera): the frame's first globals
-            const std::unique_ptr<view_gpu_resources_t>* view =
-                fd.views.find(f.view_hash ? f.view_hash : "PrimaryView"_h);
-            const u32_t view_offset = view != nullptr ? (*view)->global_data_offset : fd.global_data_offset;
+            const u32_t view_offset = frame::view_globals_offset(f.view_hash);
             const VkDescriptorSet sets[] = {bindless::global_set(), bindless::frame_set()};
             vkCmdBindDescriptorSets(rc.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
                                     &view_offset);
 
             const gpu::PushConstants pc = {
-                fd.object_buffer_address,
+                0,
                 material_heap::address(),
                 material->heap_offset[ctx.cur_frame],
             };
@@ -246,6 +249,14 @@ namespace tau::renderer::post
             graph::use(g, p, output, graph::access_e::COLOR_WRITE, graph::load_e::CLEAR);
         }
     } // namespace
+
+    void init() { g_final_pass = assets::pin(assets::load<material_t>(DEFAULT_FINAL_PASS_PATH)); }
+
+    void shutdown()
+    {
+        assets::unpin(g_final_pass);
+        g_resolved.clear();
+    }
 
     void build(graph::graph_t& g, const frame::targets_t& t, ecs::registry_t& reg, u32_t view_hash,
                const vec3& view_pos, bool enabled)
@@ -307,14 +318,14 @@ namespace tau::renderer::post
         }
 
         const asset_t<material_t> final_handle =
-            (enabled && stack && stack->final_pass.is_valid()) ? stack->final_pass : ctx.uberpost_material;
+            (enabled && stack && stack->final_pass.is_valid()) ? stack->final_pass : g_final_pass;
         material_t* final_mat =
-            enabled ? resolve_unique(final_handle, POST_FINAL_PASS_SLOT) : assets::get(ctx.uberpost_material);
+            enabled ? resolve_unique(final_handle, POST_FINAL_PASS_SLOT) : assets::get(g_final_pass);
 
         if (final_mat && final_mat->shader.is_valid() &&
             !target_matches(final_mat, graph::format(g, t.final_output), POST_FINAL_PASS_SLOT, true))
         {
-            final_mat = assets::get(ctx.uberpost_material);
+            final_mat = assets::get(g_final_pass);
         }
         if (final_mat && final_mat->shader.is_valid())
         {

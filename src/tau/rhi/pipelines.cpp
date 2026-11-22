@@ -5,11 +5,11 @@
 #include "tau/jobs.h"
 #include "tau/log.h"
 #include "tau/rhi/bindless.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/deletion.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_structs.h"
-#include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_types.h"
+#include "tau/rhi/swapchain.h"
 #include "tau/vfs.h"
 
 #include <algorithm>
@@ -201,13 +201,13 @@ namespace tau::renderer::pipelines
                 for (u32_t i = 0; i < d.color_count; i++)
                 {
                     const VkFormat f = static_cast<VkFormat>(d.color_formats[i]);
-                    color_formats[i] = f == VK_FORMAT_UNDEFINED ? ctx.swapchain.format : f;
+                    color_formats[i] = f == VK_FORMAT_UNDEFINED ? swapchain::state().format : f;
                 }
                 const VkPipelineRenderingCreateInfo rendering = {
                     .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
                     .colorAttachmentCount = d.color_count,
                     .pColorAttachmentFormats = d.color_count > 0 ? color_formats : nullptr,
-                    .depthAttachmentFormat = d.depth_attachment ? ctx.swapchain.depth_format : VK_FORMAT_UNDEFINED,
+                    .depthAttachmentFormat = d.depth_attachment ? ctx.depth_format : VK_FORMAT_UNDEFINED,
                 };
 
                 const VkPipelineVertexInputStateCreateInfo vertex_input = {

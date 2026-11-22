@@ -4,7 +4,8 @@
 #include "tau-editor/systems/camera.h"
 #include "tau/ecs_fwd.h"
 #include "tau/math.h"
-#include "tau/rhi/renderer_types.h"
+#include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 
 #include <json/json.hpp>
 #include <vector>
@@ -66,7 +67,7 @@ namespace tau
         bool click_additive = false;
         bool scroll_to_selection = false;
 
-        tau::renderer::debug_view_e debug_view = tau::renderer::debug_view_e::OFF;
+        tau::renderer::frame::debug_view_e debug_view = tau::renderer::frame::debug_view_e::OFF;
 
         bool post_processing = true;
         bool show_colliders = false;

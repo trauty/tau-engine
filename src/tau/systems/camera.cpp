@@ -3,7 +3,8 @@
 #include "tau/components/camera.h"
 #include "tau/components/transform.h"
 #include "tau/math.h"
-#include "tau/rhi/renderer.h"
+#include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 
 namespace tau::camera_system
 {
@@ -24,8 +25,8 @@ namespace tau::camera_system
 
     void update(ecs::registry_t& reg)
     {
-        u32_t cur_width = tau::renderer::ctx.logical_extent.width;
-        u32_t cur_height = tau::renderer::ctx.logical_extent.height;
+        u32_t cur_width = tau::renderer::frame::logical_extent().width;
+        u32_t cur_height = tau::renderer::frame::logical_extent().height;
 
         if (cur_width == 0 || cur_height == 0) { return; }
 

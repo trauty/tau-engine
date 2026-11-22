@@ -8,12 +8,12 @@
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_timers.h"
 #include "tau/rhi/pipelines.h"
 #include "tau/rhi/readback.h"
 #include "tau/rhi/renderdoc.h"
-#include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
 #include "tau/time.h"
 #include "tau/world.h"
@@ -105,7 +105,7 @@ namespace tau::runner
         {
             if (!capture_this_frame || opts.dump_hdr.empty() || !t.scene_color.valid()) { return; }
 
-            captured_extent = renderer::ctx.render_extent;
+            captured_extent = renderer::frame::render_extent();
             const renderer::graph::pass_h pass = renderer::graph::add_pass(
                 g, "RunnerHdrDump", &record_dump, t.scene_color, renderer::graph::PASS_SIDE_EFFECT);
             renderer::graph::use(g, pass, t.scene_color, renderer::graph::access_e::TRANSFER_SRC);
@@ -155,7 +155,7 @@ namespace tau::runner
         {
             const std::vector<renderer::gpu_timers::result_t> results = renderer::gpu_timers::results();
             std::printf("timing: render %ux%u, means over %u frames after a %.0f s warm-up\n",
-                        renderer::ctx.render_extent.width, renderer::ctx.render_extent.height,
+                        renderer::frame::render_extent().width, renderer::frame::render_extent().height,
                         results.empty() ? 0u : results.front().frames, TIMING_WARMUP_SECONDS);
             for (const renderer::gpu_timers::result_t& r : results)
             {
@@ -201,7 +201,7 @@ namespace tau::runner
 
         void before_frame()
         {
-            if (opts.width > 0) { renderer::submit_output_target("RunnerOutput"_h, {opts.width, opts.height}); }
+            if (opts.width > 0) { renderer::frame::submit_output_target("RunnerOutput"_h, {opts.width, opts.height}); }
 
             if (phase == phase_e::LOADING)
             {

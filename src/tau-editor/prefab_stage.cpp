@@ -16,7 +16,8 @@
 #include "tau/guid_json.h"
 #include "tau/log.h"
 #include "tau/prefab.h"
-#include "tau/rhi/renderer.h"
+#include "tau/render/legacy.h"
+#include "tau/rhi/context.h"
 #include "tau/serialization.h"
 #include "tau/systems/guid.h"
 #include "tau/world.h"
@@ -89,12 +90,12 @@ namespace tau::editor::prefab_stage
             vec3 direction = {forward.x, forward.y - 0.6f, forward.z};
             const f32 length = std::sqrt(dot(direction, direction));
             direction = length > 1e-4f ? direction * (1.0f / length) : vec3{0.0f, -1.0f, 0.0f};
-            renderer::set_fallback_light(staged, direction, {1.0f, 1.0f, 1.0f}, 3.0f);
+            renderer::legacy::set_fallback_light(staged, direction, {1.0f, 1.0f, 1.0f}, 3.0f);
         }
 
         void reset()
         {
-            if (g.open) { renderer::set_fallback_light(false); }
+            if (g.open) { renderer::legacy::set_fallback_light(false); }
             g = {};
         }
 

@@ -10,11 +10,11 @@
 #include "tau/math.h"
 #include "tau/render/frame.h"
 #include "tau/rhi/bindless.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/deletion.h"
 #include "tau/rhi/material_heap.h"
-#include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_types.h"
+#include "tau/rhi/swapchain.h"
 #include "tau/rhi/transfer.h"
 #include "tau/rhi/vulkan.h"
 #include "vulkan/vulkan_core.h"
@@ -157,7 +157,7 @@ namespace tau::editor::imgui
             return false;
         }
 
-        VkFormat want_format = renderer::ctx.swapchain.format;
+        VkFormat want_format = renderer::swapchain::state().format;
         VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
         {
             u32_t fmt_count = 0;
@@ -687,8 +687,9 @@ namespace tau::editor::imgui
 
             VkDescriptorSet sets[] = {renderer::bindless::global_set(), renderer::bindless::frame_set()};
 
+            const u32_t globals_offset = renderer::frame::first_view_globals_offset();
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
-                                    &renderer::ctx.per_frame_objects[renderer::ctx.cur_frame].global_data_offset);
+                                    &globals_offset);
 
             vkCmdBindIndexBuffer(cmd, ctx.index_buffer[cur_frame], 0, VK_INDEX_TYPE_UINT32);
 
@@ -716,8 +717,8 @@ namespace tau::editor::imgui
                     clip_min.x = std::max(0.0f, clip_min.x);
                     clip_min.y = std::max(0.0f, clip_min.y);
 
-                    float max_w = (f32)renderer::ctx.swapchain.extent.width;
-                    float max_h = (f32)renderer::ctx.swapchain.extent.height;
+                    float max_w = (f32)renderer::swapchain::state().extent.width;
+                    float max_h = (f32)renderer::swapchain::state().extent.height;
 
                     clip_max.x = std::min(max_w, clip_max.x);
                     clip_max.y = std::min(max_h, clip_max.y);

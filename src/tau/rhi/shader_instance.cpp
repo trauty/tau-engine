@@ -5,9 +5,8 @@
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/rhi/bindless.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/deletion.h"
-#include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_types.h"
 #include "tau/rhi/vulkan.h"
 
 #include <vector>

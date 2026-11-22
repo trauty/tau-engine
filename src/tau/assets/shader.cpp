@@ -4,8 +4,9 @@
 #include "tau/assets/shader_format.h"
 #include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/pipelines.h"
-#include "tau/rhi/renderer.h"
+#include "tau/rhi/swapchain.h"
 #include "tau/vfs.h"
 
 #include <cstring>
@@ -136,7 +137,7 @@ namespace tau
         shader.gbuffer_target_formats = std::move(file.gbuffer_target_formats);
         for (VkFormat& format : shader.target_formats)
         {
-            if (format == VK_FORMAT_UNDEFINED) { format = renderer::ctx.swapchain.format; }
+            if (format == VK_FORMAT_UNDEFINED) { format = renderer::swapchain::state().format; }
         }
 
         shader.pipeline_layout = built.layout;

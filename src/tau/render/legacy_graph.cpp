@@ -1,13 +1,12 @@
-#include "rendergraph.h"
+#include "legacy_graph.h"
 
 #include "tau/defines.h"
 #include "tau/log.h"
 #include "tau/profiling.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_timers.h"
-#include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_types.h"
 #include "tau/rhi/vulkan.h"
 #include "vulkan/vulkan_core.h"
 
@@ -112,7 +111,7 @@ namespace tau::renderer
         return pass;
     }
 
-    void rendergraph_t::compile(per_frame_t& frame_data)
+    void rendergraph_t::compile(transient_pool_t& pool)
     {
         for (size_t i = 0; i < active_pass_count; i++)
         {
@@ -240,7 +239,7 @@ namespace tau::renderer
             rg_resource_t& res = resources[i];
             if (res.is_imported) { continue; }
 
-            transient_image_t* transient = frame_data.transient_pool.acquire(res.desc);
+            transient_image_t* transient = pool.acquire(res.desc);
             // pooled images change owner, renamed when they do
             if (transient->debug_name != res.debug_name)
             {
@@ -443,4 +442,109 @@ namespace tau::renderer
     u32_t rendergraph_t::get_bindless_id(rg_resource_id id) const { return resources[id].bindless_id; }
 
     void rendergraph_t::add_alias(u32_t alias_name, u32_t target_name) { aliases.push_back({alias_name, target_name}); }
+
+    transient_image_t* transient_pool_t::acquire(const image_desc_t& desc)
+    {
+        for (transient_image_t& img : images)
+        {
+            if (!img.in_use && img.desc == desc)
+            {
+                img.in_use = true;
+                img.frames_unused = 0;
+                return &img;
+            }
+        }
+
+        transient_image_t new_img;
+        new_img.desc = desc;
+        new_img.in_use = true;
+        new_img.frames_unused = 0;
+
+        VkImageCreateInfo image_info = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = desc.format,
+            .extent = {desc.width, desc.height, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = desc.usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+
+        VmaAllocationCreateInfo alloc_info = {
+            .usage = VMA_MEMORY_USAGE_AUTO,
+            .priority = 1.0f,
+        };
+
+        VK_CHECK(vmaCreateImage(ctx.allocator, &image_info, &alloc_info, &new_img.image, &new_img.allocation, nullptr));
+
+        VkImageViewCreateInfo view_info = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = new_img.image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = desc.format,
+            .subresourceRange = {
+                                 .aspectMask = desc.aspect,
+                                 .baseMipLevel = 0,
+                                 .levelCount = 1,
+                                 .baseArrayLayer = 0,
+                                 .layerCount = 1,
+                                 }
+        };
+
+        VK_CHECK(vkCreateImageView(ctx.device, &view_info, nullptr, &new_img.view));
+
+        if (desc.usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+        {
+            new_img.bindless = bindless::add_sampled(new_img.view);
+            new_img.bindless_id = new_img.bindless.index;
+        }
+
+        images.push_back(new_img);
+        return &images.back();
+    }
+
+    void transient_pool_t::reset()
+    {
+        constexpr u32_t MAX_FRAMES_UNUSED = 8;
+
+        for (auto it = images.begin(); it != images.end();)
+        {
+            if (!it->in_use)
+            {
+                it->frames_unused++;
+                if (it->frames_unused > MAX_FRAMES_UNUSED)
+                {
+                    if (it->view) { vkDestroyImageView(ctx.device, it->view, nullptr); }
+                    if (it->image) { vmaDestroyImage(ctx.allocator, it->image, it->allocation); }
+                    bindless::remove(it->bindless);
+
+                    it = images.erase(it);
+                    continue;
+                }
+            }
+            else
+            {
+                it->in_use = false;
+                it->frames_unused = 0;
+            }
+
+            it++;
+        }
+    }
+
+    void transient_pool_t::shutdown()
+    {
+        for (transient_image_t& img : images)
+        {
+            if (img.view) { vkDestroyImageView(ctx.device, img.view, nullptr); }
+            if (img.image) { vmaDestroyImage(ctx.allocator, img.image, img.allocation); }
+            bindless::remove(img.bindless);
+        }
+
+        images.clear();
+    }
 } // namespace tau::renderer

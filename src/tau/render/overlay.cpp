@@ -6,9 +6,9 @@
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/frame_upload.h"
 #include "tau/rhi/material_heap.h"
-#include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
 
 #include <algorithm>
@@ -81,7 +81,7 @@ namespace tau::renderer
                 if (d.view_hash != bound_view)
                 {
                     bound_view = d.view_hash;
-                    view_found = bind_view_descriptors(cmd, shader->pipeline_layout, d.view_hash);
+                    view_found = frame::bind_view_descriptors(cmd, shader->pipeline_layout, d.view_hash);
                 }
 
                 if (view_found && d.vertex_count > 0) { vkCmdDraw(cmd, d.vertex_count, 1, 0, d.item_index); }
@@ -116,8 +116,8 @@ namespace tau::renderer
                 gpu.color = item.color;
                 gpu.mode = static_cast<u32_t>(item.mode);
                 gpu.line_width = item.line_width;
-                gpu.viewport_size = {static_cast<f32>(ctx.render_extent.width),
-                                     static_cast<f32>(ctx.render_extent.height)};
+                gpu.viewport_size = {static_cast<f32>(frame::render_extent().width),
+                                     static_cast<f32>(frame::render_extent().height)};
 
                 u32_t vertex_count = 0;
                 if (item.mode == item_mode_e::MESH)
@@ -154,9 +154,9 @@ namespace tau::renderer
             if (!top_draws.empty())
             {
                 const graph::image_h depth = graph::create_image(g, "OverlayDepth",
-                                                                 {.format = ctx.swapchain.depth_format,
-                                                                  .width = ctx.render_extent.width,
-                                                                  .height = ctx.render_extent.height,
+                                                                 {.format = ctx.depth_format,
+                                                                  .width = frame::render_extent().width,
+                                                                  .height = frame::render_extent().height,
                                                                   .clear = {.depthStencil = {0.0f, 0}}});
                 const graph::pass_h pass = graph::add_pass(g, "OverlayTop", &record_top);
                 graph::use(g, pass, t.final_output, graph::access_e::COLOR_READ_WRITE);

@@ -6,9 +6,10 @@
 #include "tau/containers/flat_map.h"
 #include "tau/hash.h"
 #include "tau/math.h"
-#include "tau/rhi/renderer.h"
+#include "tau/render/frame.h"
+#include "tau/render/legacy.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_types.h"
 
 #include <algorithm>
 #include <cmath>
@@ -145,7 +146,7 @@ namespace tau::shadow_system
             0.5f * std::sqrt(span * span + 2.0f * (far_d * far_d + near_d * near_d) * k2 + sum * sum * k2 * k2);
     }
 
-    static void update_cascades(ecs::registry_t& reg, const renderer::primary_view_info_t& view_info)
+    static void update_cascades(ecs::registry_t& reg, const renderer::frame::primary_view_info_t& view_info)
     {
         ecs::entity_t caster = ecs::NULL_ENTITY;
         for (auto [entity, light, transform] : reg.view<directional_light_t, transform_t>().each())
@@ -155,7 +156,7 @@ namespace tau::shadow_system
             break;
         }
 
-        renderer::submit_shadow_cascade_light(caster);
+        renderer::frame::submit_shadow_cascade_light(caster);
         if (caster == ecs::NULL_ENTITY) { return; }
 
         vec3 eye = view_info.position;
@@ -180,7 +181,7 @@ namespace tau::shadow_system
             f32 measured_near = 0.0f;
             f32 measured_far = 0.0f;
 
-            if (renderer::get_primary_depth_bounds(measured_near, measured_far) && measured_far > measured_near)
+            if (renderer::legacy::get_primary_depth_bounds(measured_near, measured_far) && measured_far > measured_near)
             {
                 measured_near = quantise_range(measured_near * (1.0f - SDSM_RANGE_MARGIN), false);
                 measured_far = quantise_range(measured_far * (1.0f + SDSM_RANGE_MARGIN), true);
@@ -198,7 +199,7 @@ namespace tau::shadow_system
         renderer::image_desc_t atlas_desc{};
         atlas_desc.width = renderer::SHADOW_ATLAS_DIM;
         atlas_desc.height = renderer::SHADOW_ATLAS_DIM;
-        atlas_desc.format = renderer::ctx.swapchain.depth_format;
+        atlas_desc.format = renderer::ctx.depth_format;
         atlas_desc.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         atlas_desc.aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         atlas_desc.depth_clear = 1.0f; // the cascades are orthographic and stay on standard 0 to 1 depth
@@ -249,15 +250,15 @@ namespace tau::shadow_system
                 .extent = {tile,                               tile                              },
             };
 
-            renderer::submit_shadow_cascade_view("DirShadowCascade"_h + i, view, projection, "ShadowAtlas"_h,
-                                                 atlas_desc, atlas_rect, split_far, SHADOW_NORMAL_BIAS,
-                                                 SHADOW_DEPTH_BIAS);
+            renderer::frame::submit_shadow_cascade_view("DirShadowCascade"_h + i, view, projection, "ShadowAtlas"_h,
+                                                        atlas_desc, atlas_rect, split_far, SHADOW_NORMAL_BIAS,
+                                                        SHADOW_DEPTH_BIAS);
 
             split_near = split_far;
         }
     }
 
-    static bool sphere_in_frustum(const renderer::primary_view_info_t& view_info, vec3 center, f32 radius)
+    static bool sphere_in_frustum(const renderer::frame::primary_view_info_t& view_info, vec3 center, f32 radius)
     {
         if (!view_info.has_frustum_planes) { return true; } // no planes
 
@@ -346,7 +347,7 @@ namespace tau::shadow_system
         return false;
     }
 
-    static void update_punctual(ecs::registry_t& reg, const renderer::primary_view_info_t& view_info)
+    static void update_punctual(ecs::registry_t& reg, const renderer::frame::primary_view_info_t& view_info)
     {
         std::vector<shadow_candidate_t> candidates;
 
@@ -408,7 +409,7 @@ namespace tau::shadow_system
         renderer::image_desc_t atlas_desc{};
         atlas_desc.width = renderer::PUNCTUAL_SHADOW_ATLAS_DIM;
         atlas_desc.height = renderer::PUNCTUAL_SHADOW_ATLAS_DIM;
-        atlas_desc.format = renderer::ctx.swapchain.depth_format;
+        atlas_desc.format = renderer::ctx.depth_format;
         atlas_desc.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         atlas_desc.aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         atlas_desc.depth_clear = 1.0f; // perspective tiles, standard 0 to 1 depth like the cascades
@@ -524,9 +525,9 @@ namespace tau::shadow_system
                     perspective_lh_zo(2.0f * padded_half_fov(tile.outer_angle_rad), 1.0f, tile_near, tile.range);
                 flip_clip_y(projection);
 
-                renderer::submit_punctual_shadow_view("PunctualShadowTile"_h + slot, view, projection, atlas_desc,
-                                                      punctual_tile_rect(slot), slot, tile.range, render,
-                                                      PUNCTUAL_NORMAL_BIAS, PUNCTUAL_DEPTH_BIAS);
+                renderer::frame::submit_punctual_shadow_view("PunctualShadowTile"_h + slot, view, projection,
+                                                             atlas_desc, punctual_tile_rect(slot), slot, tile.range,
+                                                             render, PUNCTUAL_NORMAL_BIAS, PUNCTUAL_DEPTH_BIAS);
             }
             else
             {
@@ -540,13 +541,13 @@ namespace tau::shadow_system
                         perspective_lh_zo(2.0f * padded_half_fov(radians(45.0f)), 1.0f, tile_near, tile.range);
                     flip_clip_y(projection);
 
-                    renderer::submit_punctual_shadow_view(
+                    renderer::frame::submit_punctual_shadow_view(
                         "PunctualShadowTile"_h + face_slot, view, projection, atlas_desc, punctual_tile_rect(face_slot),
                         face_slot, tile.range, render, PUNCTUAL_NORMAL_BIAS, PUNCTUAL_DEPTH_BIAS);
                 }
             }
 
-            renderer::submit_punctual_shadow_slot(candidate.entity, slot);
+            renderer::frame::submit_punctual_shadow_slot(candidate.entity, slot);
         }
 
         punctual_cache = std::move(next_cache);
@@ -554,8 +555,8 @@ namespace tau::shadow_system
 
     void update(ecs::registry_t& reg)
     {
-        renderer::primary_view_info_t view_info{};
-        if (!renderer::get_primary_view_info(reg, view_info)) { return; }
+        renderer::frame::primary_view_info_t view_info{};
+        if (!renderer::frame::get_primary_view_info(reg, view_info)) { return; }
 
         update_cascades(reg, view_info);
         update_punctual(reg, view_info);

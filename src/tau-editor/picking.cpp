@@ -7,11 +7,12 @@
 #include "tau/engine.h"
 #include "tau/hash.h"
 #include "tau/render/frame.h"
+#include "tau/render/legacy.h"
+#include "tau/render/legacy_graph.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/frame_upload.h"
 #include "tau/rhi/readback.h"
-#include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/rendergraph.h"
 #include "tau/systems/guid.h"
 #include "tau/world.h"
 
@@ -58,7 +59,7 @@ namespace tau::editor::picking
                 }
             }
 
-            const VkExtent2D extent = renderer::ctx.render_extent;
+            const VkExtent2D extent = renderer::frame::render_extent();
 
             if (!selected_ids.empty())
             {
@@ -82,8 +83,8 @@ namespace tau::editor::picking
                     if (!shader) { return; }
 
                     const gpu::PushConstants pc = {0, selected_address, static_cast<u32_t>(selected_ids.size()), 0};
-                    renderer::draw_view_objects(cmd, VIEW, shader->get_pipeline(pipeline_variant_e::FORWARD),
-                                                shader->pipeline_layout, pc);
+                    renderer::legacy::draw_view_objects(cmd, VIEW, shader->get_pipeline(pipeline_variant_e::FORWARD),
+                                                        shader->pipeline_layout, pc);
                 };
             }
 
@@ -102,7 +103,7 @@ namespace tau::editor::picking
             const renderer::image_desc_t depth_desc = {
                 .width = extent.width,
                 .height = extent.height,
-                .format = renderer::ctx.swapchain.depth_format,
+                .format = renderer::ctx.depth_format,
                 .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
                 .aspect = VK_IMAGE_ASPECT_DEPTH_BIT,
                 .depth_clear = 0.0f,
@@ -118,8 +119,8 @@ namespace tau::editor::picking
                 shader_t* shader = assets::get(ids_shader);
                 if (!shader) { return; }
 
-                renderer::draw_view_objects(cmd, VIEW, shader->get_pipeline(pipeline_variant_e::FORWARD),
-                                            shader->pipeline_layout, {});
+                renderer::legacy::draw_view_objects(cmd, VIEW, shader->get_pipeline(pipeline_variant_e::FORWARD),
+                                                    shader->pipeline_layout, {});
             };
 
             const i32 x = std::clamp(static_cast<i32>(g_ctx->click_pos.x), 0, static_cast<i32>(extent.width) - 1);
@@ -149,7 +150,7 @@ namespace tau::editor::picking
             if (pipeline == VK_NULL_HANDLE) { return; }
 
             vkCmdBindPipeline(rc.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            if (!renderer::bind_view_descriptors(rc.cmd, shader->pipeline_layout, VIEW)) { return; }
+            if (!renderer::frame::bind_view_descriptors(rc.cmd, shader->pipeline_layout, VIEW)) { return; }
 
             const gpu::PushConstants pc = {0, 0, 0, renderer::graph::sampled_id(*rc.graph, mask)};
             vkCmdPushConstants(rc.cmd, shader->pipeline_layout,
@@ -178,7 +179,7 @@ namespace tau::editor::picking
         selection_shader = assets::pin(assets::load<shader_t>(SELECTION_SHADER_PATH));
         outline_shader = assets::pin(assets::load<shader_t>(OUTLINE_SHADER_PATH));
 
-        renderer::register_renderer_feature("EditorPicking"_h, FEATURE_ORDER_PICKING, &build_picking);
+        renderer::legacy::register_renderer_feature("EditorPicking"_h, FEATURE_ORDER_PICKING, &build_picking);
         renderer::frame::register_producer("EditorOutline"_h, renderer::FEATURE_ORDER_AFTER_POST, &build_outline);
     }
 

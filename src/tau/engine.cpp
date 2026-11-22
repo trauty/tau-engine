@@ -8,9 +8,9 @@
 #include "tau/log.h"
 #include "tau/profiling.h"
 #include "tau/reflection.h"
+#include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/renderdoc.h"
-#include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_types.h"
 #include "tau/time.h"
 #include "tau/vfs.h"
 #include "tau/window.h"
@@ -118,11 +118,12 @@ namespace tau::engine
             .vsync = config.vsync,
         };
 
-        if (!tau::renderer::init(renderer_config, window))
+        if (!tau::renderer::init_context(renderer_config, window))
         {
             TAU_LOG_FATAL("ENGINE", "Failed to initialize renderer, aborting...");
             return false;
         }
+        tau::renderer::frame::init();
 
         active_world = std::make_unique<world_t>();
 
@@ -141,7 +142,7 @@ namespace tau::engine
         {
             if (!is_suspended)
             {
-                tau::renderer::begin_frame();
+                tau::renderer::frame::begin();
 
                 tau::time::update();
                 f64 frame_time = tau::time::get_dt();
@@ -162,7 +163,7 @@ namespace tau::engine
                 switch (event.type)
                 {
                 case SDL_EVENT_QUIT: is_running = false; break;
-                case SDL_EVENT_WINDOW_RESIZED: tau::renderer::on_window_resized(); break;
+                case SDL_EVENT_WINDOW_RESIZED: tau::renderer::frame::on_window_resized(); break;
 
                 case SDL_EVENT_WILL_ENTER_BACKGROUND:
                 case SDL_EVENT_DID_ENTER_BACKGROUND: is_suspended = true; break;
@@ -196,7 +197,7 @@ namespace tau::engine
             tau::time::fixed_alpha = accumulator / fixed_timestep;
             active_world->update();
 
-            tau::renderer::render(active_world->registry);
+            tau::renderer::frame::render(active_world->registry);
 
             if (user_post_render_cb) { user_post_render_cb(); }
 
@@ -213,9 +214,10 @@ namespace tau::engine
         active_world.reset();
         tau::reflection::shutdown();
 
-        tau::renderer::reset_assets();
+        tau::renderer::frame::reset_assets();
         tau::assets::shutdown();
-        tau::renderer::shutdown();
+        tau::renderer::frame::shutdown();
+        tau::renderer::shutdown_context();
         tau::jobs::shutdown();
         tau::window::shutdown();
         tau::log::shutdown();

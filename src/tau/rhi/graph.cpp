@@ -4,12 +4,11 @@
 #include "tau/log.h"
 #include "tau/profiling.h"
 #include "tau/rhi/bindless.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/deletion.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_timers.h"
-#include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_types.h"
 
 #include <algorithm>
 #include <chrono>

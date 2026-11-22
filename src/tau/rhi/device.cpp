@@ -1,7 +1,7 @@
 #include "device.h"
 
 #include "tau/log.h"
-#include "tau/rhi/renderer.h"
+#include "tau/rhi/context.h"
 
 #include <SDL3/SDL_vulkan.h>
 #include <algorithm>

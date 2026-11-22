@@ -37,9 +37,8 @@
 #include "tau/log.h"
 #include "tau/physics/physics.h"
 #include "tau/render/frame.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/renderdoc.h"
-#include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_types.h"
 #include "tau/rhi/vulkan.h"
 #include "tau/systems/camera.h"
 #include "tau/vfs.h"
@@ -152,8 +151,9 @@ static void submit_editor_view(tau::editor_context_t& ctx, VkExtent2D extent)
     ctx.view = view;
     ctx.view_proj = view_proj;
 
-    tau::renderer::submit_color_view("PrimaryView"_h, view, proj, view_proj, ecam.position, "SceneColor"_h,
-                                     "SceneDepth"_h, tau::renderer::ctx.render_extent, ecam.near_plane, ecam.far_plane);
+    tau::renderer::frame::submit_color_view("PrimaryView"_h, view, proj, view_proj, ecam.position, "SceneColor"_h,
+                                            "SceneDepth"_h, tau::renderer::frame::render_extent(), ecam.near_plane,
+                                            ecam.far_plane);
 }
 
 static void update_editor_ui(tau::editor_context_t& ctx)
@@ -168,8 +168,8 @@ static void update_editor_ui(tau::editor_context_t& ctx)
         ImGui::Render();
         tau::editor::imgui::submit(ImGui::GetDrawData());
 
-        const VkExtent2D extent = tau::renderer::ctx.render_extent;
-        tau::renderer::submit_output_target("EditorViewport"_h, extent);
+        const VkExtent2D extent = tau::renderer::frame::render_extent();
+        tau::renderer::frame::submit_output_target("EditorViewport"_h, extent);
         submit_editor_view(ctx, extent);
         return;
     }
@@ -218,15 +218,15 @@ static void update_editor_ui(tau::editor_context_t& ctx)
     ImGui::Render();
     tau::editor::imgui::submit(ImGui::GetDrawData());
 
-    tau::renderer::submit_output_target("EditorViewport"_h, {ctx.viewport_width, ctx.viewport_height});
+    tau::renderer::frame::submit_output_target("EditorViewport"_h, {ctx.viewport_width, ctx.viewport_height});
 
-    tau::renderer::set_view_debug_view("PrimaryView"_h, ctx.debug_view);
-    tau::renderer::set_view_post_processing("PrimaryView"_h, ctx.post_processing);
+    tau::renderer::frame::set_view_debug_view("PrimaryView"_h, ctx.debug_view);
+    tau::renderer::frame::set_view_post_processing("PrimaryView"_h, ctx.post_processing);
 
     if (ctx.cur_mode == tau::editor_mode_e::EDIT)
     {
         tau::editor::camera_system::update(ctx.editor_camera, ctx.is_viewport_hovered);
-        submit_editor_view(ctx, tau::renderer::ctx.logical_extent);
+        submit_editor_view(ctx, tau::renderer::frame::logical_extent());
     }
 }
 

@@ -1,8 +1,8 @@
 #include "deletion.h"
 
 #include "tau/rhi/bindless.h"
+#include "tau/rhi/context.h"
 #include "tau/rhi/material_heap.h"
-#include "tau/rhi/renderer.h"
 
 #include <deque>
 #include <mutex>
