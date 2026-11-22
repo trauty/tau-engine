@@ -5,6 +5,7 @@
 #include "tau-editor/history.h"
 #include "tau-editor/panels/asset_browser.h"
 #include "tau/asset.h"
+#include "tau/assets/data.h"
 #include "tau/vfs.h"
 
 #include <algorithm>
@@ -51,7 +52,10 @@ namespace tau::editor::widgets
 
         asset_picker_t asset_picker;
 
-        void open_asset_picker(const std::string& popup_id, u64_t asset_type_hash)
+        bool fits(std::string_view path, u64_t asset_type_hash, u32_t data_type)
+        { return assets::path_is(path, asset_type_hash) && (data_type == 0 || data::peek_type(path) == data_type); }
+
+        void open_asset_picker(const std::string& popup_id, u64_t asset_type_hash, u32_t data_type)
         {
             asset_picker.open_id = popup_id;
             asset_picker.search[0] = '\0';
@@ -59,7 +63,7 @@ namespace tau::editor::widgets
 
             for (auto& [path, guid] : assets::locations())
             {
-                if (assets::path_is(path, asset_type_hash)) { asset_picker.candidates.push_back(std::move(path)); }
+                if (fits(path, asset_type_hash, data_type)) { asset_picker.candidates.push_back(std::move(path)); }
             }
         }
 
@@ -140,7 +144,8 @@ namespace tau::editor::widgets
     } // namespace
 
     bool asset_slot(world_t& world, const char* label, u64_t asset_type_hash, asset_handle_t handle,
-                    asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove, const char* empty_text)
+                    asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove, const char* empty_text,
+                    u32_t data_type)
     {
         bool modified = false;
         const std::string cur_path = assets::path_of(handle);
@@ -156,7 +161,7 @@ namespace tau::editor::widgets
 
         if (ImGui::Button((name + popup_id).c_str(), ImVec2(field_width, 0.0f)))
         {
-            open_asset_picker(popup_id, asset_type_hash);
+            open_asset_picker(popup_id, asset_type_hash, data_type);
             ImGui::OpenPopup(popup_id.c_str());
         }
 
@@ -169,7 +174,7 @@ namespace tau::editor::widgets
         {
             const ImGuiPayload* peek = ImGui::GetDragDropPayload();
             if (peek && peek->IsDataType(ASSET_PAYLOAD) &&
-                assets::path_is(static_cast<const char*>(peek->Data), asset_type_hash))
+                fits(static_cast<const char*>(peek->Data), asset_type_hash, data_type))
             {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ASSET_PAYLOAD))
                 {

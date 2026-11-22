@@ -2,6 +2,7 @@
 
 #include "tau-editor/asset_watch.h"
 #include "tau-editor/commands.h"
+#include "tau-editor/data_edit.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/history.h"
 #include "tau-editor/prefab_stage.h"
@@ -247,5 +248,7 @@ namespace tau::editor::scene_io
                              field, component, where, field);
             }
         }
+
+        data_edit::report_unknown(root);
     }
 } // namespace tau::editor::scene_io

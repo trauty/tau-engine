@@ -5,6 +5,7 @@
 #include "tau-editor/asset_cook.h"
 #include "tau-editor/asset_editors.h"
 #include "tau-editor/asset_files.h"
+#include "tau-editor/data_edit.h"
 #include "tau-editor/history.h"
 #include "tau-editor/import_edit.h"
 #include "tau-editor/keymap.h"
@@ -69,6 +70,7 @@ namespace tau::editor::panels
             NONE,
             NEW_FOLDER,
             NEW_ASSET,
+            NEW_DATA,
             RENAME,
             DUPLICATE,
             REMOVE,
@@ -85,6 +87,8 @@ namespace tau::editor::panels
             u64_t entity = 0;
             // NEW_ASSET
             u64_t type_id = 0;
+            // NEW_DATA
+            u32_t data_type = 0;
         };
 
         struct state_t
@@ -444,6 +448,11 @@ namespace tau::editor::panels
                     g.action.type_id = editor.type_id;
                 }
             }
+            if (const u32_t data_type = data_edit::new_menu(can))
+            {
+                g.action = {action_kind_e::NEW_DATA};
+                g.action.data_type = data_type;
+            }
         }
 
         ImU32 type_color(const item_t& item)
@@ -780,6 +789,7 @@ namespace tau::editor::panels
                     made = editor->create(world, g.dir);
                 }
                 break;
+            case action_kind_e::NEW_DATA: made = data_edit::create(world, g.dir, action.data_type); break;
             case action_kind_e::RENAME:
                 if (action.rels.empty()) { start_rename(action.rel); }
                 else

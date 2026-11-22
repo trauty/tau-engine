@@ -379,6 +379,9 @@ namespace tau::editor::asset_files
         return create_file(world, "Create Material", unique_name(dir, "New Material", ".mat"), material.dump(4) + "\n");
     }
 
+    std::string create_text(world_t& world, std::string_view label, const std::string& rel, const std::string& text)
+    { return create_file(world, label, rel, text); }
+
     std::string create_scene(world_t& world, const std::string& dir)
     {
         const nlohmann::json scene = {

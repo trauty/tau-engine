@@ -6,6 +6,7 @@
 #include "tau-editor/asset_files.h"
 #include "tau-editor/asset_watch.h"
 #include "tau-editor/commands.h"
+#include "tau-editor/data_edit.h"
 #include "tau-editor/editor_context.h"
 #include "tau-editor/game_code.h"
 #include "tau-editor/graphics_settings.h"
@@ -290,6 +291,7 @@ int main(i32 argc, char** argv)
     tau::editor::history::init(editor_ctx);
     tau::editor::asset_editors::register_builtin(editor_ctx);
     tau::editor::material_edit::init(editor_ctx);
+    tau::editor::data_edit::init(editor_ctx);
     tau::editor::import_edit::init(editor_ctx);
     tau::editor::asset_files::init(editor_ctx);
     tau::editor::prefab_edit::init(editor_ctx);

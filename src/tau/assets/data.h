@@ -7,6 +7,7 @@
 #include "tau/nameof.h"
 #include "tau/reflection.h"
 
+#include "json/json.hpp"
 #include <optional>
 #include <string>
 #include <string_view>
@@ -127,6 +128,20 @@ namespace tau::data
 
     // source .data (JSON) -> cooked binary
     TAU_ENGINE_API bool cook(const std::string& source_path, const std::string& output_path);
+
+    // editor and tools: values of a registered type as an untyped pointer (data_type_t::construct)
+    TAU_ENGINE_API std::vector<scene_property_t> parse_fields(const nlohmann::json& fields);
+    TAU_ENGINE_API bool decode(u32_t type_hash, void* value, const std::vector<scene_property_t>& fields,
+                               std::string_view owner);
+    // every field, tagged as in the source
+    TAU_ENGINE_API nlohmann::json encode(u32_t type_hash, void* value);
+    // dotted paths of fields the type does not have
+    TAU_ENGINE_API std::vector<std::string> unknown_fields(u32_t type_hash,
+                                                           const std::vector<scene_property_t>& fields);
+    // replaces a loaded asset's fields (an edit), returns its new version
+    TAU_ENGINE_API u32_t set_fields(asset_handle_t asset, std::vector<scene_property_t> fields);
+    // the type hash in a cooked file, 0 when unreadable
+    TAU_ENGINE_API u32_t peek_type(std::string_view vfs_path);
 } // namespace tau::data
 
 namespace tau::reflection

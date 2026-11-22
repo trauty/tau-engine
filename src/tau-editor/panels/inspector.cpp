@@ -460,6 +460,39 @@ namespace tau::editor::panels
                                                       ImGui::GetColorU32(PREFAB_COLOR));
         }
 
+        bool draw_one_field(tau::world_t& world, tau::reflection::any_t& instance, u32_t id,
+                            tau::reflection::data_t data)
+        {
+            const tau::reflection::editor_prop_t* prop = data.custom();
+            const char* label = prop ? prop->name : "Unknown";
+            tau::reflection::any_t field_value = data.get(instance);
+
+            if (prop && prop->asset_type_hash != 0 && prop->is_list)
+            {
+                return draw_asset_list(world, data, instance, field_value, *prop, id);
+            }
+
+            if (prop && prop->asset_type_hash != 0)
+            {
+                const asset_handle_t handle = tau::reflection::asset_of(field_value);
+                asset_handle_t new_handle = handle;
+
+                if (widgets::asset_slot(world, label, prop->asset_type_hash, handle, new_handle,
+                                        "##asset_" + std::to_string(id), nullptr, "None", prop->data_type))
+                {
+                    data.set(instance, new_handle);
+                    return true;
+                }
+                return false;
+            }
+
+            ImGui::PushID(static_cast<i32>(id));
+            const bool changed = draw_value(world, label, field_value, data.type(), prop);
+            if (changed) { data.set(instance, field_value); }
+            ImGui::PopID();
+            return changed;
+        }
+
         bool draw_meta_any(tau::world_t& world, tau::reflection::any_t& instance, tau::reflection::type_t type,
                            const std::unordered_set<std::string>* overridden, std::span<const std::string_view> skip)
         {
@@ -485,7 +518,6 @@ namespace tau::editor::panels
                 tau::reflection::editor_prop_t* prop = data.custom();
                 if (prop && has_flag(prop->flags, prop_flags_e::HIDDEN)) { continue; }
 
-                const char* label = prop ? prop->name : "Unknown";
                 const bool is_view = prop && has_flag(prop->flags, prop_flags_e::NOT_SAVED);
                 if (overridden && (overridden->contains(tau::reflection::meta_key(data.name(), id)) ||
                                    (is_view && hidden_overridden)))
@@ -493,35 +525,7 @@ namespace tau::editor::panels
                     mark_override();
                 }
 
-                tau::reflection::any_t field_value = data.get(instance);
-
-                if (prop && prop->asset_type_hash != 0 && prop->is_list)
-                {
-                    if (draw_asset_list(world, data, instance, field_value, *prop, id)) { was_modified = true; }
-                    continue;
-                }
-
-                if (prop && prop->asset_type_hash != 0)
-                {
-                    const asset_handle_t handle = tau::reflection::asset_of(field_value);
-                    asset_handle_t new_handle = handle;
-
-                    if (widgets::asset_slot(world, label, prop->asset_type_hash, handle, new_handle,
-                                            "##asset_" + std::to_string(id)))
-                    {
-                        data.set(instance, new_handle);
-                        was_modified = true;
-                    }
-                    continue;
-                }
-
-                ImGui::PushID(static_cast<i32>(id));
-                if (draw_value(world, label, field_value, data.type(), prop))
-                {
-                    data.set(instance, field_value);
-                    was_modified = true;
-                }
-                ImGui::PopID();
+                if (draw_one_field(world, instance, id, data)) { was_modified = true; }
             }
 
             return was_modified;
@@ -681,6 +685,9 @@ namespace tau::editor::panels
 
     bool draw_fields(world_t& world, reflection::any_t& value, std::span<const std::string_view> skip)
     { return draw_meta_any(world, value, value.type(), nullptr, skip); }
+
+    bool draw_field(world_t& world, reflection::any_t& instance, u32_t id, reflection::data_t data)
+    { return draw_one_field(world, instance, id, data); }
 
     void add_slot_labels(u32_t type_id, u32_t field_id, slot_labels_fn_t labels)
     { g_slot_labels.push_back({type_id, field_id, labels}); }

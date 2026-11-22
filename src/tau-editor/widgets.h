@@ -15,5 +15,5 @@ namespace tau::editor::widgets
 
     bool asset_slot(world_t& world, const char* label, u64_t asset_type_hash, asset_handle_t handle,
                     asset_handle_t& out_handle, const std::string& popup_id, bool* out_remove = nullptr,
-                    const char* empty_text = "None");
+                    const char* empty_text = "None", u32_t data_type = 0);
 } // namespace tau::editor::widgets

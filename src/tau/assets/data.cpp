@@ -299,15 +299,7 @@ namespace tau::data
         }
 
         const std::string type_name = source["type"].get<std::string>();
-        std::vector<scene_property_t> fields;
-        const nlohmann::json fields_json = source.value("fields", nlohmann::json::object());
-        for (const auto& [key, value] : fields_json.items())
-        {
-            scene_property_t prop;
-            prop.prop_hash = serialization::detail::key_to_hash(key);
-            if (!serialization::detail::is_numeric_key(key)) { prop.prop_name = key; }
-            if (serialization::detail::parse_value(value, key, prop)) { fields.push_back(std::move(prop)); }
-        }
+        const std::vector<scene_property_t> fields = parse_fields(source.value("fields", nlohmann::json::object()));
 
         // sorted, so a cook is byte for byte the same
         std::map<u32_t, std::string> names;
@@ -328,5 +320,104 @@ namespace tau::data
             write_str(out, name);
         }
         return out.good();
+    }
+
+    std::vector<scene_property_t> parse_fields(const nlohmann::json& fields)
+    {
+        std::vector<scene_property_t> out;
+        if (!fields.is_object()) { return out; }
+        for (const auto& [key, value] : fields.items())
+        {
+            scene_property_t prop;
+            prop.prop_hash = serialization::detail::key_to_hash(key);
+            if (!serialization::detail::is_numeric_key(key)) { prop.prop_name = key; }
+            if (serialization::detail::parse_value(value, key, prop)) { out.push_back(std::move(prop)); }
+        }
+        return out;
+    }
+
+    bool decode(u32_t type_hash, void* value, const std::vector<scene_property_t>& fields, std::string_view owner)
+    {
+        reflection::ctx_t& ctx = reflection::get_engine_context();
+        const reflection::type_t meta = reflection::resolve(ctx, type_hash);
+        if (!meta || value == nullptr) { return false; }
+
+        reflection::any_t object = meta.from_void(value);
+        serialization::detail::apply_fields(ctx, object, meta, fields, {}, std::string(owner));
+        return true;
+    }
+
+    nlohmann::json encode(u32_t type_hash, void* value)
+    {
+        reflection::ctx_t& ctx = reflection::get_engine_context();
+        const reflection::type_t meta = reflection::resolve(ctx, type_hash);
+        if (!meta || value == nullptr) { return nlohmann::json::object(); }
+
+        reflection::any_t object = meta.from_void(value);
+        return serialization::detail::encode_fields(ctx, meta, object, {});
+    }
+
+    namespace
+    {
+        bool is_struct(const reflection::type_t& type)
+        {
+            return !type.is_enum() && !type.is_sequence_container() && !reflection::pod_tag(type) &&
+                   type.data().begin() != type.data().end();
+        }
+
+        void unknown_in(const reflection::type_t& type, const std::vector<scene_property_t>& fields,
+                        const std::string& prefix, std::vector<std::string>& out)
+        {
+            for (const scene_property_t& prop : fields)
+            {
+                const std::string name = prop.prop_name.empty() ? std::to_string(prop.prop_hash) : prop.prop_name;
+                const reflection::data_t data = type.data(prop.prop_hash);
+                if (!data) { out.push_back(prefix + name); }
+                else if (prop.type == scene_value_type_e::STRUCT && is_struct(data.type()))
+                {
+                    unknown_in(data.type(), prop.children, prefix + name + ".", out);
+                }
+            }
+        }
+    } // namespace
+
+    std::vector<std::string> unknown_fields(u32_t type_hash, const std::vector<scene_property_t>& fields)
+    {
+        std::vector<std::string> out;
+        const reflection::type_t meta = reflection::resolve(reflection::get_engine_context(), type_hash);
+        if (meta) { unknown_in(meta, fields, {}, out); }
+        return out;
+    }
+
+    u32_t set_fields(asset_handle_t handle, std::vector<scene_property_t> fields)
+    {
+        data_asset_t* asset = assets::get(asset_t<data_asset_t>{handle});
+        if (asset == nullptr) { return 0; }
+
+        std::vector<asset_handle_t> refs;
+        load_refs(fields, refs);
+
+        std::scoped_lock lock(g_mutex);
+        asset->field_set = field_set_of(fields);
+        asset->fields = std::move(fields);
+        asset->refs = std::move(refs);
+        asset->version = g_version.fetch_add(1, std::memory_order_relaxed);
+        return asset->version;
+    }
+
+    u32_t peek_type(std::string_view vfs_path)
+    {
+        using namespace value_io;
+
+        SDL_IOStream* stream = vfs::open_read(assets::cooked_path(get_type_id<data_asset_t>(), vfs_path));
+        if (!stream) { return 0; }
+
+        u32_t magic = 0;
+        u32_t version = 0;
+        u32_t hash = 0;
+        const bool ok = read_pod(stream, magic) && magic == DATA_MAGIC && read_pod(stream, version) &&
+                        version == DATA_VERSION && read_pod(stream, hash);
+        SDL_CloseIO(stream);
+        return ok ? hash : 0;
     }
 } // namespace tau::data

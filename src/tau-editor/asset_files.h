@@ -4,8 +4,8 @@
 
 #include <filesystem>
 #include <span>
-#include <string_view>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tau
@@ -41,6 +41,8 @@ namespace tau::editor::asset_files
     std::string create_folder(world_t& world, const std::string& dir);
     std::string create_material(world_t& world, const std::string& dir);
     std::string create_scene(world_t& world, const std::string& dir);
+    // a new file with this text as one undo step, returns rel or empty
+    std::string create_text(world_t& world, std::string_view label, const std::string& rel, const std::string& text);
 
     bool rename(world_t& world, const std::string& rel, const std::string& new_name);
     bool move(world_t& world, std::span<const std::string> rels, const std::string& dest_dir);
