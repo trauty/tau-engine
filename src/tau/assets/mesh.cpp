@@ -9,7 +9,6 @@
 #include "tau/rhi/device.h"
 #include "tau/rhi/transfer.h"
 #include "tau/rhi/vulkan.h"
-#include "tau/vfs.h"
 #include "vulkan/vulkan_core.h"
 
 #include <SDL3/SDL_iostream.h>
@@ -19,11 +18,11 @@
 
 namespace tau
 {
-    std::optional<mesh_t> asset_loader_t<mesh_t>::load(const std::string& path)
+    std::optional<mesh_t> asset_loader_t<mesh_t>::load(const std::string& path, std::span<const u8_t> bytes)
     {
         std::string cooked_path = tau::assets::cooked_path(tau::get_type_id<mesh_t>(), path);
 
-        SDL_IOStream* stream = tau::vfs::open_read(cooked_path);
+        SDL_IOStream* stream = SDL_IOFromConstMem(bytes.data(), bytes.size());
         if (!stream)
         {
             TAU_LOG_ERROR("MESH", "Mesh not found: {}", cooked_path);
@@ -90,33 +89,23 @@ namespace tau
         VkDeviceSize index_size = asset.index_count * sizeof(u32);
         VkDeviceSize total_staging_size = vertex_size + index_size;
 
-        VkBuffer staging_buf;
-        VmaAllocation staging_alloc;
-
-        VkBufferCreateInfo staging_info = {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = total_staging_size,
-            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        };
-        VmaAllocationCreateInfo alloc_info = {
-            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO,
-        };
-        VmaAllocationInfo staging_alloc_info;
-
-        VK_CHECK(vmaCreateBuffer(renderer::ctx.allocator, &staging_info, &alloc_info, &staging_buf, &staging_alloc,
-                                 &staging_alloc_info));
+        const renderer::transfer::staging_t staging = renderer::transfer::stage(total_staging_size);
+        if (!staging.data)
+        {
+            TAU_LOG_ERROR("MESH", "Failed to allocate staging memory for: {}", cooked_path);
+            SDL_CloseIO(stream);
+            return std::nullopt;
+        }
 
         // extra streams after the indices wait for the renderer that reads them
-        const bool complete = SDL_ReadIO(stream, staging_alloc_info.pMappedData, vertex_size) == vertex_size &&
-                              SDL_ReadIO(stream, static_cast<u8*>(staging_alloc_info.pMappedData) + vertex_size,
-                                         index_size) == index_size;
+        const bool complete = SDL_ReadIO(stream, staging.data, vertex_size) == vertex_size &&
+                              SDL_ReadIO(stream, staging.data + vertex_size, index_size) == index_size;
         SDL_CloseIO(stream);
 
         if (!complete)
         {
             TAU_LOG_ERROR("MESH", "Truncated vertex or index data in: {}", cooked_path);
-            vmaDestroyBuffer(renderer::ctx.allocator, staging_buf, staging_alloc);
+            renderer::transfer::discard(staging);
             return std::nullopt;
         }
 
@@ -147,17 +136,17 @@ namespace tau
         VkCommandBuffer cmd_buf = renderer::transfer::begin();
 
         VkBufferCopy copy_region = {
-            .srcOffset = 0,
+            .srcOffset = staging.offset,
             .dstOffset = 0,
             .size = vertex_size,
         };
-        vkCmdCopyBuffer(cmd_buf, staging_buf, asset.vertex_buffer, 1, &copy_region);
+        vkCmdCopyBuffer(cmd_buf, staging.buffer, asset.vertex_buffer, 1, &copy_region);
 
         if (index_size > 0)
         {
-            copy_region.srcOffset = vertex_size;
+            copy_region.srcOffset = staging.offset + vertex_size;
             copy_region.size = index_size;
-            vkCmdCopyBuffer(cmd_buf, staging_buf, asset.index_buffer, 1, &copy_region);
+            vkCmdCopyBuffer(cmd_buf, staging.buffer, asset.index_buffer, 1, &copy_region);
         }
 
         bool is_same_queue_fam = renderer::ctx.queue_fam_indices.transfer_family.value() ==
@@ -192,7 +181,7 @@ namespace tau
         vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, dst_stage, 0, 0, nullptr,
                              static_cast<u32_t>(barriers.size()), barriers.data(), 0, nullptr);
 
-        u64_t signal_value = renderer::transfer::submit(cmd_buf);
+        renderer::transfer::submit(cmd_buf, &staging);
 
         if (!is_same_queue_fam)
         {
@@ -207,9 +196,6 @@ namespace tau
         asset.vertex_buffer_address = renderer::get_buffer_address(asset.vertex_buffer);
 
         if (index_size > 0) { asset.index_buffer_address = renderer::get_buffer_address(asset.index_buffer); }
-
-        renderer::deletion::retire(renderer::deletion::buffer(staging_buf, staging_alloc),
-                                   renderer::deletion::clock_e::TRANSFER, signal_value);
 
         return asset;
     }

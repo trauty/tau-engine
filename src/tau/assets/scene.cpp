@@ -5,7 +5,6 @@
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/serialization.h"
-#include "tau/vfs.h"
 
 #include <SDL3/SDL_iostream.h>
 #include <fstream>
@@ -16,11 +15,11 @@ namespace tau
 {
     using namespace value_io;
 
-    std::optional<scene_t> asset_loader_t<scene_t>::load(const std::string& path)
+    std::optional<scene_t> asset_loader_t<scene_t>::load(const std::string& path, std::span<const u8_t> bytes)
     {
         std::string cooked_path = tau::assets::cooked_path(tau::get_type_id<scene_t>(), path);
 
-        SDL_IOStream* stream = tau::vfs::open_read(cooked_path);
+        SDL_IOStream* stream = SDL_IOFromConstMem(bytes.data(), bytes.size());
         if (!stream)
         {
             TAU_LOG_ERROR("SCENE", "Scene not found: {}", cooked_path);

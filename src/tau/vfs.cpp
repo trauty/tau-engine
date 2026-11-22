@@ -163,6 +163,13 @@ namespace tau::vfs
         return buffer;
     }
 
+    u64_t file_size(const std::string& virtual_path)
+    {
+        std::error_code error;
+        const std::uintmax_t size = std::filesystem::file_size(resolve(virtual_path), error);
+        return error ? 0 : static_cast<u64_t>(size);
+    }
+
     std::string read_text(const std::string& virtual_path)
     {
         std::vector<u8_t> bytes = read_bytes(virtual_path);

@@ -9,7 +9,6 @@
 #include "tau/rhi/device.h"
 #include "tau/rhi/transfer.h"
 #include "tau/rhi/vulkan.h"
-#include "tau/vfs.h"
 #include "vulkan/vulkan_core.h"
 
 #include <cstddef>
@@ -22,22 +21,24 @@
 
 namespace tau
 {
-    std::optional<texture_t> asset_loader_t<texture_t>::load(const std::string& path)
+    std::optional<texture_t> asset_loader_t<texture_t>::load(const std::string& path, std::span<const u8_t> bytes)
     {
         std::string cooked_path = tau::assets::cooked_path(tau::get_type_id<texture_t>(), path);
 
-        std::vector<u8_t> file_data = tau::vfs::read_bytes(cooked_path);
-        if (file_data.empty())
+        // libktx decodes into its own memory, then one copy into the staging ring: zstd reads back what it wrote,
+        // the ring is write-combined
+        ktxTexture2* k_tex;
+        if (ktxTexture_CreateFromMemory(bytes.data(), bytes.size(), KTX_TEXTURE_CREATE_NO_FLAGS,
+                                        (ktxTexture**)&k_tex) != KTX_SUCCESS)
         {
-            TAU_LOG_ERROR("TEXTURE", "Texture not found or empty: {}", cooked_path);
+            TAU_LOG_ERROR("TEXTURE", "Invalid texture: {}", cooked_path);
             return std::nullopt;
         }
 
-        ktxTexture2* k_tex;
-        if (ktxTexture_CreateFromMemory((ktx_uint8_t*)file_data.data(), file_data.size(),
-                                        KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, (ktxTexture**)&k_tex) != KTX_SUCCESS)
+        if (ktxTexture_LoadImageData(ktxTexture(k_tex), nullptr, 0) != KTX_SUCCESS)
         {
-            TAU_LOG_ERROR("TEXTURE", "Texture not found: {}", cooked_path);
+            TAU_LOG_ERROR("TEXTURE", "Failed to read the image data of: {}", cooked_path);
+            ktxTexture_Destroy(ktxTexture(k_tex));
             return std::nullopt;
         }
 
@@ -69,37 +70,22 @@ namespace tau
             }
         }
 
+        const VkDeviceSize data_size = ktxTexture_GetDataSize(ktxTexture(k_tex));
+        const renderer::transfer::staging_t staging = renderer::transfer::stage(data_size);
+        if (staging.data) { std::memcpy(staging.data, ktxTexture_GetData(ktxTexture(k_tex)), data_size); }
+
+        if (!staging.data)
+        {
+            TAU_LOG_ERROR("TEXTURE", "Failed to allocate staging memory for texture: {}", path);
+            ktxTexture_Destroy(ktxTexture(k_tex));
+            return std::nullopt;
+        }
+
         texture_t tex;
         tex.width = k_tex->baseWidth;
         tex.height = k_tex->baseHeight;
 
         VkFormat format = (VkFormat)k_tex->vkFormat;
-        VkDeviceSize image_size = ktxTexture_GetDataSize(ktxTexture(k_tex));
-        u8* ktx_data = ktxTexture_GetData(ktxTexture(k_tex));
-
-        VkBuffer staging_buf;
-        VmaAllocation staging_alloc;
-
-        VkBufferCreateInfo staging_info = {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = image_size,
-            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        };
-
-        VmaAllocationCreateInfo alloc_info = {
-            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO,
-        };
-
-        VmaAllocationInfo staging_alloc_info;
-        if (vmaCreateBuffer(renderer::ctx.allocator, &staging_info, &alloc_info, &staging_buf, &staging_alloc,
-                            &staging_alloc_info) != VK_SUCCESS)
-        {
-            TAU_LOG_ERROR("TEXTURE", "Failed to allocate staging memory for texture: {}", path);
-            return std::nullopt;
-        }
-
-        std::memcpy(staging_alloc_info.pMappedData, ktx_data, static_cast<size_t>(image_size));
 
         VkImageCreateInfo image_info = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -120,6 +106,8 @@ namespace tau
                            nullptr) != VK_SUCCESS)
         {
             TAU_LOG_ERROR("TEXTURE", "Failed to allocate GPU memory for texture: {}", path);
+            renderer::transfer::discard(staging);
+            ktxTexture_Destroy(ktxTexture(k_tex));
             return std::nullopt;
         }
 
@@ -138,6 +126,9 @@ namespace tau
         if (vkCreateImageView(renderer::ctx.device, &view_info, nullptr, &tex.view) != VK_SUCCESS)
         {
             TAU_LOG_ERROR("TEXTURE", "Failed to create image view for texture: {}", path);
+            vmaDestroyImage(renderer::ctx.allocator, tex.image, tex.allocation);
+            renderer::transfer::discard(staging);
+            ktxTexture_Destroy(ktxTexture(k_tex));
             return std::nullopt;
         }
         renderer::device::name(tex.image, VK_OBJECT_TYPE_IMAGE, path.c_str());
@@ -167,7 +158,7 @@ namespace tau
             if (ktxTexture_GetImageOffset(ktxTexture(k_tex), mip, 0, 0, &offset) != KTX_SUCCESS) { continue; }
 
             VkBufferImageCopy region = {
-                .bufferOffset = offset,
+                .bufferOffset = staging.offset + offset,
                 .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                                      .mipLevel = mip,
                                      .baseArrayLayer = 0,
@@ -180,7 +171,7 @@ namespace tau
             copy_regions.push_back(region);
         }
 
-        vkCmdCopyBufferToImage(cmd_buf, staging_buf, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        vkCmdCopyBufferToImage(cmd_buf, staging.buffer, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                (u32_t)copy_regions.size(), copy_regions.data());
 
         bool is_same_queue = renderer::ctx.queue_fam_indices.transfer_family.value() ==
@@ -207,7 +198,7 @@ namespace tau
         vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, dst_stage, 0, 0, nullptr, 0, nullptr, 1,
                              &release_barrier);
 
-        u64_t signal_value = renderer::transfer::submit(cmd_buf);
+        renderer::transfer::submit(cmd_buf, &staging);
 
         if (!is_same_queue)
         {
@@ -219,9 +210,6 @@ namespace tau
 
         tex.bindless = renderer::bindless::add_sampled(tex.view);
         tex.bindless_id = tex.bindless.index;
-
-        renderer::deletion::retire(renderer::deletion::buffer(staging_buf, staging_alloc),
-                                   renderer::deletion::clock_e::TRANSFER, signal_value);
 
         ktxTexture_Destroy(ktxTexture(k_tex));
 

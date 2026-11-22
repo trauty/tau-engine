@@ -4,12 +4,14 @@
 #include "tau/guid.h"
 #include "tau/jobs.h"
 #include "tau/log.h"
+#include "tau/profiling.h"
 #include "tau/vfs.h"
 
 #include "json/json.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <condition_variable>
 #include <filesystem>
 #include <mutex>
 #include <unordered_map>
@@ -33,6 +35,9 @@ namespace tau::assets
             std::string path;
             u32_t pins = 0;
             bool marked = false;
+            // READ: the file, waiting for a loader; `charged` against the read-ahead
+            std::vector<u8_t> bytes;
+            u64_t charged = 0;
         };
 
         struct chunk_t
@@ -54,6 +59,35 @@ namespace tau::assets
         u32_t g_type_count = 0;
 
         std::atomic<u32_t> g_in_flight = 0;
+
+        // file bytes read and not yet consumed by a loader; the IO thread waits above it
+        constexpr u64_t READ_AHEAD_LIMIT = 256ull << 20;
+        std::mutex g_read_mutex;
+        std::condition_variable g_read_cv;
+        u64_t g_read_ahead = 0;
+
+        bool in_flight_state(asset_state_e state)
+        {
+            return state == asset_state_e::QUEUED || state == asset_state_e::LOADING ||
+                   state == asset_state_e::READING || state == asset_state_e::READ;
+        }
+
+        void release_read_ahead(u64_t bytes)
+        {
+            if (bytes == 0) { return; }
+            {
+                std::scoped_lock lock(g_read_mutex);
+                g_read_ahead -= bytes;
+            }
+            g_read_cv.notify_all();
+        }
+
+        std::vector<u8_t> read_cooked(const asset_type_t* type, const std::string& path)
+        {
+            ZoneScopedN("asset read");
+            ZoneText(path.data(), path.size());
+            return vfs::read_bytes(cooked_path(type->id, path));
+        }
 
         // loader deps pinned until its asset is placed
         struct load_scope_t
@@ -170,24 +204,33 @@ namespace tau::assets
             }
         }
 
-        bool claim(slot_t* slot)
+        bool claim(slot_t* slot, asset_state_e from, asset_state_e to)
+        { return slot->state.compare_exchange_strong(from, to, std::memory_order_acq_rel); }
+
+        std::string path_of_slot(const slot_t* slot)
         {
-            asset_state_e expected = asset_state_e::QUEUED;
-            return slot->state.compare_exchange_strong(expected, asset_state_e::LOADING, std::memory_order_acq_rel);
+            std::scoped_lock lock(g_mutex);
+            return slot->path;
         }
 
-        void run_loader(slot_t* slot)
+        // claimed (LOADING); `bytes` empty: read here
+        void run_loader(slot_t* slot, std::vector<u8_t> bytes)
         {
-            std::string path;
-            {
-                std::scoped_lock lock(g_mutex);
-                path = slot->path;
-            }
+            const std::string path = path_of_slot(slot);
+            if (bytes.empty()) { bytes = read_cooked(slot->type, path); }
 
+            bool ok = false;
             load_scope_t scope;
-            load_scope_t* outer = std::exchange(t_scope, &scope);
-            const bool ok = slot->type->load(slot->data, path);
-            t_scope = outer;
+            if (bytes.empty()) { TAU_LOG_ERROR("ASSET", "{} not found: {}", path, cooked_path(slot->type->id, path)); }
+            else
+            {
+                ZoneScopedN("asset load");
+                ZoneText(path.data(), path.size());
+
+                load_scope_t* outer = std::exchange(t_scope, &scope);
+                ok = slot->type->load(slot->data, path, bytes);
+                t_scope = outer;
+            }
 
             if (!ok) { TAU_LOG_ERROR("ASSET", "Failed to load {}", path); }
 
@@ -195,10 +238,55 @@ namespace tau::assets
             slot->state.notify_all();
             g_in_flight.fetch_sub(1, std::memory_order_release);
 
+            // after READY: collect() reaches the deps through it from now on
             unpin_all(scope.pinned);
         }
 
-        // runs the load, or waits for whoever does
+        // READ -> LOADING: the bytes the IO thread left
+        bool load_read(slot_t* slot)
+        {
+            if (!claim(slot, asset_state_e::READ, asset_state_e::LOADING)) { return false; }
+
+            std::vector<u8_t> bytes = std::move(slot->bytes);
+            const u64_t charged = std::exchange(slot->charged, 0);
+            run_loader(slot, std::move(bytes));
+            release_read_ahead(charged);
+            return true;
+        }
+
+        // the IO thread: waits for read-ahead room before claiming, so a blocking load can still take the slot
+        void read_stage(slot_t* slot)
+        {
+            if (slot->state.load(std::memory_order_acquire) != asset_state_e::QUEUED) { return; }
+
+            const std::string path = path_of_slot(slot);
+            const u64_t size = vfs::file_size(cooked_path(slot->type->id, path));
+            {
+                std::unique_lock lock(g_read_mutex);
+                g_read_cv.wait(lock,
+                               [slot, size]
+                               {
+                                   return g_read_ahead == 0 || g_read_ahead + size <= READ_AHEAD_LIMIT ||
+                                          slot->state.load(std::memory_order_acquire) != asset_state_e::QUEUED;
+                               });
+                g_read_ahead += size;
+            }
+
+            if (!claim(slot, asset_state_e::QUEUED, asset_state_e::READING))
+            {
+                release_read_ahead(size);
+                return;
+            }
+
+            slot->bytes = read_cooked(slot->type, path);
+            slot->charged = size;
+            slot->state.store(asset_state_e::READ, std::memory_order_release);
+            slot->state.notify_all();
+
+            jobs::kick([slot]() { load_read(slot); }, nullptr, jobs::priority_e::LOW);
+        }
+
+        // runs the load, or waits for whoever does; never for a job still queued
         void finish(slot_t* slot)
         {
             for (;;)
@@ -206,16 +294,21 @@ namespace tau::assets
                 const asset_state_e state = slot->state.load(std::memory_order_acquire);
                 if (state == asset_state_e::QUEUED)
                 {
-                    if (claim(slot))
+                    if (claim(slot, asset_state_e::QUEUED, asset_state_e::LOADING))
                     {
-                        run_loader(slot);
+                        run_loader(slot, {});
                         return;
                     }
                     continue;
                 }
-                if (state != asset_state_e::LOADING) { return; }
+                if (state == asset_state_e::READ)
+                {
+                    if (load_read(slot)) { return; }
+                    continue;
+                }
+                if (state != asset_state_e::LOADING && state != asset_state_e::READING) { return; }
 
-                slot->state.wait(asset_state_e::LOADING, std::memory_order_acquire);
+                slot->state.wait(state, std::memory_order_acquire);
             }
         }
 
@@ -240,6 +333,8 @@ namespace tau::assets
             slot->data = nullptr;
             slot->path.clear();
             slot->pins = 0;
+            slot->bytes = {};
+            release_read_ahead(std::exchange(slot->charged, 0));
             g_free.push_back(index);
 
             return freed;
@@ -270,7 +365,7 @@ namespace tau::assets
                 handle.slot = index;
             }
 
-            if (before == asset_state_e::QUEUED || before == asset_state_e::LOADING)
+            if (in_flight_state(before))
             {
                 TAU_LOG_WARN("ASSET", "{} is still loading, not reloaded", path);
                 return false;
@@ -279,9 +374,10 @@ namespace tau::assets
             const asset_type_t* type = slot->type;
             void* fresh = type->create();
 
+            const std::vector<u8_t> bytes = read_cooked(type, path);
             load_scope_t scope;
             load_scope_t* outer = std::exchange(t_scope, &scope);
-            const bool ok = type->load(fresh, path);
+            const bool ok = !bytes.empty() && type->load(fresh, path, bytes);
             t_scope = outer;
 
             if (!ok)
@@ -410,12 +506,7 @@ namespace tau::assets
             {
                 if (created)
                 {
-                    jobs::kick(
-                        [slot]()
-                        {
-                            if (claim(slot)) { run_loader(slot); }
-                        },
-                        nullptr, jobs::priority_e::LOW);
+                    jobs::kick([slot]() { read_stage(slot); }, nullptr, jobs::priority_e::IO);
                 }
                 return handle;
             }
@@ -450,7 +541,10 @@ namespace tau::assets
     {
         std::scoped_lock lock(g_mutex);
         const u32_t index = index_of(handle);
-        return index != NO_SLOT ? slot_at(index)->state.load(std::memory_order_acquire) : asset_state_e::NONE;
+        if (index == NO_SLOT) { return asset_state_e::NONE; }
+
+        const asset_state_e state = slot_at(index)->state.load(std::memory_order_acquire);
+        return in_flight_state(state) ? (state == asset_state_e::QUEUED ? state : asset_state_e::LOADING) : state;
     }
 
     u64_t type_of(asset_handle_t handle)
@@ -550,7 +644,7 @@ namespace tau::assets
                 if (slot->guid.load(std::memory_order_relaxed) == 0) { continue; }
 
                 const asset_state_e state = slot->state.load(std::memory_order_acquire);
-                if (slot->pins > 0 || state == asset_state_e::QUEUED || state == asset_state_e::LOADING) { mark(i); }
+                if (slot->pins > 0 || in_flight_state(state)) { mark(i); }
             }
 
             for (const asset_handle_t& root : roots) { mark(index_of(root)); }

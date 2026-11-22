@@ -6,6 +6,7 @@
     #define FrameMark
     #define ZoneScoped
     #define ZoneScopedN(name)
+    #define ZoneText(txt, size)
     #define ZoneScopedC(hexcolor)
     #define TracyMessage(txt, size)
     #define TracyMessageL(txt)

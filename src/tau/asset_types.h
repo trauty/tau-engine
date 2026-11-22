@@ -5,6 +5,7 @@
 
 #include <concepts>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,9 +45,9 @@ namespace tau::assets
         type.create = []() -> void* { return new T(); };
         type.destroy = [](void* asset) { delete static_cast<T*>(asset); };
         type.move = [](void* to, void* from) { *static_cast<T*>(to) = std::move(*static_cast<T*>(from)); };
-        type.load = [](void* out, const std::string& path)
+        type.load = [](void* out, const std::string& path, std::span<const u8_t> bytes)
         {
-            std::optional<T> loaded = loader_t::load(path);
+            std::optional<T> loaded = loader_t::load(path, bytes);
             if (!loaded) { return false; }
 
             *static_cast<T*>(out) = std::move(*loaded);

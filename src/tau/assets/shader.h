@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,6 +60,8 @@ namespace tau
     };
 
     bool read_shader_file(const std::string& cooked_path, shader_file_t& out);
+    // the file's bytes already read; `cooked_path` names it in errors
+    bool parse_shader_file(const std::string& cooked_path, std::span<const u8_t> bytes, shader_file_t& out);
 
     struct TAU_ENGINE_API shader_t
     {
@@ -92,7 +95,7 @@ namespace tau
     template <>
     struct TAU_ENGINE_API asset_loader_t<shader_t>
     {
-        static std::optional<shader_t> load(const std::string& path);
+        static std::optional<shader_t> load(const std::string& path, std::span<const u8_t> bytes);
         static void unload(shader_t& shader);
     };
 } // namespace tau

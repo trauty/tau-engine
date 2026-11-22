@@ -9,6 +9,7 @@
 
 #include "json/json.hpp"
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,7 +37,7 @@ namespace tau
     template <>
     struct TAU_ENGINE_API asset_loader_t<data_asset_t>
     {
-        static std::optional<data_asset_t> load(const std::string& path);
+        static std::optional<data_asset_t> load(const std::string& path, std::span<const u8_t> bytes);
         static void unload(data_asset_t& asset);
         static void deps(const data_asset_t& asset, std::vector<asset_handle_t>& out);
         static asset_dep_e dep_reloaded(data_asset_t& asset, asset_handle_t dep);

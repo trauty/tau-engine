@@ -5,6 +5,7 @@
 #include "tau/math.h"
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,6 +34,6 @@ namespace tau
     template <>
     struct TAU_ENGINE_API asset_loader_t<skeleton_t>
     {
-        static std::optional<skeleton_t> load(const std::string& path);
+        static std::optional<skeleton_t> load(const std::string& path, std::span<const u8_t> bytes);
     };
 } // namespace tau

@@ -6,6 +6,7 @@
 #include "tau/rhi/vulkan.h"
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,7 +59,7 @@ namespace tau
     template <>
     struct TAU_ENGINE_API asset_loader_t<mesh_t>
     {
-        static std::optional<mesh_t> load(const std::string& path);
+        static std::optional<mesh_t> load(const std::string& path, std::span<const u8_t> bytes);
         static void unload(mesh_t& mesh);
         static void deps(const mesh_t& mesh, std::vector<asset_handle_t>& out);
     };

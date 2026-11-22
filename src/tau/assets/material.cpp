@@ -6,7 +6,6 @@
 #include "tau/log.h"
 #include "tau/rhi/context.h"
 #include "tau/rhi/material_heap.h"
-#include "tau/vfs.h"
 
 #include <cstring>
 #include <optional>
@@ -194,16 +193,9 @@ namespace tau
         data.clear();
     }
 
-    std::optional<material_t> asset_loader_t<material_t>::load(const std::string& path)
+    std::optional<material_t> asset_loader_t<material_t>::load(const std::string& path, std::span<const u8_t> bytes)
     {
         std::string cooked_path = assets::cooked_path(get_type_id<material_t>(), path);
-        std::vector<u8_t> bytes = tau::vfs::read_bytes(cooked_path);
-        if (bytes.empty())
-        {
-            TAU_LOG_WARN("MATERIAL", "Material file not found: {}", cooked_path);
-            return std::nullopt;
-        }
-
         if (bytes.size() < sizeof(material_header_t))
         {
             TAU_LOG_ERROR("MATERIAL", "Truncated material file: {}", cooked_path);
@@ -233,7 +225,7 @@ namespace tau
             TAU_LOG_ERROR("MATERIAL", "Truncated shader path in: {}", cooked_path);
             return std::nullopt;
         }
-        std::string shader_path(reinterpret_cast<char*>(bytes.data() + offset), header->shader_path_length);
+        std::string shader_path(reinterpret_cast<const char*>(bytes.data() + offset), header->shader_path_length);
         offset += header->shader_path_length;
 
         shader_path = assets::resolve(header->shader_guid, shader_path);
@@ -265,7 +257,7 @@ namespace tau
                 TAU_LOG_ERROR("MATERIAL", "Truncated texture path in: {}", cooked_path);
                 return std::nullopt;
             }
-            std::string tex_path(reinterpret_cast<char*>(bytes.data() + offset), tex_bind->path_length);
+            std::string tex_path(reinterpret_cast<const char*>(bytes.data() + offset), tex_bind->path_length);
             offset += tex_bind->path_length;
 
             tex_path = assets::resolve(tex_bind->guid, tex_path);
@@ -288,7 +280,8 @@ namespace tau
                 TAU_LOG_ERROR("MATERIAL", "Truncated sampler bind in: {}", cooked_path);
                 return std::nullopt;
             }
-            cooked_sampler_bind_t* smp_bind = reinterpret_cast<cooked_sampler_bind_t*>(bytes.data() + offset);
+            const cooked_sampler_bind_t* smp_bind =
+                reinterpret_cast<const cooked_sampler_bind_t*>(bytes.data() + offset);
             offset += sizeof(cooked_sampler_bind_t);
 
             mat.set_sampler(smp_bind->name_hash, static_cast<sampler_type_e>(smp_bind->sampler_value));
@@ -302,7 +295,7 @@ namespace tau
                 TAU_LOG_ERROR("MATERIAL", "Truncated property in: {}", cooked_path);
                 return std::nullopt;
             }
-            cooked_property_t* prop = reinterpret_cast<cooked_property_t*>(bytes.data() + offset);
+            const cooked_property_t* prop = reinterpret_cast<const cooked_property_t*>(bytes.data() + offset);
             offset += sizeof(cooked_property_t);
 
             if (offset + prop->data_size > bytes.size())

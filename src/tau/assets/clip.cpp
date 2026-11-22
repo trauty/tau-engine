@@ -3,14 +3,12 @@
 #include "tau/assets/animation_format.h"
 #include "tau/assets/bytes.h"
 #include "tau/log.h"
-#include "tau/vfs.h"
 
 namespace tau
 {
-    std::optional<clip_t> asset_loader_t<clip_t>::load(const std::string& path)
+    std::optional<clip_t> asset_loader_t<clip_t>::load(const std::string& path, std::span<const u8_t> bytes)
     {
         const std::string cooked_path = assets::cooked_path(get_type_id<clip_t>(), path);
-        const std::vector<u8_t> bytes = vfs::read_bytes(cooked_path);
 
         byte_reader_t in{bytes};
         const clip_header_t header = in.read<clip_header_t>();

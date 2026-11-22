@@ -101,12 +101,12 @@ namespace tau
         }
     } // namespace
 
-    std::optional<data_asset_t> asset_loader_t<data_asset_t>::load(const std::string& path)
+    std::optional<data_asset_t> asset_loader_t<data_asset_t>::load(const std::string& path, std::span<const u8_t> bytes)
     {
         using namespace value_io;
 
         const std::string cooked = assets::cooked_path(get_type_id<data_asset_t>(), path);
-        SDL_IOStream* stream = vfs::open_read(cooked);
+        SDL_IOStream* stream = SDL_IOFromConstMem(bytes.data(), bytes.size());
         if (!stream)
         {
             TAU_LOG_ERROR("DATA", "Data asset not found: {}", cooked);

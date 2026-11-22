@@ -21,7 +21,7 @@ namespace tau
     {
         struct reader_t
         {
-            const std::vector<u8_t>& bytes;
+            std::span<const u8_t> bytes;
             size_t at = 0;
             bool ok = true;
 
@@ -53,7 +53,11 @@ namespace tau
             TAU_LOG_ERROR("SHADER", "Shader not found: {}", cooked_path);
             return false;
         }
+        return parse_shader_file(cooked_path, bytes, out);
+    }
 
+    bool parse_shader_file(const std::string& cooked_path, std::span<const u8_t> bytes, shader_file_t& out)
+    {
         reader_t r{bytes};
         r.read(&out.header, sizeof(shader_header_t));
         if (!r.ok || out.header.magic != TAU_SHADER_MAGIC)
@@ -113,12 +117,12 @@ namespace tau
         return true;
     }
 
-    std::optional<shader_t> tau::asset_loader_t<shader_t>::load(const std::string& path)
+    std::optional<shader_t> tau::asset_loader_t<shader_t>::load(const std::string& path, std::span<const u8_t> bytes)
     {
         const std::string cooked_path = assets::cooked_path(get_type_id<shader_t>(), path);
 
         shader_file_t file;
-        if (!read_shader_file(cooked_path, file)) { return std::nullopt; }
+        if (!parse_shader_file(cooked_path, bytes, file)) { return std::nullopt; }
 
         // built at startup
         const renderer::pipelines::shader_pipelines_t built = renderer::pipelines::acquire(path, file);

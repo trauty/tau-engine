@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -29,7 +30,7 @@ namespace tau
     template <>
     struct TAU_ENGINE_API asset_loader_t<texture_t>
     {
-        static std::optional<texture_t> load(const std::string& path);
+        static std::optional<texture_t> load(const std::string& path, std::span<const u8_t> bytes);
         static void unload(texture_t& tex);
     };
 } // namespace tau

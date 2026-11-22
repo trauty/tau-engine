@@ -23,6 +23,9 @@ namespace tau
         LOADING,
         READY,
         FAILED,
+        // in flight like LOADING, which state() reports for them: the IO thread reads the file, its bytes wait
+        READING,
+        READ,
     };
 
     struct asset_handle_t
@@ -57,7 +60,8 @@ namespace tau
     };
 
     // specialized next to each asset type:
-    //   static std::optional<T> load(const std::string& path);               required
+    //   static std::optional<T> load(const std::string& path,                required, the cooked file's bytes
+    //                                std::span<const u8_t> bytes);
     //   static void unload(T& asset);                                        GPU resources and the like
     //   static void deps(const T& asset, std::vector<asset_handle_t>& out);  assets it uses, kept loaded with it,
     //                                                                        runs under the table's lock: copy, call
@@ -90,7 +94,7 @@ namespace tau
         void* (*create)() = nullptr;
         void (*destroy)(void* asset) = nullptr;
         void (*move)(void* to, void* from) = nullptr;
-        bool (*load)(void* out, const std::string& path) = nullptr;
+        bool (*load)(void* out, const std::string& path, std::span<const u8_t> bytes) = nullptr;
         void (*unload)(void* asset) = nullptr;
         void (*deps)(const void* asset, std::vector<asset_handle_t>& out) = nullptr;
         asset_dep_e (*dep_reloaded)(void* asset, asset_handle_t dep) = nullptr;

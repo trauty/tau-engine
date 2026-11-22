@@ -49,6 +49,8 @@ namespace tau::vfs
     TAU_ENGINE_API bool exists(const std::string& virtual_path);
 
     TAU_ENGINE_API std::vector<u8_t> read_bytes(const std::string& virtual_path);
+    // 0 when missing
+    TAU_ENGINE_API u64_t file_size(const std::string& virtual_path);
     TAU_ENGINE_API std::string read_text(const std::string& virtual_path);
 
     TAU_ENGINE_API SDL_IOStream* open_read(const std::string& virtual_path);
