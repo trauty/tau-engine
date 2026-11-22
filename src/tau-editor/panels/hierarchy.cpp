@@ -14,6 +14,7 @@
 #include "tau/components/tag.h"
 #include "tau/components/transform.h"
 #include "tau/ecs_fwd.h"
+#include "tau/entity.h"
 #include "tau/guid.h"
 #include "tau/serialization.h"
 #include "tau/systems/guid.h"
@@ -169,13 +170,10 @@ namespace tau::editor::panels
             const history::target_t target = history::entity_target(guid);
             history::begin(world, "Create Entity", {&target, 1});
 
-            const ecs::entity_t entity = world.registry.create();
-            guid_system::assign(world.registry, entity, guid);
-            world.registry.emplace<tag_t>(entity, "New Entity");
-            world.registry.emplace<transform_t>(entity);
-            if (parent != ecs::NULL_ENTITY && world.registry.all_of<transform_t>(parent))
+            const entity_ref_t entity = entity::create(world, "New Entity", guid);
+            if (entity.other(parent).has<transform_t>())
             {
-                transform_system::set_parent(world.registry, entity, parent);
+                entity.set_parent(entity.other(parent));
                 g.reveal.insert(guid_system::of(world.registry, parent));
             }
             ctx.selection.set(guid);

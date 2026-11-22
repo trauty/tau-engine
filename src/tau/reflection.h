@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 
+namespace tau { struct entity_ref_t; }
+
 namespace tau::reflection
 {
     using any_t = entt::meta_any;
@@ -157,6 +159,9 @@ namespace tau::reflection
         using type = M;
     };
 
+    template <typename F>
+    constexpr bool is_entity_ref = std::is_same_v<F, entity_ref_t> || std::is_same_v<F, std::vector<entity_ref_t>>;
+
     template <auto MemberPtr>
     editor_prop_t field_prop(const char* label)
     {
@@ -224,6 +229,8 @@ namespace tau::reflection
         template <auto MemberPtr>
         Self& bind_field(u32_t id, const char* name, editor_prop_t prop)
         {
+            static_assert(!is_entity_ref<std::remove_cv_t<typename member_type_t<decltype(MemberPtr)>::type>>,
+                          "store ecs::entity_t, entity_ref_t holds a world pointer");
             m_factory.template data<MemberPtr>(id, name).template custom<editor_prop_t>(prop);
             return self();
         }

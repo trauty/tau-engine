@@ -20,6 +20,7 @@
 #include "tau/components/renderer.h"
 #include "tau/components/tag.h"
 #include "tau/components/transform.h"
+#include "tau/entity.h"
 #include "tau/guid.h"
 #include "tau/rhi/renderer_constants.h"
 #include "tau/systems/guid.h"
@@ -69,16 +70,13 @@ namespace tau::editor::asset_editors
             const std::string name = std::filesystem::path(vfs).stem().string();
             history::begin(world, "Create " + name, {&target, 1});
 
-            const ecs::entity_t entity = world.registry.create();
-            guid_system::assign(world.registry, entity, guid);
-            world.registry.emplace<tag_t>(entity, name);
-            world.registry.emplace<transform_t>(entity).local_position = at;
-
-            world.registry.emplace<mesh_renderer_t>(entity).mesh = assets::load<mesh_t>(vfs);
+            const entity_ref_t entity = entity::create(world, name, guid);
+            entity.get<transform_t>().local_position = at;
+            entity.add<mesh_renderer_t>().mesh = assets::load<mesh_t>(vfs);
 
             if (const ecs::entity_t root = prefab_stage::root(world); root != ecs::NULL_ENTITY)
             {
-                transform_system::set_parent_keep_world(world.registry, entity, root, ecs::NULL_ENTITY);
+                entity.set_parent(entity.other(root), true);
             }
 
             ctx.selection.set(guid);
