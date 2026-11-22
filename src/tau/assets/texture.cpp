@@ -3,10 +3,12 @@
 #include "tau/asset.h"
 #include "tau/defines.h"
 #include "tau/log.h"
+#include "tau/rhi/bindless.h"
+#include "tau/rhi/deletion.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
+#include "tau/rhi/transfer.h"
 #include "tau/rhi/vulkan.h"
 #include "tau/vfs.h"
 #include "vulkan/vulkan_core.h"
@@ -142,7 +144,7 @@ namespace tau
         renderer::device::name(tex.image, VK_OBJECT_TYPE_IMAGE, path.c_str());
         renderer::device::name(tex.view, VK_OBJECT_TYPE_IMAGE_VIEW, path.c_str());
 
-        VkCommandBuffer cmd_buf = renderer::begin_transfer_commands();
+        VkCommandBuffer cmd_buf = renderer::transfer::begin();
 
         VkImageMemoryBarrier barrier_to_dst = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -206,52 +208,21 @@ namespace tau
         vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, dst_stage, 0, 0, nullptr, 0, nullptr, 1,
                              &release_barrier);
 
-        u64_t signal_value = renderer::submit_transfer_commands(cmd_buf);
+        u64_t signal_value = renderer::transfer::submit(cmd_buf);
 
         if (!is_same_queue)
         {
-            std::scoped_lock lock(renderer::res_system.pending_mutex);
             VkImageMemoryBarrier acquire_barrier = release_barrier;
             acquire_barrier.srcAccessMask = 0;
             acquire_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-            renderer::res_system.pending_acquires.push_back({
-                .type = renderer::resource_type_e::TEXTURE,
-                .handle = {.image = tex.image},
-                .barrier = {.image_barrier = acquire_barrier},
-            });
+            renderer::transfer::acquire(acquire_barrier);
         }
 
-        tex.bindless_id = renderer::res_system.texture_heap.acquire();
+        tex.bindless = renderer::bindless::add_sampled(tex.view);
+        tex.bindless_id = tex.bindless.index;
 
-        VkDescriptorImageInfo image_desc_info = {
-            .sampler = VK_NULL_HANDLE,
-            .imageView = tex.view,
-            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-
-        VkWriteDescriptorSet write_desc = {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = renderer::res_system.global_set,
-            .dstBinding = renderer::TEXTURES_BINDING_POINT,
-            .dstArrayElement = tex.bindless_id,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            .pImageInfo = &image_desc_info,
-        };
-
-        vkUpdateDescriptorSets(renderer::ctx.device, 1, &write_desc, 0, nullptr);
-
-        {
-            std::scoped_lock lock(renderer::res_system.deletion_mutex);
-            renderer::res_system.deletion_queue.push_back({
-                .type = renderer::resource_type_e::BUFFER,
-                .handle = {.buffer = {staging_buf, staging_alloc}},
-                .bindless_id = renderer::BINDLESS_NULL_HANDLE,
-                .gpu_timeline_value = signal_value,
-                .clock = renderer::deletion_clock_e::TRANSFER,
-            });
-        }
+        renderer::deletion::retire(renderer::deletion::buffer(staging_buf, staging_alloc),
+                                   renderer::deletion::clock_e::TRANSFER, signal_value);
 
         ktxTexture_Destroy(ktxTexture(k_tex));
 
@@ -262,13 +233,7 @@ namespace tau
     {
         if (tex.image == VK_NULL_HANDLE) { return; }
 
-        std::scoped_lock lock(renderer::res_system.deletion_mutex);
-
-        renderer::res_system.deletion_queue.push_back({
-            .type = renderer::resource_type_e::TEXTURE,
-            .handle = {.texture = {tex.image, tex.allocation, tex.view}},
-            .bindless_id = tex.bindless_id,
-            .gpu_timeline_value = renderer::deletion_timeline_value(),
-        });
+        renderer::deletion::retire(renderer::deletion::image(tex.image, tex.allocation, tex.view));
+        renderer::bindless::remove(tex.bindless);
     }
 } // namespace tau

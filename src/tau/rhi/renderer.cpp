@@ -22,17 +22,20 @@
 #include "tau/profiling.h"
 #include "tau/render/frame.h"
 #include "tau/render/overlay.h"
+#include "tau/rhi/bindless.h"
+#include "tau/rhi/deletion.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/frame_upload.h"
 #include "tau/rhi/gpu_timers.h"
+#include "tau/rhi/material_heap.h"
 #include "tau/rhi/pipelines.h"
 #include "tau/rhi/readback.h"
 #include "tau/rhi/renderdoc.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
 #include "tau/rhi/rendergraph.h"
 #include "tau/rhi/samplers.h"
+#include "tau/rhi/transfer.h"
 #include "tau/rhi/vulkan.h"
 #include "tau/systems/camera.h"
 #include "tau/time.h"
@@ -139,27 +142,10 @@ namespace tau::renderer
 
             if (ctx.swapchain.handle != VK_NULL_HANDLE)
             {
-                std::scoped_lock lock(res_system.deletion_mutex);
-                const u64_t safe_timeline = deletion_timeline_value();
-
-                for (VkImageView view : ctx.swapchain.views)
-                {
-                    res_system.deletion_queue.push_back({
-                        .type = resource_type_e::IMAGE_VIEW,
-                        .handle = {.image_view = view},
-                        .bindless_id = BINDLESS_NULL_HANDLE,
-                        .gpu_timeline_value = safe_timeline,
-                    });
-                }
+                for (VkImageView view : ctx.swapchain.views) { deletion::retire(deletion::view(view)); }
                 ctx.swapchain.views.clear();
-
-                res_system.deletion_queue.push_back({
-                    .type = resource_type_e::TEXTURE,
-                    .handle = {.texture = {ctx.swapchain.depth_image, ctx.swapchain.depth_allocation,
-                                           ctx.swapchain.depth_view}},
-                    .bindless_id = BINDLESS_NULL_HANDLE,
-                    .gpu_timeline_value = safe_timeline,
-                });
+                deletion::retire(deletion::image(ctx.swapchain.depth_image, ctx.swapchain.depth_allocation,
+                                                 ctx.swapchain.depth_view));
 
                 vkDestroySwapchainKHR(ctx.device, ctx.swapchain.handle, nullptr);
                 ctx.swapchain.handle = VK_NULL_HANDLE;
@@ -275,7 +261,7 @@ namespace tau::renderer
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
-        VkDescriptorSet sets[] = {res_system.global_set, res_system.frame_set};
+        VkDescriptorSet sets[] = {bindless::global_set(), bindless::frame_set()};
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, shader.pipeline_layout, 0, 2, sets, 1,
                                 &view_offset);
 
@@ -351,9 +337,9 @@ namespace tau::renderer
 
             gpu::PushConstants pc_data = {
                 fd.object_buffer_address,
-                res_system.material_heap.device_address,
+                material_heap::address(),
             };
-            VkDescriptorSet sets[] = {res_system.global_set, res_system.frame_set};
+            VkDescriptorSet sets[] = {bindless::global_set(), bindless::frame_set()};
 
             for (u32_t i = range.begin; i < range.end; i++)
             {
@@ -386,7 +372,7 @@ namespace tau::renderer
         const std::unique_ptr<view_gpu_resources_t>* found = fd.views.find(view_name_hash);
         if (found == nullptr) { return false; }
 
-        const VkDescriptorSet sets[] = {res_system.global_set, res_system.frame_set};
+        const VkDescriptorSet sets[] = {bindless::global_set(), bindless::frame_set()};
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 2, sets, 1,
                                 &(*found)->global_data_offset);
         return true;
@@ -469,7 +455,7 @@ namespace tau::renderer
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-            VkDescriptorSet sets[] = {res_system.global_set, res_system.frame_set};
+            VkDescriptorSet sets[] = {bindless::global_set(), bindless::frame_set()};
 
             const u32_t view_offset = view_global_offset(frame_data, view_name_hash);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
@@ -477,7 +463,7 @@ namespace tau::renderer
 
             gpu::PushConstants pc_data = {
                 frame_data.object_buffer_address,
-                res_system.material_heap.device_address,
+                material_heap::address(),
                 material->heap_offset[ctx.cur_frame],
             };
 
@@ -518,7 +504,7 @@ namespace tau::renderer
 
             const gpu::PushConstants pc_data = {
                 frame_data.object_buffer_address,
-                res_system.material_heap.device_address,
+                material_heap::address(),
                 material->heap_offset[ctx.cur_frame],
             };
 
@@ -529,12 +515,14 @@ namespace tau::renderer
         return pass;
     }
 
+    // an in-flight frame may still sample it
     static void destroy_persistent_image(persistent_image_t& target)
     {
-        if (target.view != VK_NULL_HANDLE) { vkDestroyImageView(ctx.device, target.view, nullptr); }
-        if (target.image != VK_NULL_HANDLE) { vmaDestroyImage(ctx.allocator, target.image, target.allocation); }
-        if (target.bindless_id != BINDLESS_NULL_HANDLE) { res_system.texture_heap.release(target.bindless_id); }
-
+        if (target.image != VK_NULL_HANDLE)
+        {
+            deletion::retire(deletion::image(target.image, target.allocation, target.view));
+        }
+        bindless::remove(target.bindless);
         target = persistent_image_t{};
     }
 
@@ -584,25 +572,8 @@ namespace tau::renderer
 
         if (desc.usage & VK_IMAGE_USAGE_SAMPLED_BIT)
         {
-            target.bindless_id = res_system.texture_heap.acquire();
-
-            VkDescriptorImageInfo bindless_info = {
-                .sampler = VK_NULL_HANDLE,
-                .imageView = target.view,
-                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            };
-
-            VkWriteDescriptorSet write_desc = {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = res_system.global_set,
-                .dstBinding = TEXTURES_BINDING_POINT,
-                .dstArrayElement = target.bindless_id,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                .pImageInfo = &bindless_info,
-            };
-
-            vkUpdateDescriptorSets(ctx.device, 1, &write_desc, 0, nullptr);
+            target.bindless = bindless::add_sampled(target.view);
+            target.bindless_id = target.bindless.index;
         }
 
         target.desc = desc;
@@ -701,7 +672,7 @@ namespace tau::renderer
 
             const gpu::PushConstants pc_data = {
                 fd.object_buffer_address,
-                res_system.material_heap.device_address,
+                material_heap::address(),
                 0,
                 depth_tex_id,
             };
@@ -898,38 +869,10 @@ namespace tau::renderer
                          has_op(VK_SUBGROUP_FEATURE_SHUFFLE_BIT));
         }
 
-        {
-            VkPhysicalDeviceDescriptorIndexingProperties idx_props = {
-                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES};
-            VkPhysicalDeviceProperties2 props2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &idx_props};
-            vkGetPhysicalDeviceProperties2(ctx.physical_device, &props2);
-
-            auto clamp_cap = [](const char* name, u32_t desired, u32_t set_limit, u32_t stage_limit)
-            {
-                u32_t hw = std::min(set_limit, stage_limit);
-                if (desired > hw)
-                {
-                    TAU_LOG_WARN("VULKAN", "Bindless capacity '{}' clamped from {} to device limit {}", name, desired,
-                                 hw);
-                    return hw;
-                }
-                return desired;
-            };
-
-            const bindless_limits_t& want = config.bindless_limits;
-            res_system.max_samplers =
-                clamp_cap("samplers", want.max_samplers, idx_props.maxDescriptorSetUpdateAfterBindSamplers,
-                          idx_props.maxPerStageDescriptorUpdateAfterBindSamplers);
-            res_system.max_sampled_textures = clamp_cap("sampled_textures", want.max_sampled_textures,
-                                                        idx_props.maxDescriptorSetUpdateAfterBindSampledImages,
-                                                        idx_props.maxPerStageDescriptorUpdateAfterBindSampledImages);
-            res_system.max_storage_images = clamp_cap("storage_images", want.max_storage_images,
-                                                      idx_props.maxDescriptorSetUpdateAfterBindStorageImages,
-                                                      idx_props.maxPerStageDescriptorUpdateAfterBindStorageImages);
-            res_system.material_heap_size = want.material_heap_size;
-        }
-
-        init_resources();
+        bindless::init({config.bindless_limits.max_samplers, config.bindless_limits.max_sampled_textures,
+                        config.bindless_limits.max_storage_images});
+        material_heap::init(config.bindless_limits.material_heap_size);
+        transfer::init();
 
         if (ctx.caps.headless)
         {
@@ -945,14 +888,6 @@ namespace tau::renderer
         ctx.per_frame_objects.resize(MAX_FRAMES_IN_FLIGHT);
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) { init_per_frame(ctx.per_frame_objects[i]); }
 
-        VkCommandPoolCreateInfo transfer_pool_info = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-            .queueFamilyIndex = ctx.queue_fam_indices.transfer_family.value(),
-        };
-
-        VK_CHECK(vkCreateCommandPool(ctx.device, &transfer_pool_info, nullptr, &ctx.transfer_command_pool));
-
         VkSemaphoreTypeCreateInfo timeline_type_info = {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
             .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
@@ -966,38 +901,6 @@ namespace tau::renderer
 
         VK_CHECK(vkCreateSemaphore(ctx.device, &timeline_sem_info, nullptr, &ctx.timeline_semaphore));
         ctx.timeline_value = 0;
-
-        VkSampler linear_repeat = create_sampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-        VkSampler linear_clamp = create_sampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-        VkSampler nearest_repeat = create_sampler(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-        VkSampler nearest_clamp = create_sampler(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
-        VkSampler shadow_cmp = create_shadow_sampler();
-
-        ctx.samplers.push_back(linear_repeat);
-        ctx.samplers.push_back(linear_clamp);
-        ctx.samplers.push_back(nearest_repeat);
-        ctx.samplers.push_back(nearest_clamp);
-        ctx.samplers.push_back(shadow_cmp);
-
-        constexpr u32_t sampler_write_count = (u32_t)sampler_type_e::COUNT;
-        VkDescriptorImageInfo sampler_infos[sampler_write_count] = {};
-        sampler_infos[(u32_t)sampler_type_e::LINEAR_REPEAT].sampler = linear_repeat;
-        sampler_infos[(u32_t)sampler_type_e::LINEAR_CLAMP].sampler = linear_clamp;
-        sampler_infos[(u32_t)sampler_type_e::NEAREST_REPEAT].sampler = nearest_repeat;
-        sampler_infos[(u32_t)sampler_type_e::NEAREST_CLAMP].sampler = nearest_clamp;
-        sampler_infos[(u32_t)sampler_type_e::SHADOW_CMP].sampler = shadow_cmp;
-
-        VkWriteDescriptorSet samplers_write_desc = {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = res_system.global_set,
-            .dstBinding = SAMPLERS_BINDING_POINT,
-            .dstArrayElement = 0,
-            .descriptorCount = sampler_write_count,
-            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
-            .pImageInfo = sampler_infos,
-        };
-
-        vkUpdateDescriptorSets(ctx.device, 1, &samplers_write_desc, 0, nullptr);
 
         TAU_LOG_INFO("VULKAN", "Context initialized for GPU: {}", ctx.properties.deviceName);
 
@@ -1079,7 +982,7 @@ namespace tau::renderer
 
         VkWriteDescriptorSet write_desc = {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = res_system.frame_set,
+            .dstSet = bindless::frame_set(),
             .dstBinding = 0,
             .dstArrayElement = 0,
             .descriptorCount = 1,
@@ -1162,28 +1065,22 @@ namespace tau::renderer
         if (tracy_vk_ctx) { TracyVkDestroy(tracy_vk_ctx); }
 #endif
 
-        if (!ctx.samplers.empty())
-        {
-            for (VkSampler sampler : ctx.samplers) { vkDestroySampler(ctx.device, sampler, nullptr); }
-        }
-
-        res_system.process_deletions(UINT64_MAX, UINT64_MAX);
-
-        shutdown_resources();
+        deletion::flush();
 
         if (ctx.timeline_semaphore != VK_NULL_HANDLE)
         {
             vkDestroySemaphore(ctx.device, ctx.timeline_semaphore, nullptr);
         }
 
-        if (ctx.transfer_command_pool != VK_NULL_HANDLE)
-        {
-            vkDestroyCommandPool(ctx.device, ctx.transfer_command_pool, nullptr);
-        }
-
         for (per_frame_t& frame_data : ctx.per_frame_objects) { shutdown_per_frame(frame_data); }
 
         ctx.per_frame_objects.clear();
+
+        // releases land in the tables below
+        deletion::flush();
+        transfer::shutdown();
+        material_heap::shutdown();
+        bindless::shutdown();
 
         if (ctx.global_data_buffer != VK_NULL_HANDLE)
         {
@@ -1519,7 +1416,8 @@ namespace tau::renderer
     static void submit_headless(VkCommandBuffer cmd, per_frame_t& frame_data)
     {
         const u64_t next_timeline_value = ++ctx.timeline_value;
-        const u64_t wait_value = res_system.timeline_value;
+        const u64_t wait_value = transfer::last_value();
+        const VkSemaphore upload_timeline = transfer::timeline();
 
         VkTimelineSemaphoreSubmitInfo timeline_sem_info = {
             .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
@@ -1533,7 +1431,7 @@ namespace tau::renderer
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .pNext = &timeline_sem_info,
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &res_system.timeline_semaphore,
+            .pWaitSemaphores = &upload_timeline,
             .pWaitDstStageMask = &wait_stage,
             .commandBufferCount = 1,
             .pCommandBuffers = &cmd,
@@ -1548,7 +1446,7 @@ namespace tau::renderer
     {
         VkSemaphore wait_semaphores[] = {
             frame_data.swapchain_acquire_semaphore,
-            res_system.timeline_semaphore,
+            transfer::timeline(),
         };
 
         VkSemaphore signal_semaphores[] = {
@@ -1561,7 +1459,7 @@ namespace tau::renderer
             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         };
 
-        u64_t wait_values[] = {0, res_system.timeline_value};
+        u64_t wait_values[] = {0, transfer::last_value()};
 
         u64_t next_timeline_value = ctx.timeline_value + 1;
         ctx.timeline_value = next_timeline_value;
@@ -1607,29 +1505,6 @@ namespace tau::renderer
     }
 
     // resources uploaded on the transfer queue need their ownership acquired on the graphics queue before sampling
-    static void flush_pending_acquires(VkCommandBuffer cmd)
-    {
-        std::scoped_lock lock(res_system.pending_mutex);
-        if (res_system.pending_acquires.empty()) { return; }
-
-        std::vector<VkImageMemoryBarrier> image_barriers;
-        std::vector<VkBufferMemoryBarrier> buffer_barriers;
-
-        for (pending_resource_t& res : res_system.pending_acquires)
-        {
-            if (res.type == resource_type_e::TEXTURE) { image_barriers.push_back(res.barrier.image_barrier); }
-            else
-            {
-                buffer_barriers.push_back(res.barrier.buffer_barrier);
-            }
-        }
-
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT, 0, 0, nullptr,
-                             static_cast<u32_t>(buffer_barriers.size()), buffer_barriers.data(),
-                             static_cast<u32_t>(image_barriers.size()), image_barriers.data());
-
-        res_system.pending_acquires.clear();
-    }
 
     // the swapchain may be rotated relative to the display, so colour views are pre multiplied by the rotation
     static mat4 surface_pre_rotation()
@@ -1688,13 +1563,10 @@ namespace tau::renderer
             pending_resize = false;
         }
 
-        // each entry waits on the timeline its value came from: see deletion_clock_e
         u64_t completed_frame = 0;
         vkGetSemaphoreCounterValue(ctx.device, ctx.timeline_semaphore, &completed_frame);
-        u64_t completed_transfer = 0;
-        vkGetSemaphoreCounterValue(ctx.device, res_system.timeline_semaphore, &completed_transfer);
-
-        res_system.process_deletions(completed_frame, completed_transfer);
+        deletion::process(completed_frame, transfer::completed());
+        material_heap::begin_frame();
 
         save_pipeline_cache_when_settled();
 
@@ -1738,7 +1610,7 @@ namespace tau::renderer
 #endif
         gpu_timers::begin_frame(cmd, ctx.cur_frame);
 
-        flush_pending_acquires(cmd);
+        transfer::flush_acquires(cmd);
 
         const mat4 pre_rot_mat = surface_pre_rotation();
 
@@ -1876,7 +1748,7 @@ namespace tau::renderer
 
                     const gpu::PushConstants cluster_pc = {
                         frame_data.object_buffer_address,
-                        res_system.material_heap.device_address,
+                        material_heap::address(),
                         0,
                     };
 
@@ -1933,7 +1805,7 @@ namespace tau::renderer
 
             const gpu::PushConstants pc_data = {
                 frame_data.object_buffer_address,
-                res_system.material_heap.device_address,
+                material_heap::address(),
                 0,
             };
 
@@ -2538,36 +2410,13 @@ namespace tau::renderer
 
         if (old_swapchain != VK_NULL_HANDLE)
         {
-            std::scoped_lock lock(res_system.deletion_mutex);
-
-            const u64_t safe_timeline = deletion_timeline_value();
-
-            for (VkImageView view : ctx.swapchain.views)
-            {
-                res_system.deletion_queue.push_back({
-                    .type = resource_type_e::IMAGE_VIEW,
-                    .handle = {.image_view = view},
-                    .bindless_id = BINDLESS_NULL_HANDLE,
-                    .gpu_timeline_value = safe_timeline,
-                });
-            }
-
+            for (VkImageView view : ctx.swapchain.views) { deletion::retire(deletion::view(view)); }
             ctx.swapchain.views.clear();
-
-            res_system.deletion_queue.push_back({
-                .type = resource_type_e::TEXTURE,
-                .handle = {.texture = {ctx.swapchain.depth_image, ctx.swapchain.depth_allocation,
-                                       ctx.swapchain.depth_view}},
-                .bindless_id = BINDLESS_NULL_HANDLE,
-                .gpu_timeline_value = safe_timeline,
-            });
-
-            res_system.deletion_queue.push_back({
-                .type = resource_type_e::SWAPCHAIN,
-                .handle = {.swapchain = old_swapchain},
-                .bindless_id = BINDLESS_NULL_HANDLE,
-                .gpu_timeline_value = safe_timeline,
-            });
+            deletion::retire(
+                deletion::image(ctx.swapchain.depth_image, ctx.swapchain.depth_allocation, ctx.swapchain.depth_view));
+            deletion::entry_t old = {.kind = deletion::kind_e::SWAPCHAIN};
+            old.handle.swapchain = old_swapchain;
+            deletion::retire(old);
         }
 
         ctx.swapchain.extent = {physical_extent.width, physical_extent.height};
@@ -2628,18 +2477,11 @@ namespace tau::renderer
 
         if (!ctx.swapchain.release_semaphores.empty())
         {
-            std::scoped_lock lock(res_system.deletion_mutex);
-
-            const u64_t safe_timeline = deletion_timeline_value();
-
             for (VkSemaphore sem : ctx.swapchain.release_semaphores)
             {
-                res_system.deletion_queue.push_back({
-                    .type = resource_type_e::SEMAPHORE,
-                    .handle = {.semaphore = sem},
-                    .bindless_id = BINDLESS_NULL_HANDLE,
-                    .gpu_timeline_value = safe_timeline,
-                });
+                deletion::entry_t e = {.kind = deletion::kind_e::SEMAPHORE};
+                e.handle.semaphore = sem;
+                deletion::retire(e);
             }
 
             ctx.swapchain.release_semaphores.clear();
@@ -2967,132 +2809,6 @@ namespace tau::renderer
         }
     }
 
-    VkCommandBuffer begin_transfer_commands()
-    {
-        VkCommandBufferAllocateInfo alloc_info = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = ctx.transfer_command_pool,
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
-        };
-
-        VkCommandBuffer cmd;
-        {
-            std::scoped_lock lock(ctx.transfer_mutex);
-            VK_CHECK(vkAllocateCommandBuffers(ctx.device, &alloc_info, &cmd));
-        }
-
-        VkCommandBufferBeginInfo begin_info = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-        };
-
-        VK_CHECK(vkBeginCommandBuffer(cmd, &begin_info));
-
-        return cmd;
-    }
-
-    u64_t submit_transfer_commands(VkCommandBuffer cmd)
-    {
-        VK_CHECK(vkEndCommandBuffer(cmd));
-
-        u64_t signal_value;
-        {
-            // if i add multithread asset loading, this should be locked
-            signal_value = ++res_system.timeline_value;
-        }
-
-        VkTimelineSemaphoreSubmitInfo timeline_sem_info = {
-            .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-            .signalSemaphoreValueCount = 1,
-            .pSignalSemaphoreValues = &signal_value,
-        };
-
-        VkSubmitInfo submit_info = {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .pNext = &timeline_sem_info,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &cmd,
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &res_system.timeline_semaphore,
-        };
-
-        {
-            std::scoped_lock lock(ctx.transfer_mutex);
-            VK_CHECK(vkQueueSubmit(ctx.transfer_queue, 1, &submit_info, VK_NULL_HANDLE));
-        }
-
-        {
-            std::scoped_lock lock(res_system.deletion_mutex);
-            res_system.deletion_queue.push_back({
-                .type = resource_type_e::COMMAND_BUFFER,
-                .handle = {.cmd_buffer = {cmd, ctx.transfer_command_pool}},
-                .bindless_id = BINDLESS_NULL_HANDLE,
-                .gpu_timeline_value = signal_value,
-                .clock = deletion_clock_e::TRANSFER,
-            });
-        }
-
-        return signal_value;
-    }
-
-    VkSampler create_sampler(VkFilter filter, VkSamplerAddressMode address_mode)
-    {
-        VkSamplerCreateInfo sampler_info = {
-            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .flags = 0,
-            .magFilter = filter,
-            .minFilter = filter,
-            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-            .addressModeU = address_mode,
-            .addressModeV = address_mode,
-            .addressModeW = address_mode,
-            .mipLodBias = 0.0f,
-            .anisotropyEnable = VK_TRUE,
-            .maxAnisotropy = ctx.properties.limits.maxSamplerAnisotropy,
-            .compareEnable = VK_FALSE,
-            .compareOp = VK_COMPARE_OP_ALWAYS,
-            .minLod = 0.0f,
-            .maxLod = VK_LOD_CLAMP_NONE,
-            .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
-            .unnormalizedCoordinates = VK_FALSE,
-        };
-
-        VkSampler sampler = VK_NULL_HANDLE;
-        VK_CHECK(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
-
-        return sampler;
-    }
-
-    VkSampler create_shadow_sampler()
-    {
-        VkSamplerCreateInfo sampler_info = {
-            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .flags = 0,
-            .magFilter = VK_FILTER_LINEAR,
-            .minFilter = VK_FILTER_LINEAR,
-            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-            .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-            .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-            .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-            .mipLodBias = 0.0f,
-            .anisotropyEnable = VK_FALSE,
-            .maxAnisotropy = 1.0f,
-            .compareEnable = VK_TRUE,
-            .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
-            .minLod = 0.0f,
-            .maxLod = 0.0f,
-            // white border == farthest depth, so anything sampled outside the map reads as lit
-            .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
-            .unnormalizedCoordinates = VK_FALSE,
-        };
-
-        VkSampler sampler = VK_NULL_HANDLE;
-        VK_CHECK(vkCreateSampler(ctx.device, &sampler_info, nullptr, &sampler));
-
-        return sampler;
-    }
-
     void submit_output_target(u32_t target_hash, VkExtent2D extent)
     {
         if (extent.width == 0 || extent.height == 0) { extent = ctx.swapchain.extent; }
@@ -3110,8 +2826,6 @@ namespace tau::renderer
     }
 
     void forget_missing_asset_reports() { reported_missing.clear(); }
-
-    u64_t deletion_timeline_value() { return ctx.timeline_value + 1; }
 
     bool get_primary_depth_bounds(f32& out_near_z, f32& out_far_z)
     {

@@ -3,11 +3,12 @@
 #include "tau/hash.h"
 #include "tau/log.h"
 #include "tau/profiling.h"
+#include "tau/rhi/bindless.h"
+#include "tau/rhi/deletion.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_timers.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
 
 #include <algorithm>
@@ -48,8 +49,8 @@ namespace tau::renderer::graph
             u32_t heap_generation = 0;
             VkImage image = VK_NULL_HANDLE;
             VkImageView view = VK_NULL_HANDLE;
-            u32_t sampled_id = NONE;
-            u32_t storage_id = NONE;
+            bindless_h sampled;
+            bindless_h storage;
             u32_t unused_frames = 0;
             bool taken = false;
         };
@@ -89,8 +90,8 @@ namespace tau::renderer::graph
             VkImage image = VK_NULL_HANDLE;
             VmaAllocation allocation = VK_NULL_HANDLE;
             VkImageView view = VK_NULL_HANDLE;
-            u32_t sampled_id = NONE;
-            u32_t storage_id = NONE;
+            bindless_h sampled;
+            bindless_h storage;
             sync_t sync;
         };
 
@@ -302,42 +303,6 @@ namespace tau::renderer::graph
 
     namespace
     {
-        u32_t write_sampled(VkImageView view)
-        {
-            const u32_t id = res_system.texture_heap.acquire();
-            const VkDescriptorImageInfo info = {.imageView = view,
-                                                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-            const VkWriteDescriptorSet write = {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = res_system.global_set,
-                .dstBinding = TEXTURES_BINDING_POINT,
-                .dstArrayElement = id,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                .pImageInfo = &info,
-            };
-            vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
-            return id;
-        }
-
-        u32_t write_storage(VkImageView view)
-        {
-            const u32_t id = res_system.storage_image_heap.acquire();
-            const VkDescriptorImageInfo info = {.imageView = view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
-            const VkWriteDescriptorSet write = {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = res_system.global_set,
-                .dstBinding = STORAGE_IMAGES_BINDING_POINT,
-                .dstArrayElement = id,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                .pImageInfo = &info,
-            };
-            vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
-            return id;
-        }
-
-        // transfer only images get none
         VkImageView create_view(VkImage image, const VkImageCreateInfo& info, const char* name)
         {
             device::name(image, VK_OBJECT_TYPE_IMAGE, name);
@@ -370,8 +335,8 @@ namespace tau::renderer::graph
 
         void destroy_cached(cached_image_t& c)
         {
-            if (c.sampled_id != NONE) { res_system.texture_heap.release(c.sampled_id); }
-            if (c.storage_id != NONE) { res_system.storage_image_heap.release(c.storage_id); }
+            bindless::remove(c.sampled);
+            bindless::remove(c.storage);
             if (c.view != VK_NULL_HANDLE) { vkDestroyImageView(ctx.device, c.view, nullptr); }
             vkDestroyImage(ctx.device, c.image, nullptr);
         }
@@ -610,8 +575,8 @@ namespace tau::renderer::graph
                     VK_CHECK(vmaCreateAliasingImage2(ctx.allocator, slot.image_heap.allocation, img.offset, &info,
                                                      &c.image));
                     c.view = create_view(c.image, info, img.name);
-                    if (info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) { c.sampled_id = write_sampled(c.view); }
-                    if (info.usage & VK_IMAGE_USAGE_STORAGE_BIT) { c.storage_id = write_storage(c.view); }
+                    if (info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) { c.sampled = bindless::add_sampled(c.view); }
+                    if (info.usage & VK_IMAGE_USAGE_STORAGE_BIT) { c.storage = bindless::add_storage(c.view); }
                     slot.images.push_back(c);
                     found = &slot.images.back();
                     g.cache->stats.images_created++;
@@ -624,8 +589,8 @@ namespace tau::renderer::graph
                 found->unused_frames = 0;
                 img.image = found->image;
                 img.view = found->view;
-                img.sampled_id = found->sampled_id;
-                img.storage_id = found->storage_id;
+                img.sampled_id = found->sampled.index;
+                img.storage_id = found->storage.index;
             }
 
             for (const place_t& it : buffer_items)
@@ -691,34 +656,15 @@ namespace tau::renderer::graph
 
         void retire(persistent_image_t& p)
         {
-            std::scoped_lock lock(res_system.deletion_mutex);
-            res_system.deletion_queue.push_back({
-                .type = resource_type_e::TEXTURE,
-                .handle = {.texture = {p.image, p.allocation, p.view}},
-                .bindless_id = p.sampled_id,
-                .gpu_timeline_value = deletion_timeline_value(),
-            });
-            if (p.storage_id != NONE)
-            {
-                res_system.deletion_queue.push_back({
-                    .type = resource_type_e::STORAGE_IMAGE,
-                    .handle = {.texture = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE}},
-                    .bindless_id = p.storage_id,
-                    .gpu_timeline_value = deletion_timeline_value(),
-                });
-            }
+            deletion::retire(deletion::image(p.image, p.allocation, p.view));
+            bindless::remove(p.sampled);
+            bindless::remove(p.storage);
             p = {};
         }
 
         void retire(persistent_buffer_t& p)
         {
-            std::scoped_lock lock(res_system.deletion_mutex);
-            res_system.deletion_queue.push_back({
-                .type = resource_type_e::BUFFER,
-                .handle = {.buffer = {p.buffer, p.allocation}},
-                .bindless_id = BINDLESS_NULL_HANDLE,
-                .gpu_timeline_value = deletion_timeline_value(),
-            });
+            deletion::retire(deletion::buffer(p.buffer, p.allocation));
             p = {};
         }
 
@@ -758,14 +704,14 @@ namespace tau::renderer::graph
                 const VmaAllocationCreateInfo alloc = {.usage = VMA_MEMORY_USAGE_GPU_ONLY};
                 VK_CHECK(vmaCreateImage(ctx.allocator, &info, &alloc, &p->image, &p->allocation, nullptr));
                 p->view = create_view(p->image, info, img.name);
-                if (info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) { p->sampled_id = write_sampled(p->view); }
-                if (info.usage & VK_IMAGE_USAGE_STORAGE_BIT) { p->storage_id = write_storage(p->view); }
+                if (info.usage & VK_IMAGE_USAGE_SAMPLED_BIT) { p->sampled = bindless::add_sampled(p->view); }
+                if (info.usage & VK_IMAGE_USAGE_STORAGE_BIT) { p->storage = bindless::add_storage(p->view); }
                 p->sync = {};
             }
             img.image = p->image;
             img.view = p->view;
-            img.sampled_id = p->sampled_id;
-            img.storage_id = p->storage_id;
+            img.sampled_id = p->sampled.index;
+            img.storage_id = p->storage.index;
             sync = p->sync;
         }
 
@@ -862,8 +808,8 @@ namespace tau::renderer::graph
         for (persistent_image_t& p : cache->persistent_images)
         {
             if (p.image == VK_NULL_HANDLE) { continue; }
-            if (p.sampled_id != NONE) { res_system.texture_heap.release(p.sampled_id); }
-            if (p.storage_id != NONE) { res_system.storage_image_heap.release(p.storage_id); }
+            bindless::remove(p.sampled);
+            bindless::remove(p.storage);
             if (p.view != VK_NULL_HANDLE) { vkDestroyImageView(ctx.device, p.view, nullptr); }
             vmaDestroyImage(ctx.allocator, p.image, p.allocation);
         }

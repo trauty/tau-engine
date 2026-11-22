@@ -9,10 +9,13 @@
 #include "tau/hash.h"
 #include "tau/math.h"
 #include "tau/render/frame.h"
+#include "tau/rhi/bindless.h"
+#include "tau/rhi/deletion.h"
+#include "tau/rhi/material_heap.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
+#include "tau/rhi/transfer.h"
 #include "tau/rhi/vulkan.h"
 #include "vulkan/vulkan_core.h"
 
@@ -33,7 +36,7 @@ namespace tau::editor::imgui
         VkImage font_image = VK_NULL_HANDLE;
         VmaAllocation font_alloc = VK_NULL_HANDLE;
         VkImageView font_view = VK_NULL_HANDLE;
-        u32_t font_tex_bindless_id = renderer::BINDLESS_NULL_HANDLE;
+        renderer::bindless_h font_tex;
 
         VkBuffer vertex_buffer[renderer::MAX_FRAMES_IN_FLIGHT] = {VK_NULL_HANDLE};
         VmaAllocation vertex_alloc[renderer::MAX_FRAMES_IN_FLIGHT] = {VK_NULL_HANDLE};
@@ -425,7 +428,7 @@ namespace tau::editor::imgui
 
         vkCmdBindPipeline(frame.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-        VkDescriptorSet global_set = renderer::res_system.global_set;
+        VkDescriptorSet global_set = renderer::bindless::global_set();
         vkCmdBindDescriptorSets(frame.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &global_set, 0, nullptr);
 
         vkCmdBindIndexBuffer(frame.cmd, frame.index_buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -682,7 +685,7 @@ namespace tau::editor::imgui
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->get_pipeline(pipeline_variant_e::FORWARD));
 
-            VkDescriptorSet sets[] = {renderer::res_system.global_set, renderer::res_system.frame_set};
+            VkDescriptorSet sets[] = {renderer::bindless::global_set(), renderer::bindless::frame_set()};
 
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
                                     &renderer::ctx.per_frame_objects[renderer::ctx.cur_frame].global_data_offset);
@@ -690,7 +693,7 @@ namespace tau::editor::imgui
             vkCmdBindIndexBuffer(cmd, ctx.index_buffer[cur_frame], 0, VK_INDEX_TYPE_UINT32);
 
             gpu::PushConstants pc = {
-                .material_buffer = renderer::res_system.material_heap.device_address,
+                .material_buffer = renderer::material_heap::address(),
                 .custom_data = mat->heap_offset[cur_frame],
             };
 
@@ -818,7 +821,7 @@ namespace tau::editor::imgui
 
         VK_CHECK(vkCreateImageView(renderer::ctx.device, &view_info, nullptr, &ctx.font_view));
 
-        VkCommandBuffer cmd = renderer::begin_transfer_commands();
+        VkCommandBuffer cmd = renderer::transfer::begin();
 
         VkImageMemoryBarrier barrier_to_dst = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -858,52 +861,18 @@ namespace tau::editor::imgui
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr,
                              0, nullptr, 1, &release_barrier);
 
-        u64_t signal_value = renderer::submit_transfer_commands(cmd);
+        u64_t signal_value = renderer::transfer::submit(cmd);
 
-        {
-            std::scoped_lock lock(renderer::res_system.pending_mutex);
-            VkImageMemoryBarrier acquire_barrier = release_barrier;
-            acquire_barrier.srcAccessMask = 0;
-            acquire_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        VkImageMemoryBarrier acquire_barrier = release_barrier;
+        acquire_barrier.srcAccessMask = 0;
+        acquire_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        renderer::transfer::acquire(acquire_barrier);
 
-            renderer::res_system.pending_acquires.push_back({
-                .type = renderer::resource_type_e::TEXTURE,
-                .handle = {.image = ctx.font_image},
-                .barrier = {.image_barrier = acquire_barrier},
-            });
-        }
+        ctx.font_tex = renderer::bindless::add_sampled(ctx.font_view);
+        io.Fonts->SetTexID((ImTextureID)(intptr_t)ctx.font_tex.index);
 
-        ctx.font_tex_bindless_id = renderer::res_system.texture_heap.acquire();
-
-        VkDescriptorImageInfo image_desc_info = {
-            .sampler = VK_NULL_HANDLE,
-            .imageView = ctx.font_view,
-            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-
-        VkWriteDescriptorSet write_desc = {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = renderer::res_system.global_set,
-            .dstBinding = renderer::TEXTURES_BINDING_POINT,
-            .dstArrayElement = ctx.font_tex_bindless_id,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            .pImageInfo = &image_desc_info,
-        };
-        vkUpdateDescriptorSets(renderer::ctx.device, 1, &write_desc, 0, nullptr);
-
-        io.Fonts->SetTexID((ImTextureID)(intptr_t)ctx.font_tex_bindless_id);
-
-        {
-            std::scoped_lock lock(renderer::res_system.deletion_mutex);
-            renderer::res_system.deletion_queue.push_back({
-                .type = renderer::resource_type_e::BUFFER,
-                .handle = {.buffer = {staging_buf, staging_alloc}},
-                .bindless_id = renderer::BINDLESS_NULL_HANDLE,
-                .gpu_timeline_value = signal_value,
-                .clock = renderer::deletion_clock_e::TRANSFER,
-            });
-        }
+        renderer::deletion::retire(renderer::deletion::buffer(staging_buf, staging_alloc),
+                                   renderer::deletion::clock_e::TRANSFER, signal_value);
 
         renderer::frame::register_producer("ImGui"_h, renderer::FEATURE_ORDER_UI, &build_ui);
     }
@@ -926,10 +895,7 @@ namespace tau::editor::imgui
         if (ctx.font_view) { vkDestroyImageView(renderer::ctx.device, ctx.font_view, nullptr); }
         if (ctx.font_image) { vmaDestroyImage(renderer::ctx.allocator, ctx.font_image, ctx.font_alloc); }
 
-        if (ctx.font_tex_bindless_id != renderer::BINDLESS_NULL_HANDLE)
-        {
-            renderer::res_system.texture_heap.release(ctx.font_tex_bindless_id);
-        }
+        renderer::bindless::remove(ctx.font_tex);
 
         ctx.material.release_heap();
         assets::unpin(ctx.shader);

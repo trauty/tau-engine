@@ -8,9 +8,10 @@
 #include "tau/ecs.h"
 #include "tau/hash.h"
 #include "tau/log.h"
+#include "tau/rhi/bindless.h"
 #include "tau/rhi/gpu_structs.h"
+#include "tau/rhi/material_heap.h"
 #include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
 #include "tau/systems/camera.h"
 
@@ -220,13 +221,13 @@ namespace tau::renderer::post
             const std::unique_ptr<view_gpu_resources_t>* view =
                 fd.views.find(f.view_hash ? f.view_hash : "PrimaryView"_h);
             const u32_t view_offset = view != nullptr ? (*view)->global_data_offset : fd.global_data_offset;
-            const VkDescriptorSet sets[] = {res_system.global_set, res_system.frame_set};
+            const VkDescriptorSet sets[] = {bindless::global_set(), bindless::frame_set()};
             vkCmdBindDescriptorSets(rc.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->pipeline_layout, 0, 2, sets, 1,
                                     &view_offset);
 
             const gpu::PushConstants pc = {
                 fd.object_buffer_address,
-                res_system.material_heap.device_address,
+                material_heap::address(),
                 material->heap_offset[ctx.cur_frame],
             };
             vkCmdPushConstants(rc.cmd, shader->pipeline_layout,

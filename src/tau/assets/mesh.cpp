@@ -4,10 +4,11 @@
 #include "tau/assets/material.h"
 #include "tau/assets/mesh_format.h"
 #include "tau/log.h"
+#include "tau/rhi/deletion.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
+#include "tau/rhi/transfer.h"
 #include "tau/rhi/vulkan.h"
 #include "tau/vfs.h"
 #include "vulkan/vulkan_core.h"
@@ -144,7 +145,7 @@ namespace tau
         renderer::device::name(asset.vertex_buffer, VK_OBJECT_TYPE_BUFFER, path.c_str());
         renderer::device::name(asset.index_buffer, VK_OBJECT_TYPE_BUFFER, path.c_str());
 
-        VkCommandBuffer cmd_buf = renderer::begin_transfer_commands();
+        VkCommandBuffer cmd_buf = renderer::transfer::begin();
 
         VkBufferCopy copy_region = {
             .srcOffset = 0,
@@ -192,21 +193,15 @@ namespace tau
         vkCmdPipelineBarrier(cmd_buf, VK_PIPELINE_STAGE_TRANSFER_BIT, dst_stage, 0, 0, nullptr,
                              static_cast<u32_t>(barriers.size()), barriers.data(), 0, nullptr);
 
-        u64_t signal_value = renderer::submit_transfer_commands(cmd_buf);
+        u64_t signal_value = renderer::transfer::submit(cmd_buf);
 
         if (!is_same_queue_fam)
         {
-            std::scoped_lock lock(renderer::res_system.pending_mutex);
             for (VkBufferMemoryBarrier& barrier : barriers)
             {
                 barrier.srcAccessMask = 0;
                 barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-
-                renderer::res_system.pending_acquires.push_back({
-                    .type = renderer::resource_type_e::BUFFER,
-                    .handle = {.buffer = barrier.buffer},
-                    .barrier = {.buffer_barrier = barrier},
-                });
+                renderer::transfer::acquire(barrier);
             }
         }
 
@@ -214,16 +209,8 @@ namespace tau
 
         if (index_size > 0) { asset.index_buffer_address = renderer::get_buffer_address(asset.index_buffer); }
 
-        {
-            std::scoped_lock lock(renderer::res_system.deletion_mutex);
-            renderer::res_system.deletion_queue.push_back({
-                .type = renderer::resource_type_e::BUFFER,
-                .handle = {.buffer = {staging_buf, staging_alloc}},
-                .bindless_id = renderer::BINDLESS_NULL_HANDLE,
-                .gpu_timeline_value = signal_value,
-                .clock = renderer::deletion_clock_e::TRANSFER,
-            });
-        }
+        renderer::deletion::retire(renderer::deletion::buffer(staging_buf, staging_alloc),
+                                   renderer::deletion::clock_e::TRANSFER, signal_value);
 
         return asset;
     }
@@ -238,24 +225,13 @@ namespace tau
 
     void asset_loader_t<mesh_t>::unload(mesh_t& mesh)
     {
-        std::scoped_lock lock(renderer::res_system.deletion_mutex);
-
         if (mesh.vertex_buffer != VK_NULL_HANDLE)
         {
-            renderer::res_system.deletion_queue.push_back({
-                .type = renderer::resource_type_e::BUFFER,
-                .handle = {.buffer = {mesh.vertex_buffer, mesh.vertex_allocation}},
-                .gpu_timeline_value = renderer::deletion_timeline_value(),
-            });
+            renderer::deletion::retire(renderer::deletion::buffer(mesh.vertex_buffer, mesh.vertex_allocation));
         }
-
         if (mesh.index_buffer != VK_NULL_HANDLE)
         {
-            renderer::res_system.deletion_queue.push_back({
-                .type = renderer::resource_type_e::BUFFER,
-                .handle = {.buffer = {mesh.index_buffer, mesh.index_allocation}},
-                .gpu_timeline_value = renderer::deletion_timeline_value(),
-            });
+            renderer::deletion::retire(renderer::deletion::buffer(mesh.index_buffer, mesh.index_allocation));
         }
     }
 } // namespace tau

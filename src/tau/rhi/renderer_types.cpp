@@ -1,7 +1,6 @@
 #include "renderer_types.h"
 
 #include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/vulkan.h"
 
 namespace tau::renderer
@@ -62,24 +61,8 @@ namespace tau::renderer
 
         if (desc.usage & VK_IMAGE_USAGE_SAMPLED_BIT)
         {
-            new_img.bindless_id = res_system.texture_heap.acquire();
-            VkDescriptorImageInfo bindless_info = {
-                .sampler = VK_NULL_HANDLE,
-                .imageView = new_img.view,
-                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            };
-
-            VkWriteDescriptorSet write_desc = {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = res_system.global_set,
-                .dstBinding = TEXTURES_BINDING_POINT,
-                .dstArrayElement = new_img.bindless_id,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                .pImageInfo = &bindless_info,
-            };
-
-            vkUpdateDescriptorSets(ctx.device, 1, &write_desc, 0, nullptr);
+            new_img.bindless = bindless::add_sampled(new_img.view);
+            new_img.bindless_id = new_img.bindless.index;
         }
 
         images.push_back(new_img);
@@ -99,7 +82,7 @@ namespace tau::renderer
                 {
                     if (it->view) { vkDestroyImageView(ctx.device, it->view, nullptr); }
                     if (it->image) { vmaDestroyImage(ctx.allocator, it->image, it->allocation); }
-                    if (it->bindless_id != BINDLESS_NULL_HANDLE) { res_system.texture_heap.release(it->bindless_id); }
+                    bindless::remove(it->bindless);
 
                     it = images.erase(it);
                     continue;
@@ -121,7 +104,7 @@ namespace tau::renderer
         {
             if (img.view) { vkDestroyImageView(ctx.device, img.view, nullptr); }
             if (img.image) { vmaDestroyImage(ctx.allocator, img.image, img.allocation); }
-            if (img.bindless_id != BINDLESS_NULL_HANDLE) { res_system.texture_heap.release(img.bindless_id); }
+            bindless::remove(img.bindless);
         }
 
         images.clear();

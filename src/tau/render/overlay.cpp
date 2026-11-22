@@ -7,9 +7,9 @@
 #include "tau/hash.h"
 #include "tau/render/frame.h"
 #include "tau/rhi/frame_upload.h"
+#include "tau/rhi/material_heap.h"
 #include "tau/rhi/renderer.h"
 #include "tau/rhi/renderer_constants.h"
-#include "tau/rhi/renderer_resources.h"
 
 #include <algorithm>
 #include <cstring>
@@ -68,7 +68,7 @@ namespace tau::renderer
 
             const gpu::PushConstants pc = {
                 items_address,
-                res_system.material_heap.device_address,
+                material_heap::address(),
             };
             vkCmdPushConstants(cmd, shader->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, sizeof(gpu::PushConstants), &pc);

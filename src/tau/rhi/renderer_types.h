@@ -10,6 +10,7 @@
 #include "tau/log.h"
 #include "tau/math.h"
 #include "tau/memory/linear_allocator.h"
+#include "tau/rhi/bindless.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_structs.h"
 #include "tau/rhi/renderer_constants.h"
@@ -138,6 +139,7 @@ namespace tau::renderer
         VkImageView view = VK_NULL_HANDLE;
         VmaAllocation allocation = VK_NULL_HANDLE;
         u32_t bindless_id = BINDLESS_NULL_HANDLE;
+        bindless_h bindless;
         bool in_use = false;
         u32_t frames_unused = 0;
         const char* debug_name = nullptr;
@@ -150,6 +152,7 @@ namespace tau::renderer
         VkImageView view = VK_NULL_HANDLE;
         VmaAllocation allocation = VK_NULL_HANDLE;
         u32_t bindless_id = BINDLESS_NULL_HANDLE;
+        bindless_h bindless;
         VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
         bool needs_full_clear = true;
     };
@@ -324,18 +327,11 @@ namespace tau::renderer
         VkPhysicalDeviceProperties properties;
         device::device_caps_t caps;
 
-        VkCommandPool transfer_command_pool = VK_NULL_HANDLE;
-        std::mutex transfer_mutex;
-
-        std::mutex descriptor_mutex;
-
         std::vector<per_frame_t> per_frame_objects;
         u32_t cur_frame = 0;
 
         VkSemaphore timeline_semaphore = VK_NULL_HANDLE;
         u64_t timeline_value = 0;
-
-        std::vector<VkSampler> samplers;
 
         asset_t<shader_t> culling_shader;
 
@@ -377,7 +373,8 @@ namespace tau::renderer
         u32_t max_samplers = MAX_SAMPLERS;
         u32_t max_sampled_textures = MAX_SAMPLED_TEXTURES;
         u32_t max_storage_images = MAX_STORAGE_TEXTURES;
-        u32_t material_heap_size = 24u * 1024u * 1024u;
+        // grows from here
+        u32_t material_heap_size = 1024u * 1024u;
     };
 
     struct context_config_t

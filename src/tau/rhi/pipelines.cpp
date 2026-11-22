@@ -4,10 +4,11 @@
 #include "tau/assets/shader.h"
 #include "tau/jobs.h"
 #include "tau/log.h"
+#include "tau/rhi/bindless.h"
+#include "tau/rhi/deletion.h"
 #include "tau/rhi/device.h"
 #include "tau/rhi/gpu_structs.h"
 #include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
 #include "tau/vfs.h"
 
@@ -82,8 +83,8 @@ namespace tau::renderer::pipelines
             for (auto [set, layout] : out.set_layouts) { max_set = std::max(max_set, set); }
 
             std::vector<VkDescriptorSetLayout> sets(max_set + 1, VK_NULL_HANDLE);
-            sets[0] = res_system.global_layout;
-            sets[1] = res_system.frame_layout;
+            sets[0] = bindless::global_layout();
+            sets[1] = bindless::frame_layout();
             for (u32_t i = 2; i <= max_set; i++)
             {
                 if (const VkDescriptorSetLayout* layout = out.set_layouts.find(i)) { sets[i] = *layout; }
@@ -304,37 +305,18 @@ namespace tau::renderer::pipelines
 
         void retire(const shader_pipelines_t& old)
         {
-            std::scoped_lock lock(res_system.deletion_mutex);
             bool layout_attached = false;
             for (VkPipeline p : old.variants)
             {
                 if (p == VK_NULL_HANDLE) { continue; }
-                res_system.deletion_queue.push_back({
-                    .type = resource_type_e::PIPELINE,
-                    .handle = {.pipeline = {p, layout_attached ? VK_NULL_HANDLE : old.layout}},
-                    .bindless_id = BINDLESS_NULL_HANDLE,
-                    .gpu_timeline_value = deletion_timeline_value(),
-                });
+                deletion::retire(deletion::pipeline(p, layout_attached ? VK_NULL_HANDLE : old.layout));
                 layout_attached = true;
             }
             if (!layout_attached && old.layout != VK_NULL_HANDLE)
             {
-                res_system.deletion_queue.push_back({
-                    .type = resource_type_e::PIPELINE,
-                    .handle = {.pipeline = {VK_NULL_HANDLE, old.layout}},
-                    .bindless_id = BINDLESS_NULL_HANDLE,
-                    .gpu_timeline_value = deletion_timeline_value(),
-                });
+                deletion::retire(deletion::pipeline(VK_NULL_HANDLE, old.layout));
             }
-            for (auto [set, layout] : old.set_layouts)
-            {
-                res_system.deletion_queue.push_back({
-                    .type = resource_type_e::DESCRIPTOR_SET_LAYOUT,
-                    .handle = {.descriptor_set_layout = layout},
-                    .bindless_id = BINDLESS_NULL_HANDLE,
-                    .gpu_timeline_value = deletion_timeline_value(),
-                });
-            }
+            for (auto [set, layout] : old.set_layouts) { deletion::retire(deletion::set_layout(layout)); }
         }
 
         // one shader on the calling thread

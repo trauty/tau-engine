@@ -4,8 +4,8 @@
 #include "tau/assets/material_format.h"
 #include "tau/assets/shader.h"
 #include "tau/log.h"
+#include "tau/rhi/material_heap.h"
 #include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
 #include "tau/vfs.h"
 
@@ -119,10 +119,10 @@ namespace tau
 
         if (heap_offset[cur_frame] == renderer::BINDLESS_NULL_HANDLE)
         {
-            heap_offset[cur_frame] = renderer::res_system.material_heap.allocate(static_cast<u32_t>(data.size()));
+            heap_offset[cur_frame] = renderer::material_heap::allocate(static_cast<u32_t>(data.size()));
         }
 
-        renderer::res_system.material_heap.update(heap_offset[cur_frame], data.data(), static_cast<u32_t>(data.size()));
+        renderer::material_heap::write(heap_offset[cur_frame], data.data(), static_cast<u32_t>(data.size()));
 
         if (last_synced_frame != cur_frame)
         {
@@ -187,7 +187,7 @@ namespace tau
         {
             if (heap_offset[i] != renderer::BINDLESS_NULL_HANDLE)
             {
-                renderer::res_system.material_heap.free(heap_offset[i], static_cast<u32_t>(data.size()));
+                renderer::material_heap::free(heap_offset[i], static_cast<u32_t>(data.size()));
                 heap_offset[i] = renderer::BINDLESS_NULL_HANDLE;
             }
         }

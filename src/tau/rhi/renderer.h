@@ -88,12 +88,6 @@ namespace tau::renderer
     void create_image(u32 width, u32 height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
                       VkMemoryPropertyFlags props, VkImage& image, VkDeviceMemory& image_mem);
 
-    TAU_ENGINE_API VkCommandBuffer begin_transfer_commands();
-    TAU_ENGINE_API u64_t submit_transfer_commands(VkCommandBuffer cmd);
-
-    VkSampler create_sampler(VkFilter filter, VkSamplerAddressMode address_mode);
-    VkSampler create_shadow_sampler();
-
     TAU_ENGINE_API void submit_output_target(u32_t target_hash, VkExtent2D extent);
 
     TAU_ENGINE_API u32_t get_target_texture_id(u32_t name_hash);
@@ -151,9 +145,4 @@ namespace tau::renderer
     // every pipeline creation reports here, so the cache knows there is something to save and the log can show the cost
     TAU_ENGINE_API void note_pipeline_created(f64 milliseconds);
 
-    // the render timeline value a GPU resource freed now must outlive
-    // submitted frames are at or below ctx.timeline_value and the one being recorded signals the next
-    // so once it completes nothing in flight refers to it
-    // the render timeline on purpose, res_system's is the transfer one and says nothing about frames binding the thing
-    TAU_ENGINE_API u64_t deletion_timeline_value();
 } // namespace tau::renderer

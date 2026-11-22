@@ -4,8 +4,9 @@
 #include "tau/assets/shader_format.h"
 #include "tau/defines.h"
 #include "tau/log.h"
+#include "tau/rhi/bindless.h"
+#include "tau/rhi/deletion.h"
 #include "tau/rhi/renderer.h"
-#include "tau/rhi/renderer_resources.h"
 #include "tau/rhi/renderer_types.h"
 #include "tau/rhi/vulkan.h"
 
@@ -42,12 +43,7 @@ namespace tau
             {
                 if (set != VK_NULL_HANDLE)
                 {
-                    renderer::res_system.deletion_queue.push_back({
-                        .type = renderer::resource_type_e::DESCRIPTOR_SET,
-                        .handle = {.descriptor_set = {.pool = renderer::res_system.instance_pool, .set = set}},
-                        .bindless_id = renderer::BINDLESS_NULL_HANDLE,
-                        .gpu_timeline_value = renderer::deletion_timeline_value(),
-                    });
+                    renderer::deletion::retire(renderer::deletion::set(renderer::bindless::instance_pool(), set));
                 }
             }
         }
@@ -70,7 +66,7 @@ namespace tau
             {
                 VkDescriptorSetAllocateInfo alloc_info = {
                     .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                    .descriptorPool = renderer::res_system.instance_pool,
+                    .descriptorPool = renderer::bindless::instance_pool(),
                     .descriptorSetCount = 1,
                     .pSetLayouts = &layout,
                 };
@@ -111,7 +107,8 @@ namespace tau
             }
             else if (res.view != VK_NULL_HANDLE)
             {
-                image_infos.push_back({renderer::ctx.samplers[(u32_t)res.sampler], res.view, res.layout});
+                image_infos.push_back(
+                    {renderer::bindless::sampler(static_cast<u32_t>(res.sampler)), res.view, res.layout});
                 write_info.pImageInfo = &image_infos.back();
             }
 
